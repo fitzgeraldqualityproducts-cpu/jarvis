@@ -720,14 +720,15 @@ def recover():
 
 
 def resume():
-    """Start the last cut-off (or failed) project again, from the top."""
-    for p in reversed(_load()["projects"]):
-        if p.get("status") in ("interrupted", "failed", "cancelled"):
-            _update(p["id"], status="restarted", told=True)
-            return start(p["goal"])
-        if p.get("status") in ("planning", "working", "done"):
-            break
-    return "There's nothing of the team's to restart. Say get the team on, then what you want."
+    """Run the last project again, from the top (cut off, failed, or done but not good enough)."""
+    if _current:
+        return "The team's still working on something. Say call off the team first if you want to start over."
+    p = latest()
+    if not p:
+        return "There's nothing of the team's to restart. Say get the team on, then what you want."
+    if p.get("status") in ("interrupted", "failed", "cancelled"):
+        _update(p["id"], status="restarted", told=True)
+    return start(p["goal"])
 
 
 def cancel():
