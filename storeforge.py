@@ -110,15 +110,45 @@ def _start(f):
                             env=env, start_new_session=sys.platform != "win32"), env
 
 
+def _sqlite_packages(f):
+    """Every copy of better-sqlite3 in StoreForge (Prisma's adapter keeps its own, older one)."""
+    nm = Path(f) / "node_modules"
+    pats = ["better-sqlite3", "*/node_modules/better-sqlite3", "@*/*/node_modules/better-sqlite3"]
+    return [d for p in pats for d in nm.glob(p) if (d / "package.json").is_file()]
+
+
 def _rebuild_sqlite(f, env):
     """StoreForge's database driver (better-sqlite3) is a compiled part that has to match this
-    computer's Node.js. If it's missing, rebuild it in StoreForge's own folder (npm rebuild)."""
+    computer's Node.js. New npm versions block packages' install scripts, so `npm rebuild` can say
+    it worked while doing nothing. So: for each copy that has no compiled file, run its own
+    installer directly (it downloads the ready-made file for this Mac), or compile it."""
     npm = "npm.cmd" if sys.platform == "win32" else "npm"
+    npx = "npx.cmd" if sys.platform == "win32" else "npx"
     print("(StoreForge: rebuilding its database driver for this Node.js)")
+    ok = True
     with open(HERE / "storeforge.log", "a") as log:
-        r = subprocess.run([npm, "rebuild", "better-sqlite3"], cwd=str(f), stdout=log, stderr=log,
-                           stdin=subprocess.DEVNULL, env=env, timeout=600)
-    return r.returncode == 0
+        subprocess.run([npm, "rebuild", "better-sqlite3"], cwd=str(f), stdout=log, stderr=log,
+                       stdin=subprocess.DEVNULL, env=env, timeout=600)
+        pb = Path(f) / "node_modules" / "prebuild-install" / "bin.js"
+        node = "node.exe" if sys.platform == "win32" else "node"
+        for d in _sqlite_packages(f):
+            try:
+                scripts = json.loads((d / "package.json").read_text()).get("scripts") or {}
+            except Exception:
+                continue
+            if "install" not in scripts or list(d.glob("build/Release/*.node")):
+                continue                      # ships its own prebuilt files, or already built
+            log.write(f"\n(Jarvis: installing the database driver in {d})\n")
+            log.flush()
+            r = None
+            if pb.is_file():
+                r = subprocess.run([node, str(pb)], cwd=str(d), stdout=log, stderr=log,
+                                   stdin=subprocess.DEVNULL, env=env, timeout=300)
+            if r is None or r.returncode != 0:
+                r = subprocess.run([npx, "--yes", "node-gyp", "rebuild", "--release"], cwd=str(d), stdout=log,
+                                   stderr=log, stdin=subprocess.DEVNULL, env=env, timeout=900)
+            ok = ok and r.returncode == 0
+    return ok
 
 
 def ensure_running(wait=90):
@@ -157,8 +187,7 @@ def ensure_running(wait=90):
             if "bindings file" in problem or "different Node.js version" in problem:
                 if rebuilt or not _rebuild_sqlite(f, env):
                     return ("StoreForge won't start: its database driver (better-sqlite3) needs rebuilding for "
-                            "this Mac's Node.js, and the rebuild didn't work. In Terminal: cd ~/storeforge && "
-                            "npm rebuild better-sqlite3")
+                            "this Mac's Node.js, and the rebuild didn't work. See storeforge.log in Jarvis's folder.")
                 rebuilt = True
         return "StoreForge didn't start" + (f": {problem}" if problem else ". Check storeforge.log in Jarvis's folder.")
 
