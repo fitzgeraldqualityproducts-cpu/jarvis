@@ -43,6 +43,7 @@ LINES = {
         "working": ["Bet, I'm cooking. Give me a minute or two.", "Say less, upgrading myself now. Give me a sec."],
         "brief_close": ["Now let's go have a W day.", "That's the rundown. Let's get it."],
         "error": ["Bro something glitched on my end. Try that again?"],
+        "hold_on": ["Hold up, let me check.", "One sec, bro, looking.", "Bet, give me a sec."],
         "flair": ["Let's go!", "Easy W.", "Done and done.", "Locked in.", "Say less.", "That's tuff."],
     },
     "butler": {
@@ -56,6 +57,7 @@ LINES = {
         "working": ["Right, working on that now. It can take a minute or two."],
         "brief_close": ["What can I do for you?"],
         "error": ["Something went wrong doing that, I'm afraid."],
+        "hold_on": ["One moment, please.", "Just checking on that.", "Let me look into that."],
         "flair": [],
     },
 }

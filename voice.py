@@ -6,10 +6,12 @@ Engines, best first (set "voice_engine" in config.json, or leave on "auto"):
   edge        Microsoft's online voice (the original)
   say         built-in macOS (or Windows) voice, last resort
 
-Long replies are spoken sentence by sentence, so he starts talking sooner.
+Long replies are spoken sentence by sentence, so he starts talking sooner. Answers from the brain
+are spoken while they're still being written (say_stream), so he starts within a second or two.
 Saying "stop", "Jarvis" or "Hey Jarvis", or clapping twice, while he talks cuts him off
 (set "interrupt": false in config.json to turn that off, "interrupt_words": false for just claps
-and "Hey Jarvis")."""
+and "Hey Jarvis"). In a conversation you can also just start talking over him: he stops and
+listens to what you're saying ("barge_in": false turns that off)."""
 import asyncio
 import json
 import os
@@ -27,6 +29,9 @@ HERE = Path(__file__).resolve().parent
 CONFIG = HERE / "config.json"
 MODELS = HERE / "models"
 _speaking = threading.Lock()
+SAID = []                       # everything he's said lately (jarvis.py uses it to notice when he couldn't help)
+CONVERSING = threading.Event()  # set by jarvis.py during a spoken conversation: talking over him is allowed then
+_barge = {}                     # what was heard when someone talked over him, for ears.listen to carry on from
 
 
 def _cfg():
@@ -58,6 +63,30 @@ def _sentences(text):
     if buf:
         out.append(buf)
     return out or [text]
+
+
+_END = re.compile(r"(?<=[.!?])[\"')\]]*\s+|\n+")
+
+
+def _chunks(pieces):
+    """Turns text arriving in pieces into speakable chunks. The first comes out as soon as
+    there's a whole short sentence, so he can start talking straight away."""
+    buf, need = "", 12
+    for piece in pieces:
+        buf += piece
+        while True:
+            cut = next((m.end() for m in _END.finditer(buf) if len(buf[:m.start()].strip()) >= need), None)
+            if cut is None and len(buf) > 160:        # a long sentence with no full stop yet
+                i = buf.rfind(", ", 60)
+                cut = i + 2 if i > 0 else None
+            if cut is None:
+                break
+            chunk, buf = buf[:cut].strip(), buf[cut:]
+            if chunk:
+                yield chunk
+                need = 40
+    if buf.strip():
+        yield buf.strip()
 
 
 def _tmp(suffix):
@@ -221,11 +250,14 @@ class _Spotter:
         # Don't hold up his speech if the model is still loading in the background.
         self.model = (_spot or None) if _spot is not None else \
             (spotter_model() if _cfg().get("interrupt_words", True) and not _spot_lock.locked() else None)
-        self.ignore = set(STOP_WORDS.findall(own_text.lower()))
+        self.own = own_text if callable(own_text) else (lambda: own_text)
         self.audio = np.zeros(0, dtype=np.int16)
         self.last = 0.0
         self.busy = threading.Event()
         self.heard = threading.Event()
+        self.barge = CONVERSING.is_set() and _cfg().get("barge_in", True)
+        self.strikes = 0
+        self.barge_audio = None
 
     def feed(self, block):
         if not self.model:
@@ -245,15 +277,47 @@ class _Spotter:
             segs, _ = self.model.transcribe(audio.astype(self.np.float32) / 32768.0, language="en", beam_size=1,
                                             condition_on_previous_text=False, without_timestamps=True)
             text = " ".join(s.text for s in segs if s.no_speech_prob < 0.6).lower()
-            words = set(STOP_WORDS.findall(text)) - self.ignore
+            own = self.own().lower()
+            words = set(STOP_WORDS.findall(text)) - set(STOP_WORDS.findall(own))
             if words:
                 print(f"(heard {', '.join(sorted(words))!r} while speaking)")
                 self.heard.set()
+                return
+            if self.barge:
+                new = _new_words(text, own)
+                self.strikes = self.strikes + 1 if new else 0
+                if self.strikes >= 2:              # twice in a row: someone really is talking
+                    print(f"(someone talked over me: {text.strip()!r})")
+                    self.barge_audio = audio
+                    self.heard.set()
         except Exception as e:
             print(f"(interrupt check failed: {str(e)[:120]})")
             self.model = None
         finally:
             self.busy.clear()
+
+
+_FILLER = {"you", "thank", "thanks", "the", "a", "uh", "um", "hmm", "oh", "so", "and", "i", "it", "is", "bye",
+           "watching", "for", "to", "of", "okay", "ok", "yeah", "music", "applause", "laughter"}
+
+
+def _new_words(heard, own):
+    """The words in what the mic heard that aren't his own (echo) or noise, if it looks like
+    a person talking: at least two of them, and most of what was heard."""
+    words = re.findall(r"[a-z']+", heard)
+    mine = set(re.findall(r"[a-z']+", own))
+    new = [w for w in words if w not in mine and w not in _FILLER]
+    return new if len(new) >= 2 and len(new) >= 0.6 * len(words) else []
+
+
+def clear_barge():
+    _barge.clear()
+
+
+def take_barge():
+    """(audio, his own words) if someone just talked over him, else (None, ""). Clears it."""
+    audio, own = _barge.pop("audio", None), _barge.pop("own", "")
+    return audio, own
 
 
 def _play(path, interruptible, stop, own_text=""):
@@ -278,6 +342,8 @@ def _play(path, interruptible, stop, own_text=""):
                 if det.feed(block[:, 0]) or spotter.feed(block[:, 0]):
                     proc.terminate()
                     stop.set()
+                    if spotter.barge_audio is not None:
+                        _barge.update(audio=spotter.audio.copy(), own=spotter.own())
                     print("(interrupted)")
                     return True
     except Exception as e:
@@ -292,36 +358,131 @@ def speaking():
 
 
 def say(text, interruptible=True):
-    """Speak text. Returns True if the user interrupted."""
+    """Speak text. Returns True if the user interrupted.
+    text can also be a brain answer that's still arriving (see say_stream)."""
+    if not isinstance(text, str):
+        return say_stream(text, interruptible)
+    print(f"Jarvis: {text}")
+    import display
+    display.log("jarvis", text)
+    return _speak(iter(_sentences(_speakable(text))), interruptible, text)
+
+
+def say_stream(pieces, interruptible=True):
+    """Speak text as it's being written (e.g. brain.think_stream), starting with the first
+    sentence. If it's slow to start (say, a web search), he says "one sec" first.
+    Returns True if the user interrupted."""
+    return _speak(_chunks(_hold_on(pieces, float(_cfg().get("hold_on_after", 3.5)))), interruptible, None,
+                  source=pieces)
+
+
+def _hold_on(pieces, after):
+    q = queue.Queue()
+
+    def feed():
+        try:
+            for piece in pieces:
+                q.put(piece)
+        except Exception as e:
+            print(f"(brain stream failed: {e})")
+        finally:
+            q.put(None)
+    threading.Thread(target=feed, daemon=True).start()
+    waiting = after > 0
+    while True:
+        try:
+            piece = q.get(timeout=after) if waiting else q.get()
+        except queue.Empty:
+            import personality
+            waiting = False
+            yield "\n" + personality.line("hold_on") + "\n"
+            continue
+        if piece is None:
+            return
+        if piece.strip():
+            waiting = False
+        yield piece
+
+
+def _drain(files):
+    """Deletes audio made after he was cut off."""
+    while True:
+        path = files.get()
+        if path is None:
+            return
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _speak(chunks, interruptible, text, source=None):
     import display
     with _speaking:
-        print(f"Jarvis: {text}")
-        display.log("jarvis", text)
-        display.update(status="speaking")
-        chunks = _sentences(_speakable(text))
+        if _barge.get("audio") is not None and CONVERSING.is_set():
+            return True                 # he was just talked over: let them finish instead of talking again
         files, stop = queue.Queue(), threading.Event()
+        said = []
+
+        def own():
+            return text or " ".join(said)
 
         def produce():
-            for chunk in chunks:
-                if stop.is_set():
-                    break
-                try:
-                    files.put(synthesize(chunk))
-                except Exception as e:
-                    print(f"(couldn't speak: {e})")
-                    break
-            files.put(None)
+            finished = False
+            try:
+                for chunk in chunks:
+                    if stop.is_set():
+                        break
+                    said.append(chunk)
+                    spoken = _speakable(chunk)
+                    if not spoken:
+                        continue
+                    try:
+                        path = synthesize(spoken)
+                    except Exception as e:
+                        print(f"(couldn't speak: {e})")
+                        break
+                    if stop.is_set():
+                        os.remove(path)
+                        break
+                    files.put(path)
+                else:
+                    finished = True
+            except Exception as e:
+                print(f"(couldn't keep talking: {e})")
+            finally:
+                if stop.is_set() or not finished:
+                    cancel = getattr(source, "cancel", None)
+                    if cancel:
+                        cancel()                   # stop the brain too if he stopped talking early
+                files.put(None)
 
         threading.Thread(target=produce, daemon=True).start()
-        interrupted = False
+        interrupted, started = False, False
         while True:
             path = files.get()
             if path is None:
                 break
             try:
+                if not started:
+                    started = True
+                    display.update(status="speaking")
                 if not interrupted:
-                    interrupted = _play(path, interruptible, stop, text)
+                    interrupted = _play(path, interruptible, stop, own)
             finally:
                 os.remove(path)
+            if interrupted:
+                cancel = getattr(source, "cancel", None)
+                if cancel:
+                    cancel()
+                threading.Thread(target=_drain, args=(files,), daemon=True).start()
+                break
+        full = own()
+        if text is None:
+            print(f"Jarvis: {full}" + (" (cut off)" if interrupted else ""))
+            if full:
+                display.log("jarvis", full)
+        SAID.append(full)
+        del SAID[:-20]
         display.update(status="listening")
         return interrupted

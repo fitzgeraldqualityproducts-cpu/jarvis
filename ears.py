@@ -1,5 +1,6 @@
 """Ears: wakes on a double clap or "Hey Jarvis", then listens for commands."""
 import json
+import re
 import time
 from pathlib import Path
 
@@ -102,14 +103,21 @@ def wait_for_double_clap(threshold=0.35):
 
 # ---------- recording a command ----------
 
-def record_phrase(start_timeout=8, max_seconds=15, silence_seconds=0.9):
+_room = {"noise": 150.0}      # how loud the room was last time (used when carrying on mid-sentence)
+
+
+def record_phrase(start_timeout=8, max_seconds=15, silence_seconds=0.9, preroll=None):
     """Wait up to start_timeout for speech, then record until a pause.
     Keeps half a second from before speech began so first words aren't clipped.
+    preroll: audio of someone who's already talking (they talked over Jarvis), to carry on from.
     Returns int16 audio or None if nobody spoke."""
     pre_roll = int(0.5 * RATE / BLOCK)
     history, frames = [], []
     started, quiet, voiced = False, 0.0, 0.0
     noise_levels = []
+    if preroll is not None and len(preroll):
+        frames, started, voiced = [preroll.astype(np.int16)], True, 0.3
+        noise_levels = [_room["noise"]] * 8
     with sd.InputStream(samplerate=RATE, channels=1, blocksize=BLOCK, dtype="int16") as stream:
         t0 = time.time()
         while True:
@@ -122,6 +130,8 @@ def record_phrase(start_timeout=8, max_seconds=15, silence_seconds=0.9):
                 history.append(block)
                 continue
             noise = float(np.median(noise_levels))
+            if not started:
+                _room["noise"] = noise
             speaking = level > max(noise * 2.5, 300)
             if not started:
                 history = (history + [block])[-pre_roll:]
@@ -235,10 +245,22 @@ def _identify(audio):
         print(f"(voice check failed: {e})")      # leaves the safe guess made in listen()
 
 
-def listen(max_seconds=8):
+def _strip_echo(text, own):
+    """Drop his own last words from the start of what was heard after someone talked over him."""
+    mine = set(re.findall(r"[a-z']+", own.lower()))
+    words = text.split()
+    n = 0
+    while n < min(len(words), 6) and re.sub(r"[^a-z']", "", words[n].lower()) in mine:
+        n += 1
+    return " ".join(words[n:]) if n < len(words) else text
+
+
+def listen(max_seconds=8, carry_on=None):
     """Returns what was said as text, or '' if nothing understood.
-    Also works out who said it (ears.SPEAKER) when group chat mode is set up."""
-    audio = record_phrase(start_timeout=max_seconds)
+    Also works out who said it (ears.SPEAKER) when group chat mode is set up.
+    carry_on: (audio, his words) from voice.take_barge(), when someone talked over him."""
+    preroll, own = carry_on if carry_on and carry_on[0] is not None else (None, "")
+    audio = record_phrase(start_timeout=max_seconds, preroll=preroll)
     if audio is None:
         print("(no speech detected)")
         return ""
@@ -254,5 +276,7 @@ def listen(max_seconds=8):
     who.start()                                   # runs alongside speech-to-text
     text = transcribe(audio)
     who.join(5)
+    if own and text:
+        text = _strip_echo(text, own)
     print(f"(heard {len(audio) / RATE:.1f}s, transcribed in {time.time() - start:.1f}s: {text!r})")
     return text

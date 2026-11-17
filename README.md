@@ -120,6 +120,24 @@ While he's talking, say **"stop"** or **"Jarvis"** (or "Hey Jarvis", or clap twi
 straight away and listens. "interrupt_words": false in config.json turns off the stop/Jarvis
 words (claps and "Hey Jarvis" still work).
 
+## Talk like a normal conversation
+- **Quick answers:** his brain's reply is spoken while it's still being written, so he starts
+  talking after the first sentence (a second or two) instead of waiting for the whole answer. If a
+  web search is slow he says "one sec" first ("hold_on_after" in config.json, seconds; 0 turns it off).
+- **Follow-ups:** after he answers, just keep talking. He listens for "follow_up_seconds"
+  (default 8) without "Hey Jarvis". Say "thanks" or "that's all" to send him to sleep.
+- **Talk over him:** in a spoken conversation, start talking while he's mid-answer and he stops and
+  listens to what you're saying. "barge_in": false turns that off (stop/Jarvis still work).
+  Group chat mode still checks who's talking.
+
+## Learns from what he can't do
+When a command fails or he has to say he can't do something, he notes it (lessons.json). While
+idle he has Claude Code look over his code (read-only) for a fix, and later offers it: "Earlier you
+asked me to ... I could add that. Want me to upgrade myself?" Say yes and he upgrades himself like
+any voice edit ("undo that" still works); say no, or just carry on, and he drops it. At most two
+offers a day. Ask **"any upgrade ideas?"** or **"what have you been struggling with?"** any time.
+Only you get these, not friends in group chat mode. "self_improve": false turns it off.
+
 ## Type to him
 His display has a **Type to Jarvis** box under the conversation (press / to jump to it). Type
 anything you'd say and he answers as usual. The menu bar / tray icon has **Type to Jarvis…** too.

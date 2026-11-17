@@ -48,6 +48,7 @@ import display  # noqa: E402
 import hands  # noqa: E402
 import inbox  # noqa: E402
 import keeper  # noqa: E402
+import learn  # noqa: E402
 import mac  # noqa: E402
 import obsidian  # noqa: E402
 import personality  # noqa: E402
@@ -81,7 +82,9 @@ CAPABILITIES = (
     "I can tell you the weather, your calendar and reminders, and give you a morning briefing. "
     "I can set reminders, timers and alarms, take notes (in Obsidian if you use it), answer questions about your notes, and remember things about you. "
     "I can open apps and websites, search Google or YouTube, close or switch apps, run your Shortcuts, "
-    "and control Spotify. Say stream mode when you go live and I'll read your Twitch chat out loud. And you can ask me anything else."
+    "and control Spotify. Say stream mode when you go live and I'll read your Twitch chat out loud. "
+    "After I answer, just keep talking, no need to say my name, and you can talk over me any time. "
+    "If I can't do something, I'll work out an upgrade and offer it to you. And you can ask me anything else."
 )
 
 
@@ -209,10 +212,15 @@ def continue_pending(t):
     if kind == "selfedit":
         request = PENDING.pop("request")
         asks = PENDING.pop("asks", 0)
-        LAST_SELF_EDIT.update(request=request, t=time.time())
+        idea = PENDING.pop("idea", None)        # an upgrade he suggested himself (learn.py)
         yes = re.search(r"\b(yes|yeah|yep|yup|sure|go ahead|do it|go for it|go through|proceed|ok|okay|"
                         r"please do|absolutely|correct|that's right|make it so|let's do it|send it)\b", t)
         no = re.fullmatch(r"(no|nope|nah|cancel|don't|do not|stop|never mind|forget it|leave it)( (thanks|thank you|it|that))?", t)
+        if idea and not yes and not no:
+            return None                         # he moved on: drop the suggestion and just do what he asked
+        if idea:
+            learn.answered(idea, bool(yes))
+        LAST_SELF_EDIT.update(request=request, t=time.time())
         if yes:
             return do_self_edit(request)
         if no:
@@ -368,7 +376,7 @@ def computer(t):
     m = re.fullmatch(r"(?:search (?:the web |the internet |online )?(?:for )?|look up|look online (?:for )?|"
                      r"find out|check online (?:for )?)\s*(.+)", t)
     if m:
-        return brain.think(f"Search the web and tell me: {original_case(m.group(1))}")
+        return brain.think_stream(f"Search the web and tell me: {original_case(m.group(1))}")
     if re.search(r"(what|which) shortcuts|list (my )?shortcuts", t):
         return mac.list_shortcuts()
     m = re.fullmatch(r"run (?:the |my )?shortcut (.+)", t) or re.fullmatch(r"run (?:the |my )?(.+?)(?: shortcut)?", t)
@@ -401,7 +409,8 @@ PRIVATE = re.compile(
     r"|\b(upgrade|update|edit|modify|reprogram|rewrite|change|fix|tweak|teach|improve) (yourself|your)\b"
     r"|\b(undo|revert|roll back|from now on|learn (how )?to)\b"
     r"|\b(discord|stream mode|going live|twitch|hype ?man|hype mode|butler|personality|vitals?|oura|readiness|hrv|"
-    r"how did i sleep|shortcuts?|e-?mails?|inbox|group chat mode|party mode|guest mode|voice ?prints?|check for updates)\b")
+    r"how did i sleep|shortcuts?|e-?mails?|inbox|group chat mode|party mode|guest mode|voice ?prints?|check for updates|"
+    r"upgrade ideas?|improvement ideas?|struggling with)\b")
 GUEST_OK = re.compile(r"\b(timer|alarm|time left|how long left|weather|youtube|google|blinker|cough|breath)\b")
 
 
@@ -429,7 +438,7 @@ def guest_reply(t, text):
             print(f"(guest skill error in {skill.__name__}: {e})")
             reply = None
         if reply:
-            return personality.flair(reply)
+            return personality.flair(reply) if isinstance(reply, str) else reply
     if re.search(r"\b(take|hit|rip) (a|the) blinker\b", t):
         import sfx
         voice.say(personality.line("blinker_start"))
@@ -438,7 +447,7 @@ def guest_reply(t, text):
     if "weather" in t and len(t) < 40 and not re.search(r"\b(in|at|for) (?!here\b|today\b|tomorrow\b)[a-z]", t):
         return weather.report()
     display.update(status="thinking")
-    return brain.guest_think(text, name, owner)
+    return brain.guest_think_stream(text, name, owner)
 
 
 def group_mode_command(t):
@@ -563,6 +572,8 @@ def handle(text, _part=False):
         LAST_SELF_EDIT.clear()
         voice.say(do_self_edit(request))
         return True
+    if ideas_command(t):
+        return True
     request = self_edit_request(t)
     if request:
         PENDING.update(kind="selfedit", request=request)
@@ -594,9 +605,10 @@ def handle(text, _part=False):
             reply = skill(t)
         except Exception as e:
             print(f"(skill error in {skill.__name__}: {e})")
+            learn.note(original_case(t), personality.line("error"), "error", f"{skill.__name__}: {type(e).__name__}: {e}")
             reply = personality.line("error")
         if reply:
-            voice.say(personality.flair(reply))
+            voice.say(personality.flair(reply) if isinstance(reply, str) else reply)
             # Once music is playing, step back so it doesn't drown out the next command.
             if skill is music and reply.startswith(("Playing", "Resuming")):
                 return False
@@ -609,16 +621,69 @@ def handle(text, _part=False):
         voice.say(weather.report())
         return True
     display.update(status="thinking")
-    voice.say(brain.think(text))
+    voice.say(brain.think_stream(text))       # starts talking as soon as the first sentence is ready
     return True
+
+
+IDEAS_RE = re.compile(r"\b(?:any|got any|have you got any|do you have any) (?:upgrade|improvement|self[- ]improvement) ideas?\b|"
+                      r"\bupgrade ideas?\b|how (?:could|can|would|should) you (?:improve|upgrade|get better|be better)\b")
+STRUGGLES_RE = re.compile(r"what (?:have you been|are you|were you) struggling with|"
+                          r"what (?:have you|did you) (?:struggle with|mess up|get wrong)|what couldn'?t you do")
+
+
+def ideas_command(t):
+    """Owner asks about self-improvement. Returns True if handled."""
+    if STRUGGLES_RE.search(t):
+        voice.say(learn.struggles())
+        return True
+    if not IDEAS_RE.search(t):
+        return False
+    idea = learn.next_offer(any_time=True)
+    if not idea:
+        voice.say("Give me a minute to look over what's tripped me up lately.", interruptible=False)
+        display.update(status="thinking")
+        idea = learn.think_about_it()
+    if not idea:
+        voice.say("Nothing I'd change right now. If I can't do something you ask, I'll note it and come up with a fix.")
+        return True
+    offer_idea(idea)
+    return True
+
+
+def offer_idea(idea):
+    learn.offered(idea["id"])
+    PENDING.update(kind="selfedit", request=idea["request"], idea=idea["id"])
+    voice.say(f"{idea['spoken'].rstrip('.')}. Want me to upgrade myself to do that?")
+
+
+def handle_and_learn(text):
+    """handle(), and if he couldn't help Connor, remember it so he can work out an upgrade.
+    Sometimes afterwards he suggests an upgrade he's worked out (learn.py)."""
+    before = len(voice.SAID)
+    awake = handle(text)
+    if not WHO.get("owner", True):
+        return awake
+    said = " ".join(voice.SAID[before:])
+    if learn.couldnt_help(said) and not PENDING:
+        learn.note(original_case(text), said)
+    if awake and not PENDING and not twitch.busy():
+        idea = learn.next_offer()
+        if idea:
+            offer_idea(idea)
+    return awake
 
 
 def conversation(get_input, how="clap", spoken=False):
     twitch.set_talking(True)
     TALKING.set()
+    voice.clear_barge()
+    if spoken:
+        voice.CONVERSING.set()          # he can be talked over while we're chatting
     try:
         _conversation(get_input, how, spoken)
     finally:
+        voice.CONVERSING.clear()
+        voice.clear_barge()
         TALKING.clear()
         twitch.set_talking(False)
 
@@ -642,7 +707,7 @@ def typed_loop():
             display.log("you", text)
             with HANDLE_LOCK:
                 WHO.update(owner=True, name=None)
-                handle(text)
+                handle_and_learn(text)
         except Exception:
             import traceback
             traceback.print_exc()
@@ -667,10 +732,13 @@ def _conversation(get_input, how="clap", spoken=False):
     note = updater.pop_note()
     if note:
         voice.say(note)
-    misses = 0
+    misses, follow_up = 0, False
     while misses < 2:
-        print("(listening for a command)")
-        text = get_input()
+        # After he answers, keep listening for a bit: no need to say "Hey Jarvis" again.
+        secs = CONFIG.get("follow_up_seconds", 8) if follow_up else CONFIG.get("listen_seconds", 8)
+        print("(listening for a follow-up)" if follow_up else "(listening for a command)")
+        display.update(status="listening")
+        text = get_input(secs)
         if not text:
             print("(heard nothing I understood)")
             misses += 1
@@ -681,7 +749,8 @@ def _conversation(get_input, how="clap", spoken=False):
         display.log("you", text)
         with HANDLE_LOCK:
             WHO.update(owner=who.get("owner", True), name=who.get("name"))
-            awake = handle(text)
+            awake = handle_and_learn(text)
+        follow_up = True
         if not awake:
             display.update(status="sleeping")
             return
@@ -716,7 +785,7 @@ def run_loop():
         spotify.duck()
         display.update(apps=hands.allowed_apps(), status="listening")
         try:
-            conversation(lambda: ears.listen(CONFIG.get("listen_seconds", 8)), how, spoken=True)
+            conversation(lambda secs=8: ears.listen(secs, carry_on=voice.take_barge()), how, spoken=True)
         finally:
             spotify.unduck()
 
@@ -737,9 +806,10 @@ def main():
         organizer.start_reminder_watch()
     if "--text" not in sys.argv:
         updater.start(is_busy, restart_jarvis)
+        learn.start(is_busy)
         threading.Thread(target=typed_loop, daemon=True, name="typed").start()
     if "--text" in sys.argv:
-        def typed():
+        def typed(secs=None):
             try:
                 return input("You: ").strip()
             except EOFError:
