@@ -298,8 +298,10 @@ def _stream(cmd, timeout, cwd, node, task):
                             body = block.get("content")
                             body = " ".join(x.get("text", "") for x in body if isinstance(x, dict)) \
                                 if isinstance(body, list) else str(body or "")
+                            denied = bool(re.search(r"no such tool available|not allowed|permission|disabled for this "
+                                                    r"session|requires approval", body, re.I))
                             _emit("blocked", node=node, task=task, tool=names.get(block.get("tool_use_id"), "tool"),
-                                  reason=body[:160])
+                                  reason=body[:160], denied=denied)
                         _emit("agent", node=node, task=task, status="analyzing", activity="reading tool results")
             elif kind == "result":
                 got = True
@@ -425,6 +427,17 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
         _emit("delegate", **{"from": "critic", "to": t["role"], "task": t["id"], "text": "Redo: " + notes[:200]})
         notes = f"\nThe critic reviewed your last attempt and wants this fixed: {notes}\nYour last attempt:\n" \
                 f"{t['result'][:5000]}\n"
+    if t["role"] == "store builder":
+        try:                                     # get StoreForge up before the agent needs it
+            import storeforge
+            _emit("agent", node=t["role"], task=t["id"], status="working", activity="starting StoreForge")
+            problem = storeforge.ensure_running()
+            if problem:
+                _emit("blocked", node=t["role"], task=t["id"], tool="StoreForge", reason=problem, denied=False)
+        except Exception as e:
+            print(f"(team: couldn't start StoreForge: {e})")
+        notes += "\nUse only the StoreForge tools (and web search). If StoreForge reports an error, don't look for " \
+                 "other ways in: say exactly what the error was and what the owner needs to do.\n"
     if t["role"] in ("coder", "code reviewer"):
         notes += "\nWrite any code or files in the current folder (the project's own folder). Keep it working " \
                  "and explain how to run it.\n"
@@ -804,7 +817,8 @@ def _reduce(events):
             if t is not None:
                 for x in reversed(t["tools"]):
                     if x["tool"] == e.get("tool") and not x.get("blocked"):
-                        x.update(blocked=True, reason=e.get("reason", ""))
+                        x.update(blocked=e.get("denied", True), failed=not e.get("denied", True),
+                                 reason=e.get("reason", ""))
                         break
         elif k == "writing":
             t = tasks.get(e.get("task"))

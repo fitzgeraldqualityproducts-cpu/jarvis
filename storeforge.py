@@ -80,30 +80,86 @@ def running():
         return False
 
 
-def ensure_running(wait=90):
-    """Starts StoreForge (npm run dev) if it isn't running. Returns None, or what went wrong."""
-    if running():
-        return None
-    f = folder()
-    if not f:
-        return "StoreForge isn't on this computer (set storeforge_path in Jarvis's config)."
+_start_lock = threading.Lock()
+
+
+def _log_problem(since):
+    """The real error from storeforge.log, written after `since` (a byte offset)."""
+    try:
+        with open(HERE / "storeforge.log", "rb") as f:
+            f.seek(since)
+            text = f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+    for pat in ("Could not locate the bindings file", "was compiled against a different Node.js version",
+                "EADDRINUSE", "Cannot find module", "command not found", "Error:"):
+        k = text.find(pat)
+        if k >= 0:
+            return text[k:k + 200].splitlines()[0].strip()
+    return ""
+
+
+def _start(f):
     npm = "npm.cmd" if sys.platform == "win32" else "npm"
     env = dict(os.environ)
     env["PATH"] = env.get("PATH", "") + os.pathsep + os.pathsep.join(
         ["/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/.npm-global/bin")])
     log = open(HERE / "storeforge.log", "a")
-    try:
-        subprocess.Popen([npm, "run", "dev"], cwd=str(f), stdout=log, stderr=log, stdin=subprocess.DEVNULL,
-                         env=env, start_new_session=sys.platform != "win32")
-    except OSError as e:
-        return f"Couldn't start StoreForge: {e}"
-    print("(started StoreForge)")
-    end = time.time() + wait
-    while time.time() < end:
-        time.sleep(3)
+    return subprocess.Popen([npm, "run", "dev"], cwd=str(f), stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+                            env=env, start_new_session=sys.platform != "win32"), env
+
+
+def _rebuild_sqlite(f, env):
+    """StoreForge's database driver (better-sqlite3) is a compiled part that has to match this
+    computer's Node.js. If it's missing, rebuild it in StoreForge's own folder (npm rebuild)."""
+    npm = "npm.cmd" if sys.platform == "win32" else "npm"
+    print("(StoreForge: rebuilding its database driver for this Node.js)")
+    with open(HERE / "storeforge.log", "a") as log:
+        r = subprocess.run([npm, "rebuild", "better-sqlite3"], cwd=str(f), stdout=log, stderr=log,
+                           stdin=subprocess.DEVNULL, env=env, timeout=600)
+    return r.returncode == 0
+
+
+def ensure_running(wait=90):
+    """Starts StoreForge (npm run dev) if it isn't running, and fixes the usual start-up problems
+    (a one-off Next.js notice that stops the first start, a database driver built for another
+    Node.js). Returns None, or what went wrong, in plain words."""
+    if running():
+        return None
+    f = folder()
+    if not f:
+        return "StoreForge isn't on this computer (set storeforge_path in Jarvis's config)."
+    with _start_lock:
         if running():
             return None
-    return "StoreForge didn't start in time. Check storeforge.log in Jarvis's folder."
+        rebuilt, problem = False, ""
+        for attempt in range(3):
+            try:
+                since = (HERE / "storeforge.log").stat().st_size
+            except OSError:
+                since = 0
+            try:
+                proc, env = _start(f)
+            except OSError as e:
+                return f"Couldn't start StoreForge: {e}"
+            print(f"(started StoreForge, try {attempt + 1})")
+            end = time.time() + wait
+            while time.time() < end:
+                time.sleep(3)
+                if running():
+                    return None
+                if proc.poll() is not None:          # it stopped by itself
+                    break
+            problem = _log_problem(since)
+            if proc.poll() is None:
+                proc.terminate()
+            if "bindings file" in problem or "different Node.js version" in problem:
+                if rebuilt or not _rebuild_sqlite(f, env):
+                    return ("StoreForge won't start: its database driver (better-sqlite3) needs rebuilding for "
+                            "this Mac's Node.js, and the rebuild didn't work. In Terminal: cd ~/storeforge && "
+                            "npm rebuild better-sqlite3")
+                rebuilt = True
+        return "StoreForge didn't start" + (f": {problem}" if problem else ". Check storeforge.log in Jarvis's folder.")
 
 
 def capabilities():
