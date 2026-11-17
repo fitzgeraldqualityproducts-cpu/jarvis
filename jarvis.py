@@ -54,6 +54,7 @@ import obsidian  # noqa: E402
 import personality  # noqa: E402
 import memory  # noqa: E402
 import organizer  # noqa: E402
+import predict  # noqa: E402
 import selfedit  # noqa: E402
 import speaker  # noqa: E402
 import spotify_control as spotify  # noqa: E402
@@ -62,6 +63,7 @@ import twitch  # noqa: E402
 import updater  # noqa: E402
 import voice  # noqa: E402
 import weather  # noqa: E402
+import workforce  # noqa: E402
 
 CONFIG = json.loads(Path(__file__).with_name("config.json").read_text())
 SLEEP_RE = re.compile(r"(ok |okay |thanks |thank you )?(goodbye|bye|go to sleep|sleep|that's all|thats all|that is all|"
@@ -84,7 +86,11 @@ CAPABILITIES = (
     "I can open apps and websites, search Google or YouTube, close or switch apps, run your Shortcuts, "
     "and control Spotify. Say stream mode when you go live and I'll read your Twitch chat out loud. "
     "After I answer, just keep talking, no need to say my name, and you can talk over me any time. "
-    "If I can't do something, I'll work out an upgrade and offer it to you. And you can ask me anything else."
+    "I learn your routines and offer them before you ask, give you a heads-up before events, and say what do you "
+    "think I need to hear what's coming. For bigger jobs, say get the team on, then what you want, and my AI team "
+    "of researchers, planners, coders and strategists will work on it in the background. "
+    "If I can't do something, I'll work out an upgrade and offer it to you, and say review yourself for my report "
+    "card. And you can ask me anything else."
 )
 
 
@@ -200,6 +206,7 @@ def do_self_edit(request):
     voice.say(personality.line("working"), interruptible=False)
     display.update(status="thinking")
     reply, restart = selfedit.apply(request)
+    learn.record_result("upgrade", request[:150], restart, detail=reply)
     if restart:
         voice.say(reply + " Restarting now to load it.", interruptible=False)
         selfedit.restart()
@@ -410,7 +417,9 @@ PRIVATE = re.compile(
     r"|\b(undo|revert|roll back|from now on|learn (how )?to)\b"
     r"|\b(discord|stream mode|going live|twitch|hype ?man|hype mode|butler|personality|vitals?|oura|readiness|hrv|"
     r"how did i sleep|shortcuts?|e-?mails?|inbox|group chat mode|party mode|guest mode|voice ?prints?|check for updates|self[- ]?(check|test)|diagnostics?|"
-    r"upgrade ideas?|improvement ideas?|struggling with)\b")
+    r"upgrade ideas?|improvement ideas?|struggling with|(?:your|the|ai) (?:ai )?(?:team|agents|crew|workforce)|"
+    r"report|my routines?|my habits?|noticed about me|what do (you think )?i need|review yourself|"
+    r"how have you been doing|your rules)\b")
 GUEST_OK = re.compile(r"\b(timer|alarm|time left|how long left|weather|youtube|google|blinker|cough|breath)\b")
 
 
@@ -480,7 +489,7 @@ def handle(text, _part=False):
     t = re.sub(r"^\s*(?:please\s+|can you\s+|could you\s+|would you\s+)*", "", t)
     t = re.sub(r"\b(play|open|add|remind me)\s+(?:\1\s+)+", r"\1 ", re.sub(r"\s+", " ", t)).strip(" .?!,")
     # "open Safari and open YouTube" -> two commands, done in order
-    if not _part and not PENDING and not re.search(r"new tab in", t):
+    if not _part and not PENDING and not re.search(r"new tab in|\b(team|agents|crew|workforce|project)\b", t):
         parts = re.split(r",?\s+(?:and then|and|then)\s+(?=" + COMMAND_START + ")", t)
         if len(parts) > 1 and all(re.match(COMMAND_START, p) for p in parts):
             awake = True
@@ -490,6 +499,10 @@ def handle(text, _part=False):
     if re.fullmatch(r"(stop talking|shut up|be quiet|quiet|hush|enough|that's enough|ok stop|okay stop|stop stop)", t):
         return True                     # he's already stopped: just listen for what's next
     if not t or SLEEP_RE.fullmatch(t):
+        if PENDING.get("kind") == "predict":          # "no thanks" to a suggestion still counts as a no
+            predict.answered(PENDING["key"], False)
+        elif PENDING.get("kind") == "rule":
+            learn.answered(PENDING["idea"], False)
         PENDING.clear()
         voice.say(personality.line("sleep"))
         return False
@@ -547,6 +560,10 @@ def handle(text, _part=False):
         sfx.blinker()
         voice.say(personality.line("blinker_end"))
         return True
+    if PENDING.get("kind") in ("predict", "rule"):
+        said = answer_suggestion(t)
+        if said is not None:
+            return said
     if PENDING:
         if re.fullmatch(r"(no|cancel|forget it|never mind)", t) and PENDING.get("kind") != "selfedit":
             PENDING.clear()
@@ -572,7 +589,7 @@ def handle(text, _part=False):
         LAST_SELF_EDIT.clear()
         voice.say(do_self_edit(request))
         return True
-    if ideas_command(t):
+    if ideas_command(t) or team_command(t) or predict_command(t):
         return True
     request = self_edit_request(t)
     if request:
@@ -607,14 +624,17 @@ def handle(text, _part=False):
         voice.say("I can open " + (", ".join(apps) if apps else "nothing at the moment") + ", and most websites.")
         return True
     for skill in (organize, computer, music):
+        failed = False
         try:
             reply = skill(t)
         except Exception as e:
             print(f"(skill error in {skill.__name__}: {e})")
             learn.note(original_case(t), personality.line("error"), "error", f"{skill.__name__}: {type(e).__name__}: {e}")
-            reply = personality.line("error")
+            reply, failed = personality.line("error"), True
         if reply:
             voice.say(personality.flair(reply) if isinstance(reply, str) else reply)
+            if not failed:
+                predict.record(original_case(t), skill.__name__)      # learning his routines
             # Once music is playing, step back so it doesn't drown out the next command.
             if skill is music and reply.startswith(("Playing", "Resuming")):
                 return False
@@ -622,9 +642,11 @@ def handle(text, _part=False):
     m = re.fullmatch(r"(?:open|launch|start|start up|pull up|turn on|fire up|bring up)\s+(?:up\s+)?(.+)", t)
     if m:
         voice.say(mac.open_thing(m.group(1)))
+        predict.record(original_case(t), "open")
         return True
     if "weather" in t and len(t) < 40 and not re.search(r"\b(in|at|for) (?!here\b|today\b|tomorrow\b)[a-z]", t):
         voice.say(weather.report())
+        predict.record(original_case(t), "weather")
         return True
     display.update(status="thinking")
     voice.say(brain.think_stream(text))       # starts talking as soon as the first sentence is ready
@@ -642,6 +664,21 @@ def ideas_command(t):
     if STRUGGLES_RE.search(t):
         voice.say(learn.struggles())
         return True
+    if RULES_RE.search(t):
+        voice.say(learn.forget_rules() if re.search(r"\b(forget|clear|drop|delete|reset)\b", t) else learn.rules_summary())
+        return True
+    if REVIEW_RE.search(t):
+        voice.say(learn.review())
+        idea = learn.next_offer(any_time=True)
+        if not idea:
+            voice.say("Let me think about what I could do better.", interruptible=False)
+            display.update(status="thinking")
+            idea = learn.think_about_it(review=True)
+        if idea:
+            offer_idea(idea)
+        else:
+            voice.say("I can't see anything worth changing right now.")
+        return True
     if not IDEAS_RE.search(t):
         return False
     idea = learn.next_offer(any_time=True)
@@ -658,25 +695,167 @@ def ideas_command(t):
 
 def offer_idea(idea):
     learn.offered(idea["id"])
+    if idea.get("type") == "rule":
+        PENDING.clear()
+        PENDING.update(kind="rule", rule=idea["rule"], idea=idea["id"])
+        voice.say(f"{idea['spoken'].rstrip('.')}. Want me to make that a rule for myself?")
+        return
     PENDING.update(kind="selfedit", request=idea["request"], idea=idea["id"])
     voice.say(f"{idea['spoken'].rstrip('.')}. Want me to upgrade myself to do that?")
+
+
+YES_RE = re.compile(r"\b(yes|yeah|yep|yup|sure|go ahead|do it|go for it|please|ok|okay|absolutely|bet|"
+                    r"let's do it|why not|sounds good)\b")
+NO_RE = re.compile(r"(no|nope|nah|not now|not today|no thanks|no thank you|don't|skip it|maybe later|later|"
+                   r"never mind|cancel)( (thanks|thank you|jarvis))?")
+
+
+def answer_suggestion(t):
+    """Connor's answer to a routine he was offered (predict) or a rule for himself (learn).
+    Returns handle()'s result, or None if he's moved on to something else."""
+    kind = PENDING.get("kind")
+    yes, no = YES_RE.search(t) and len(t.split()) <= 6, NO_RE.fullmatch(t)
+    if not yes and not no:
+        PENDING.clear()                          # he moved on: just do what he asked
+        return None
+    item = dict(PENDING)
+    PENDING.clear()
+    if kind == "predict":
+        predict.answered(item["key"], bool(yes))
+        if no:
+            voice.say(personality.line("no_problem"))
+            return True
+        return handle(item["command"], _part=True)
+    learn.answered(item["idea"], bool(yes))
+    if yes:
+        learn.add_rule(item["rule"])
+        voice.say("Done. That's a rule for me from now on. Say what rules have you learned to hear them.")
+    else:
+        voice.say("Fair enough, I'll keep doing it my way.")
+    return True
+
+
+def maybe_suggest():
+    """If now's when Connor usually does something, offer it. True if he offered."""
+    if PENDING or not WHO.get("owner", True):
+        return False
+    r = predict.next_suggestion()
+    if not r:
+        return False
+    predict.offered(r["key"])
+    PENDING.update(kind="predict", key=r["key"], command=r["said"])
+    voice.say(predict.suggestion_line(r))
+    return True
+
+
+TEAM_START = [
+    re.compile(r"(?:get|put|have|send|set|ask|use) (?:the |your |my )?(?:ai )?(?:team|agents|crew|workforce|squad|specialists)"
+               r"(?: to work)?(?: on| to| onto| for)? (.+)"),
+    re.compile(r"(?:assemble|start|spin up|launch|call in|bring in) (?:the |a |your |my )?(?:ai )?(?:team|agents|crew|workforce)"
+               r"(?: to| for| on)? (.+)"),
+    re.compile(r"(?:start|kick off|begin) (?:a |an )?(?:new )?(?:team )?project (?:to |on |about |for )?(.+)"),
+]
+TEAM_STATUS = re.compile(r"\b(?:how'?s|how is|what'?s|what is|is) (?:the |my |your )?(?:ai )?(?:team|agents|crew|workforce)"
+                         r"(?: doing| working on| up to| done| finished| busy)?\b|\bteam status\b|status of (?:the|my) team")
+TEAM_REPORT = re.compile(r"\bread (?:me )?(?:the |my |your )?(?:last |latest |team'?s? |new )*report\b|"
+                         r"what did (?:the|my|your) (?:ai )?(?:team|agents|crew) (?:find|come up with|do|say|make)")
+TEAM_CANCEL = re.compile(r"\b(?:cancel|stop|call off|abort|kill) (?:the |my |your )?(?:ai )?(?:team|agents|crew|team project|project)\b")
+TEAM_ROSTER = re.compile(r"who(?:'?s| is| are)? (?:on |in )?(?:your|the) (?:ai )?(?:team|agents|crew)|who are your agents|"
+                         r"what agents do you have")
+
+
+def team_command(t):
+    """The AI team (workforce.py). Returns True if handled."""
+    if TEAM_CANCEL.search(t):
+        voice.say(workforce.cancel())
+        return True
+    if TEAM_ROSTER.search(t):
+        voice.say(workforce.roster())
+        return True
+    if TEAM_REPORT.search(t):
+        voice.say(workforce.report())
+        offer_team_change()
+        return True
+    if TEAM_STATUS.search(t) and not re.search(r"\b(?:on|to) (?!it\b)\w+ \w+", t.split("team", 1)[-1]):
+        voice.say(workforce.status())
+        return True
+    for pattern in TEAM_START:
+        m = pattern.fullmatch(t)
+        if m and len(m.group(1).split()) >= 2:
+            goal = original_case(m.group(1))
+            voice.say(workforce.start(goal))
+            return True
+    return False
+
+
+def offer_team_change():
+    """If the team's last project worked out a change to Jarvis himself, ask before doing it."""
+    p = workforce.latest()
+    if p and p.get("status") == "done" and p.get("jarvis_change") and not p.get("change_offered") and not PENDING:
+        workforce._update(p["id"], change_offered=True)
+        PENDING.update(kind="selfedit", request=p["jarvis_change"])
+        voice.say(f"They also worked out a change to me: {p['jarvis_change']}. Shall I go ahead and make it?")
+
+
+def tell_team_news():
+    """In a conversation: say if the team has finished something."""
+    n = workforce.news()
+    if n:
+        workforce.told(n[0])
+        voice.say(n[1])
+        offer_team_change()
+
+
+ROUTINES_RE = re.compile(r"what (?:have you|did you) (?:noticed|learn(?:ed|t)?|picked up) about me|"
+                         r"\b(?:my|what are my|tell me my) (?:routines?|habits?|patterns?)\b|what do i usually do")
+NEEDS_RE = re.compile(r"what (?:do you think )?(?:do )?i(?:'ll| will)? (?:need|want)(?: today| next| tomorrow| now)?\b|"
+                      r"any (?:suggestions|predictions|recommendations)\b|what should i (?:do|focus on|work on) "
+                      r"(?:next|now|today|tomorrow)|predict (?:my|what)|what'?s coming up")
+REVIEW_RE = re.compile(r"\breview yourself\b|\bself[- ]review\b|how have you been doing|how are you doing at your job|"
+                       r"(?:your|give me your) report card|how did you do this week|evaluate yourself|rate yourself")
+RULES_RE = re.compile(r"what rules (?:have you|did you) (?:learned|learnt|learn|made)|what are your rules|"
+                      r"(?:forget|clear|drop|delete|reset) (?:all )?(?:of )?your (?:learned |own )?rules|list your rules")
+
+
+def predict_command(t):
+    """Predictive commands. Returns True if handled."""
+    if ROUTINES_RE.search(t):
+        voice.say(predict.routines_summary())
+        return True
+    if NEEDS_RE.search(t):
+        voice.say("Let me look at what's coming up.", interruptible=False)
+        display.update(status="thinking")
+        when = "tomorrow" if "tomorrow" in t else "for the rest of today"
+        said = predict.look_ahead(when)
+        voice.say(said or "Nothing jumps out. Your day looks under control.")
+        return True
+    return False
 
 
 def handle_and_learn(text):
     """handle(), and if he couldn't help Connor, remember it so he can work out an upgrade.
     Sometimes afterwards he suggests an upgrade he's worked out (learn.py)."""
     before = len(voice.SAID)
+    last = dict(LAST_EXCHANGE)
+    if WHO.get("owner", True) and last and time.time() - last.get("t", 0) < 120 and learn.is_correction(text):
+        learn.note(last["asked"], last["said"], "corrected", f"Connor then said: {text}")
     awake = handle(text)
     if not WHO.get("owner", True):
         return awake
     said = " ".join(voice.SAID[before:])
+    LAST_EXCHANGE.update(asked=original_case(text), said=said[:400], t=time.time())
     if learn.couldnt_help(said) and not PENDING:
         learn.note(original_case(text), said)
     if awake and not PENDING and not twitch.busy():
         idea = learn.next_offer()
         if idea:
             offer_idea(idea)
+        else:
+            maybe_suggest()
     return awake
+
+
+LAST_EXCHANGE = {}      # what Connor last asked and what Jarvis said, to notice when he's corrected
 
 
 def conversation(get_input, how="clap", spoken=False):
@@ -692,6 +871,45 @@ def conversation(get_input, how="clap", spoken=False):
         voice.clear_barge()
         TALKING.clear()
         twitch.set_talking(False)
+
+
+def speak_up_loop():
+    """Things he says without being asked, when nobody's talking to him: a heads-up before a calendar
+    event, and when his team finishes a project (not late at night)."""
+    time.sleep(60)
+    while True:
+        try:
+            if not PAUSED.is_set() and not is_busy() and CONFIG.get("speak_up", True):
+                hour = datetime.datetime.now().hour
+                quiet = CONFIG.get("quiet_hours", [23, 8])
+                late = (hour >= quiet[0] or hour < quiet[1]) if quiet[0] > quiet[1] else quiet[0] <= hour < quiet[1]
+                h = predict.heads_up()
+                if h and speak_up(h[1]):
+                    predict.warned(h[0])
+                n = None if late else workforce.news()
+                if n and speak_up(n[1]):
+                    workforce.told(n[0])
+        except Exception as e:
+            print(f"(speak-up failed: {e})")
+        time.sleep(30)
+
+
+def speak_up(text):
+    """Say something he thought of himself. False if he's busy (he'll try again later)."""
+    if not HANDLE_LOCK.acquire(blocking=False):
+        return False
+    try:
+        if is_busy() or PAUSED.is_set():
+            return False
+        TYPING.set()                # keeps his own voice from waking him
+        try:
+            voice.say(text)
+        finally:
+            TYPING.clear()
+            display.update(status="sleeping")
+        return True
+    finally:
+        HANDLE_LOCK.release()
 
 
 def restart_jarvis():
@@ -738,6 +956,14 @@ def _conversation(get_input, how="clap", spoken=False):
     note = updater.pop_note()
     if note:
         voice.say(note)
+    with HANDLE_LOCK:
+        WHO.update(owner=True, name=None)
+        try:
+            tell_team_news()
+            if how != "wake":
+                maybe_suggest()
+        except Exception as e:
+            print(f"(couldn't share news: {e})")
     misses, follow_up = 0, False
     while misses < 2:
         # After he answers, keep listening for a bit: no need to say "Hey Jarvis" again.
@@ -814,6 +1040,8 @@ def main():
         updater.start(is_busy, restart_jarvis)
         updater.verify_on_start(restart_jarvis, is_busy)      # after an update: check the new version works
         learn.start(is_busy)
+        predict.start(is_busy)
+        threading.Thread(target=speak_up_loop, daemon=True, name="speak-up").start()
         threading.Thread(target=typed_loop, daemon=True, name="typed").start()
     if "--text" in sys.argv:
         def typed(secs=None):

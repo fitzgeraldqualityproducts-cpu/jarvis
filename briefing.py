@@ -46,6 +46,13 @@ def full():
                 parts.append(todos)
     except Exception as e:
         print(f"(obsidian to-dos failed: {e})")
+    try:
+        import predict
+        ahead = predict.insight_today()
+        if ahead:
+            parts.append("Looking ahead: " + ahead)
+    except Exception as e:
+        print(f"(look-ahead failed: {e})")
     news = headlines()
     if news:
         parts.append("In the news: " + ". ".join(news) + ".")

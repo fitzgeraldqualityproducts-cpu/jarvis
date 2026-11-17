@@ -143,6 +143,42 @@ any voice edit ("undo that" still works); say no, or just carry on, and he drops
 offers a day. Ask **"any upgrade ideas?"** or **"what have you been struggling with?"** any time.
 Only you get these, not friends in group chat mode. "self_improve": false turns it off.
 
+**Self-improving:** he also keeps score: when you correct him ("no, that's not what I asked"),
+whether you take up the routines he suggests, his team's project scores, and whether his upgrades
+work. Once a week (while idle) he reviews it all and works out one improvement: either a code change
+(offered as above) or a new **rule** for how he works, like "keep weather answers to one sentence".
+Rules need no code change: after you say yes, they go into every answer and every team job.
+Say **"review yourself"** for his report card and an idea, **"what rules have you learned"**, or
+**"forget your rules"**.
+
+## Predicts what you need
+- **Routines:** he notes what you ask him and when (habits.json, on this computer only). When you've
+  done the same thing around the same time on 3+ different days, he offers it around then: "You
+  usually ask me to play Dead Fresh around this time. Want me to?" Say yes and he does it; say no
+  twice and he stops offering that one. At most 3 a day. **"What have you noticed about me?"** lists them.
+- **Heads-up:** a few minutes before each event on today's calendar he tells you, out loud, if he's
+  not busy ("heads_up_minutes", default 10).
+- **Looking ahead:** once a day he looks over your calendar, reminders, routines, Obsidian to-dos,
+  what he knows about you and his team's projects, and works out what you'll need. It's in the
+  morning briefing ("Looking ahead: ..."). Ask **"what do you think I need?"** any time (or "tomorrow").
+"predictive": false turns it off; "speak_up": false stops him speaking up unasked.
+
+## His AI team
+Say **"get the team on ..."** (or "have your agents research ...", "start a project to ...") for
+bigger jobs: research, planning, business ideas, writing or code. A team lead splits the job between
+16 specialists (researcher, market analyst, fact checker, trend scout, planner, project manager,
+business strategist, finance analyst, marketer, designer, coder, code reviewer, writer, editor, coach,
+devil's advocate). Ones that don't need each other work at the same time; the rest get their
+teammates' work passed along. A critic scores the result and sends weak parts back to be redone,
+then the lead writes a report. It all happens in the background, so keep talking to him; he tells
+you when they're done (not between 11pm and 8am, "quiet_hours").
+- **"How's the team doing?"**, **"read me the report"**, **"who's on your team?"**, **"call off the team"**.
+- Reports are in the **team** folder here (and "Jarvis Team" in Obsidian if you use it).
+- The agents can only search the web, think, and write files in their own project folder. They
+  can't send, post, buy, delete or change your stuff or Jarvis. Anything like that is listed in the
+  report under "Needs your OK", and a change to Jarvis himself is only made if you say yes.
+- Each project uses your Claude plan like several questions do. "team": false turns it off.
+
 ## Type to him
 His display has a **Type to Jarvis** box under the conversation (press / to jump to it). Type
 anything you'd say and he answers as usual. The menu bar / tray icon has **Type to Jarvis…** too.
