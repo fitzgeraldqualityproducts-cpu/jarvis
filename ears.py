@@ -173,9 +173,20 @@ def whisper_model():
         return _whisper or None
 
 
+def _preload_speaker():
+    try:
+        import speaker
+        if speaker.enrolled():
+            speaker.model()
+            print(f"(group chat mode: {'on' if speaker.group_mode() else 'off'}, I know {speaker.owner_name()}'s voice)")
+    except Exception as e:
+        print(f"(voice recognition unavailable: {e})")
+
+
 def preload():
     """Load models in the background so the first command is quick."""
     __import__("threading").Thread(target=whisper_model, daemon=True).start()
+    __import__("threading").Thread(target=_preload_speaker, daemon=True).start()
 
 
 def _vocabulary():
@@ -213,14 +224,35 @@ def transcribe(audio):
 _recognizer = sr.Recognizer()
 
 
+SPEAKER = {"name": None, "owner": True, "score": 1.0}   # who said the last thing (group chat mode)
+
+
+def _identify(audio):
+    try:
+        import speaker
+        SPEAKER.update(speaker.identify(audio))
+    except Exception as e:
+        print(f"(voice check failed: {e})")      # leaves the safe guess made in listen()
+
+
 def listen(max_seconds=8):
-    """Returns what was said as text, or '' if nothing understood."""
+    """Returns what was said as text, or '' if nothing understood.
+    Also works out who said it (ears.SPEAKER) when group chat mode is set up."""
     audio = record_phrase(start_timeout=max_seconds)
     if audio is None:
         print("(no speech detected)")
         return ""
     display.update(status="thinking")
     start = time.time()
+    try:
+        import speaker
+        locked = speaker.group_mode()
+    except Exception:
+        locked = False
+    SPEAKER.update(name=None, owner=not locked, score=0.0)   # if the check is slow, assume a guest
+    who = __import__("threading").Thread(target=_identify, args=(audio,), daemon=True)
+    who.start()                                   # runs alongside speech-to-text
     text = transcribe(audio)
+    who.join(5)
     print(f"(heard {len(audio) / RATE:.1f}s, transcribed in {time.time() - start:.1f}s: {text!r})")
     return text
