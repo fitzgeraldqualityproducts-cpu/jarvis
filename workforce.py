@@ -448,7 +448,7 @@ def report():
         steps = re.search(r"#+\s*Next steps\s*\n(.+?)(?:\n#|\Z)", md, re.S | re.I)
         if steps:
             items = [re.sub(r"^\s*(?:[-*]|\d+[.)])\s*|\*\*", "", l).strip() for l in steps.group(1).splitlines()]
-            items = [i for i in items if re.search(r"\w", i)][:3]
+            items = [i.replace("`", "").rstrip(" .;") for i in items if re.search(r"\w", i)][:3]
             if items:
                 text += " Next steps: " + "; ".join(items) + "."
     except Exception:
