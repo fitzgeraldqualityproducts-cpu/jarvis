@@ -112,7 +112,12 @@ he starts, and every 3 hours, Jarvis checks it (updater.py). He merges the new v
 voice edits, installs any new parts, checks that he still works (and undoes the update if not), then
 restarts when you're not talking to him and tells you what's new the next time you wake him.
 Your settings, memory, calendar, tokens and notes are never touched.
-- "Check for updates" checks right now; "what's new?" repeats the last update.
+- Before and after installing an update, and again when he starts on the new version, he runs a
+  self-check (selftest.py): his code and modules, his voice, his brain, the microphone and the speaker.
+  If something that worked before is broken, he reinstalls his Python parts, and if that doesn't fix
+  it he undoes the update and tells you next time you wake him. "self_test": false turns it off.
+- "Check for updates" checks right now; "what's new?" repeats the last update;
+  "run a self check" tells you whether everything's working.
 - "auto_update": false in config.json turns it off; "update_repo" points it somewhere else.
 
 ## Cut him off

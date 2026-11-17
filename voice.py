@@ -6,8 +6,11 @@ Engines, best first (set "voice_engine" in config.json, or leave on "auto"):
   edge        Microsoft's online voice (the original)
   say         built-in macOS (or Windows) voice, last resort
 
-Long replies are spoken sentence by sentence, so he starts talking sooner. Answers from the brain
+Long replies are spoken a phrase at a time, so he starts talking sooner. Answers from the brain
 are spoken while they're still being written (say_stream), so he starts within a second or two.
+The Kokoro voice is made in memory (on Windows it plays straight from there), the microphone that
+listens for "stop" stays open the whole time instead of reopening for every sentence, and the
+next phrase is made while he's still saying the current one, so there are no gaps.
 Saying "stop", "Jarvis" or "Hey Jarvis", or clapping twice, while he talks cuts him off
 (set "interrupt": false in config.json to turn that off, "interrupt_words": false for just claps
 and "Hey Jarvis"). In a conversation you can also just start talking over him: he stops and
@@ -22,6 +25,7 @@ import sys
 import tempfile
 import threading
 import urllib.request
+import time
 import wave
 from pathlib import Path
 
@@ -32,6 +36,8 @@ _speaking = threading.Lock()
 SAID = []                       # everything he's said lately (jarvis.py uses it to notice when he couldn't help)
 CONVERSING = threading.Event()  # set by jarvis.py during a spoken conversation: talking over him is allowed then
 _barge = {}                     # what was heard when someone talked over him, for ears.listen to carry on from
+LAST_START = {}                 # how long the last reply took to start playing (for the self-check)
+_mirrors = []                   # (wanted, send): other places his voice also goes, e.g. a Discord call
 
 
 def _cfg():
@@ -68,14 +74,24 @@ def _sentences(text):
 _END = re.compile(r"(?<=[.!?])[\"')\]]*\s+|\n+")
 
 
+_PAUSE = re.compile(r"[,;:]\s+|\s+(?:-|–|—)\s+")
+
+
 def _chunks(pieces):
     """Turns text arriving in pieces into speakable chunks. The first comes out as soon as
-    there's a whole short sentence, so he can start talking straight away."""
-    buf, need = "", 12
+    there's a short phrase (up to the first comma or full stop), so he can start talking
+    straight away; the next is short too (so it's ready before the first ends), then the
+    rest come a sentence or so at a time."""
+    buf, need, n = "", 12, 0
     for piece in pieces:
         buf += piece
         while True:
             cut = next((m.end() for m in _END.finditer(buf) if len(buf[:m.start()].strip()) >= need), None)
+            if n < 2:                                 # the first two phrases: a comma is enough
+                comma = next((m.end() for m in _PAUSE.finditer(buf)
+                              if len(buf[:m.start()].strip()) >= (10, 25)[n]), None)
+                if comma is not None and (cut is None or comma < cut):
+                    cut = comma
             if cut is None and len(buf) > 160:        # a long sentence with no full stop yet
                 i = buf.rfind(", ", 60)
                 cut = i + 2 if i > 0 else None
@@ -84,7 +100,7 @@ def _chunks(pieces):
             chunk, buf = buf[:cut].strip(), buf[cut:]
             if chunk:
                 yield chunk
-                need = 40
+                need, n = 40, n + 1
     if buf.strip():
         yield buf.strip()
 
@@ -130,19 +146,48 @@ def kokoro_model():
         return _kokoro
 
 
-def _kokoro_tts(text):
+class Clip:
+    """Speech kept in memory (float samples, -1..1, mono) so it can play without a file."""
+
+    def __init__(self, samples, rate):
+        import numpy as np
+        self.samples = _trim(np.asarray(samples, dtype=np.float32).reshape(-1), rate)
+        self.rate = int(rate)
+
+    def seconds(self):
+        return len(self.samples) / self.rate
+
+    def to_file(self):
+        import numpy as np
+        pcm = (np.clip(self.samples, -1, 1) * 32767).astype(np.int16)
+        path = _tmp(".wav")
+        with wave.open(path, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(self.rate)
+            w.writeframes(pcm.tobytes())
+        return path
+
+
+def _trim(samples, rate):
+    """Cuts long silence off the ends (keeps a natural little pause)."""
     import numpy as np
+    loud = np.flatnonzero(np.abs(samples) > 0.01)
+    if not len(loud):
+        return samples
+    pad = int(0.06 * rate)
+    return samples[max(0, loud[0] - pad):loud[-1] + int(0.12 * rate)]
+
+
+def _kokoro_clip(text):
     cfg = _cfg()
     samples, rate = kokoro_model().create(text, voice=cfg.get("kokoro_voice", "bm_george"),
                                           speed=float(cfg.get("kokoro_speed", 1.0)), lang="en-gb")
-    pcm = (np.clip(samples, -1, 1) * 32767).astype(np.int16)
-    path = _tmp(".wav")
-    with wave.open(path, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(rate)
-        w.writeframes(pcm.tobytes())
-    return path
+    return Clip(samples, rate)
+
+
+def _kokoro_tts(text):
+    return _kokoro_clip(text).to_file()
 
 
 async def _edge_async(text, path):
@@ -168,6 +213,7 @@ def _say_cmd(text):
 
 
 ENGINES = {"elevenlabs": _elevenlabs, "kokoro": _kokoro_tts, "edge": _edge, "say": _say_cmd}
+IN_MEMORY = {"kokoro": _kokoro_clip}      # engines that can skip the sound file
 _broken = set()
 
 
@@ -182,9 +228,19 @@ def _order():
 
 def synthesize(text):
     """Returns an audio file path for text, trying engines in order."""
+    return _make(text, ENGINES)
+
+
+LAST_ENGINE = ""
+
+
+def _make(text, table):
+    global LAST_ENGINE
     for name in _order():
         try:
-            return ENGINES[name](text)
+            audio = (table.get(name) or ENGINES[name])(text)
+            LAST_ENGINE = name
+            return audio
         except Exception as e:
             print(f"(voice engine {name} failed: {str(e)[:120]})")
             if name != "elevenlabs" or "401" in str(e) or "no ElevenLabs key" in str(e):
@@ -192,13 +248,49 @@ def synthesize(text):
     raise RuntimeError("no voice engine worked")
 
 
+def synthesize_audio(text):
+    """Like synthesize, but Kokoro's voice comes back as a Clip in memory (quicker)."""
+    if not _cfg().get("fast_voice", True):
+        return synthesize(text)
+    return _make(text, IN_MEMORY)
+
+
+def add_mirror(wanted, send):
+    """Also send everything he says somewhere else: send(audio file path) is called for each
+    phrase while wanted() is true (the file is deleted afterwards)."""
+    _mirrors.append((wanted, send))
+
+
+def _mirror(audio):
+    for wanted, send in list(_mirrors):
+        try:
+            if not wanted():
+                continue
+            path = audio.to_file() if isinstance(audio, Clip) else audio
+            try:
+                send(path)
+            finally:
+                if path is not audio:
+                    _remove(path)
+        except Exception as e:
+            print(f"(couldn't mirror my voice: {e})")
+
+
+def _remove(audio):
+    if isinstance(audio, str):
+        try:
+            os.remove(audio)
+        except OSError:
+            pass
+
+
 def preload():
     """Warm up the local voice model (and the "stop" listener) in the background."""
     def go():
         if "kokoro" in _order()[:2]:
             try:
-                kokoro_model()
-                print("(voice: Kokoro ready)")
+                kokoro_model().create("Ready.", voice=_cfg().get("kokoro_voice", "bm_george"), lang="en-gb")
+                print("(voice: Kokoro ready)")         # (that first tiny line warms it up)
             except Exception as e:
                 print(f"(Kokoro voice unavailable: {e})")
                 _broken.add("kokoro")
@@ -320,35 +412,127 @@ def take_barge():
     return audio, own
 
 
-def _play(path, interruptible, stop, own_text=""):
-    """Plays one file; returns True if the user interrupted."""
+class _ClipPlayer:
+    """Plays a Clip from memory through the speaker. Works like the afplay process:
+    poll() is None while playing, wait() blocks until done, terminate() stops it."""
+
+    def __init__(self, clip):
+        import sounddevice as sd
+        self._sd, self._data, self._pos = sd, clip.samples.reshape(-1, 1), 0
+        self._done = threading.Event()
+        device = None
+        if sys.platform == "win32":
+            import win
+            device = win.output_device()          # "Choose Jarvis Speaker"
+        self._stream = sd.OutputStream(samplerate=clip.rate, channels=1, dtype="float32", device=device,
+                                       callback=self._fill, finished_callback=self._done.set)
+        self._stream.start()
+
+    def _fill(self, out, frames, _time, _status):
+        chunk = self._data[self._pos:self._pos + frames]
+        out[:len(chunk)] = chunk
+        self._pos += frames
+        if len(chunk) < frames:
+            out[len(chunk):] = 0
+            raise self._sd.CallbackStop
+
+    def poll(self):
+        return 0 if self._done.is_set() else None
+
+    def wait(self):
+        self._done.wait(max(5.0, len(self._data) / 8000))
+        self.close()
+
+    def terminate(self):
+        try:
+            self._stream.abort()
+        except Exception:
+            pass
+        self._done.set()
+
+    def close(self):
+        try:
+            self._stream.close()
+        except Exception:
+            pass
+
+
+def _start(audio):
+    """Starts playing a Clip or a sound file; returns something with poll/wait/terminate."""
+    if isinstance(audio, Clip):
+        # On a Mac, afplay follows whichever speaker is picked right now (e.g. AirPods put in
+        # mid-run), so the clip goes through a quick file there.
+        if sys.platform != "darwin" or _cfg().get("mac_memory_playback", False):
+            try:
+                return _ClipPlayer(audio)
+            except Exception as e:
+                print(f"(couldn't play from memory, using a file: {str(e)[:120]})")
+        path = audio.to_file()
+        player = _start(path)
+        threading.Thread(target=lambda: (player.wait(), _remove(path)), daemon=True).start()
+        return player
     if sys.platform == "win32":
         import win
-        proc = win.play(path)
-    else:
-        proc = subprocess.Popen(["afplay", path])
+        return win.play(audio)
+    return subprocess.Popen(["afplay", audio])
+
+
+class _Watch:
+    """Listens to the microphone the whole time he's talking (opened once, not per phrase),
+    for a double clap, "stop"/"Jarvis", or someone talking over him."""
+
+    def __init__(self, own_text):
+        import sounddevice as sd
+        import ears
+        self.ears = ears
+        cfg = _cfg()
+        self.det = ears.Detector(max(0.6, 1.5 * cfg.get("clap_threshold", 0.35)))   # louder than his own voice
+        self.spotter = _Spotter(own_text, ears.RATE)
+        self.stream = sd.InputStream(samplerate=ears.RATE, channels=1, blocksize=ears.BLOCK, dtype="int16")
+        self.stream.start()
+
+    def heard(self):
+        """Reads the next bit of sound (about 40 ms); True if he should stop."""
+        block, _ = self.stream.read(self.ears.BLOCK)
+        return bool(self.det.feed(block[:, 0]) or self.spotter.feed(block[:, 0]))
+
+    def close(self):
+        try:
+            self.stream.close()
+        except Exception:
+            pass
+
+
+def _play(audio, interruptible, stop, own_text="", watch=None):
+    """Plays one phrase; returns True if the user interrupted."""
+    proc = _start(audio)
     if not interruptible or not _cfg().get("interrupt", True):
         proc.wait()
         return False
     try:
-        import sounddevice as sd
-        import ears
-        cfg = _cfg()
-        det = ears.Detector(max(0.6, 1.5 * cfg.get("clap_threshold", 0.35)))   # louder than his own voice
-        spotter = _Spotter(own_text, ears.RATE)
-        with sd.InputStream(samplerate=ears.RATE, channels=1, blocksize=ears.BLOCK, dtype="int16") as stream:
+        if watch is None:
+            watch = _Watch(own_text)
+            own = True
+        else:
+            own = False
+        try:
             while proc.poll() is None:
-                block, _ = stream.read(ears.BLOCK)
-                if det.feed(block[:, 0]) or spotter.feed(block[:, 0]):
+                if watch.heard():
                     proc.terminate()
                     stop.set()
-                    if spotter.barge_audio is not None:
-                        _barge.update(audio=spotter.audio.copy(), own=spotter.own())
+                    if watch.spotter.barge_audio is not None:
+                        _barge.update(audio=watch.spotter.audio.copy(), own=watch.spotter.own())
                     print("(interrupted)")
                     return True
+        finally:
+            if own:
+                watch.close()
     except Exception as e:
         print(f"(couldn't listen for interruptions: {e})")
         proc.wait()
+    finally:
+        if isinstance(proc, _ClipPlayer):
+            proc.close()
     return False
 
 
@@ -365,7 +549,7 @@ def say(text, interruptible=True):
     print(f"Jarvis: {text}")
     import display
     display.log("jarvis", text)
-    return _speak(iter(_sentences(_speakable(text))), interruptible, text)
+    return _speak(_chunks([_speakable(text)]), interruptible, text)
 
 
 def say_stream(pieces, interruptible=True):
@@ -407,13 +591,10 @@ def _hold_on(pieces, after):
 def _drain(files):
     """Deletes audio made after he was cut off."""
     while True:
-        path = files.get()
-        if path is None:
+        audio = files.get()
+        if audio is None:
             return
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+        _remove(audio)
 
 
 def _speak(chunks, interruptible, text, source=None):
@@ -423,6 +604,7 @@ def _speak(chunks, interruptible, text, source=None):
             return True                 # he was just talked over: let them finish instead of talking again
         files, stop = queue.Queue(), threading.Event()
         said = []
+        began = time.time()
 
         def own():
             return text or " ".join(said)
@@ -438,14 +620,16 @@ def _speak(chunks, interruptible, text, source=None):
                     if not spoken:
                         continue
                     try:
-                        path = synthesize(spoken)
+                        audio = synthesize_audio(spoken)
                     except Exception as e:
                         print(f"(couldn't speak: {e})")
                         break
                     if stop.is_set():
-                        os.remove(path)
+                        _remove(audio)
                         break
-                    files.put(path)
+                    if _mirrors:
+                        _mirror(audio)
+                    files.put(audio)
                 else:
                     finished = True
             except Exception as e:
@@ -458,25 +642,35 @@ def _speak(chunks, interruptible, text, source=None):
                 files.put(None)
 
         threading.Thread(target=produce, daemon=True).start()
-        interrupted, started = False, False
-        while True:
-            path = files.get()
-            if path is None:
-                break
-            try:
-                if not started:
-                    started = True
-                    display.update(status="speaking")
-                if not interrupted:
-                    interrupted = _play(path, interruptible, stop, own)
-            finally:
-                os.remove(path)
-            if interrupted:
-                cancel = getattr(source, "cancel", None)
-                if cancel:
-                    cancel()
-                threading.Thread(target=_drain, args=(files,), daemon=True).start()
-                break
+        interrupted, started, watch = False, False, None
+        try:
+            while True:
+                audio = files.get()
+                if audio is None:
+                    break
+                try:
+                    if not started:
+                        started = True
+                        LAST_START.update(seconds=round(time.time() - began, 2), at=time.time())
+                        display.update(status="speaking")
+                        if interruptible and _cfg().get("interrupt", True):
+                            try:
+                                watch = _Watch(own)
+                            except Exception as e:
+                                print(f"(couldn't listen for interruptions: {e})")
+                    if not interrupted:
+                        interrupted = _play(audio, interruptible and watch is not None, stop, own, watch)
+                finally:
+                    _remove(audio)
+                if interrupted:
+                    cancel = getattr(source, "cancel", None)
+                    if cancel:
+                        cancel()
+                    threading.Thread(target=_drain, args=(files,), daemon=True).start()
+                    break
+        finally:
+            if watch:
+                watch.close()
         full = own()
         if text is None:
             print(f"Jarvis: {full}" + (" (cut off)" if interrupted else ""))
