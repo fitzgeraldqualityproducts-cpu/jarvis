@@ -180,7 +180,9 @@ function describe(e) {
     case "delegate": return [nm(e.from), `→ <span class="who">${esc(nm(e.to))}</span>${T}: ${esc(e.text)}`];
     case "handoff": return [nm(e.from), `passed ${e.chars ? k(e.chars) + " chars of " : ""}work → <span class="who">${esc(nm(e.to))}</span>${T}`];
     case "tool": return [nm(e.node), `${esc(e.tool)}${e.detail ? ": " + esc(e.detail) : ""}${T}`];
-    case "blocked": return [nm(e.node), `<span style="color:var(--red)">${esc(e.tool)} refused</span>${e.reason ? ": " + esc(e.reason.slice(0, 90)) : ""}${T}`];
+    case "blocked": return e.denied === false
+      ? [nm(e.node), `<span style="color:var(--amber)">${esc(e.tool)} failed</span>${e.reason ? ": " + esc(e.reason.replace(/[{}"\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 110)) : ""}${T}`]
+      : [nm(e.node), `<span style="color:var(--red)">tried ${esc(e.tool)}, blocked (not allowed for this agent)</span>${T}`];
     case "agent": return [nm(e.node), `${esc(LABEL[e.status] || e.status).toLowerCase()} · ${esc(e.activity)}${T}`];
     case "finished": return [nm(e.node), `${e.ok ? "finished" : "came back empty"} in ${e.seconds}s · ${k(e.chars)} chars${T}`];
     case "result": return [nm(e.node), `delivered result${e.needs_ok ? " (needs your OK)" : ""}${T}`];
@@ -473,7 +475,7 @@ function renderInspector() {
       h += sec(`TASK ${esc(t.id)}`, `<div class="kv">${esc(t.task)}</div>
         <div class="kv"><b>Delegated by</b> ${esc(nm(t.delegated_by))}${t.redo ? ` · <b>${esc(t.redo)}</b>` : ""}</div>
         <div class="kv"><b>Depends on</b> ${esc(deps || "nothing")} · <b>Attempts</b> ${t.attempts}${t.seconds != null ? ` · <b>Took</b> ${t.seconds}s` : ""}</div>`);
-      h += sec(`TOOL USAGE (${t.tools.length})`, t.tools.length ? t.tools.slice().reverse().map(x => `<div class="tool"><em>${esc(x.tool)}</em>${esc(x.detail)} <span class="muted">${clock(x.t)}</span>${x.blocked ? ` <span style="color:var(--red)">· refused (not allowed)</span>` : ""}</div>`).join("") : `<div class="muted">No tools used${t.status === "completed" ? "" : " yet"}.</div>`);
+      h += sec(`TOOL USAGE (${t.tools.length})`, t.tools.length ? t.tools.slice().reverse().map(x => `<div class="tool"><em>${esc(x.tool)}</em>${esc(x.detail)} <span class="muted">${clock(x.t)}</span>${x.blocked ? ` <span style="color:var(--red)">· blocked (not allowed)</span>` : x.failed ? ` <span style="color:var(--amber)">· failed: ${esc((x.reason || "").replace(/[{}"\n]/g, " ").slice(0, 120))}</span>` : ""}</div>`).join("") : `<div class="muted">No tools used${t.status === "completed" ? "" : " yet"}.</div>`);
       const res = lastOf("result", e => e.task === t.id), wr = lastOf("writing", e => e.task === t.id);
       h += sec(res ? "RESULT" : "LIVE OUTPUT", res ? `<pre class="res">${esc(res.preview || "(nothing came back)")}</pre>` : wr ? `<pre class="res">…${esc(wr.tail)}</pre>` : `<div class="muted">Nothing written yet.</div>`);
     }

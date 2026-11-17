@@ -768,6 +768,9 @@ TEAM_START = [
                r"(?: to| for| on)? (.+)"),
     re.compile(r"(?:start|kick off|begin) (?:a |an )?(?:new )?(?:team )?project (?:to |on |about |for )?(.+)"),
 ]
+# "Build me a Shopify store ..." goes to the team (the store builder uses StoreForge)
+STORE_START = re.compile(r"(?:.*\b)?(?:build|make|create|set up|put together|generate) (?:me |us )?(?:a |an |another )?"
+                         r"(?:new |example |test |quick )?(?:shopify |online |e-?commerce )?store\b.*")
 TEAM_STATUS = re.compile(r"\b(?:how'?s|how is|what'?s|what is|is) (?:the |my |your )?(?:ai )?(?:team|agents|crew|workforce)"
                          r"(?: doing| working on| up to| done| finished| busy)?\b|\bteam status\b|status of (?:the|my) team")
 TEAM_REPORT = re.compile(r"\bread (?:me )?(?:the |my |your )?(?:last |latest |team'?s? |new )*report\b|"
@@ -802,6 +805,10 @@ def team_command(t):
         return True
     if TEAM_STATUS.search(t) and not re.search(r"\b(?:on|to) (?!it\b)\w+ \w+", t.split("team", 1)[-1]):
         voice.say(workforce.status())
+        return True
+    if STORE_START.fullmatch(t) and ("shopify" in t or "storeforge" in t or "store forge" in t or
+                                      re.search(r"\bstore (?:for|from|with|selling)\b", t)):
+        voice.say(workforce.start(original_case(t)))
         return True
     for pattern in TEAM_START:
         m = pattern.fullmatch(t)
