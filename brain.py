@@ -6,6 +6,7 @@ import personality
 import os
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 CONFIG = Path(__file__).with_name("config.json")
@@ -108,6 +109,10 @@ ABILITIES = (
     "search first, then give the answer itself in plain spoken words. Don't read out links or "
     "sources unless asked, and don't narrate that you searched."
 )
+# He starts speaking as soon as the first sentence arrives, so it should be a good one.
+SPOKEN = ("Your words are spoken aloud the moment you write them: open with the answer itself in a "
+          "short first sentence, keep it conversational, and never use lists, headings or markdown. "
+          "Don't write anything before a web search.")
 
 
 def run_claude(cmd, timeout, cwd=None):
@@ -121,18 +126,147 @@ def run_claude(cmd, timeout, cwd=None):
                           stdin=subprocess.DEVNULL)
 
 
+def _drain(pipe, into):
+    for line in pipe:
+        into.append(line)
+
+
+def _stream_claude(cmd, timeout, cwd=None, state=None):
+    """Runs claude like run_claude, but yields the answer's text as Claude writes it.
+    state gets "proc", "timed_out" and "error" so the caller can stop it or tell what went wrong."""
+    state = {} if state is None else state
+    cmd = list(cmd) + ["--output-format", "stream-json", "--include-partial-messages", "--verbose"]
+    prompt = cmd.pop(cmd.index("-p") + 1) if WINDOWS else None
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if WINDOWS else subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                            errors="replace", cwd=cwd, bufsize=1)
+    state["proc"] = proc
+    err = []
+    threading.Thread(target=_drain, args=(proc.stderr, err), daemon=True).start()
+    if prompt is not None:
+        try:
+            proc.stdin.write(prompt)
+            proc.stdin.close()
+        except OSError:
+            pass
+
+    def too_long():
+        state["timed_out"] = True
+        proc.kill()
+    timer = threading.Timer(timeout, too_long)
+    timer.daemon = True
+    timer.start()
+    got, result = False, ""
+    try:
+        for line in proc.stdout:
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            kind = d.get("type")
+            if kind == "stream_event" and not d.get("parent_tool_use_id"):
+                ev = d.get("event") or {}
+                delta = ev.get("delta") or {}
+                if ev.get("type") == "content_block_delta" and delta.get("type") == "text_delta":
+                    got = True
+                    yield delta.get("text", "")
+                elif ev.get("type") == "content_block_stop" and got:
+                    yield "\n"                 # keeps text from before and after a web search apart
+            elif kind == "result":
+                result = "" if d.get("is_error") else (d.get("result") or "")
+        if not got and result:
+            yield result
+    finally:
+        timer.cancel()
+        if proc.poll() is None:
+            proc.kill()
+        try:
+            proc.wait(5)
+        except Exception:
+            pass
+        state["error"] = "".join(err).strip()[-300:]
+
+
+class Answer:
+    """The brain's answer as it arrives. Iterate over it for pieces of text, or call
+    cancel() to stop Claude (e.g. when he's interrupted). str(answer) waits for all of it."""
+
+    def __init__(self, make):
+        self.state = {}
+        self._gen = make(self.state)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._gen)
+
+    def close(self):
+        self._gen.close()
+
+    def cancel(self):
+        self.state["cancelled"] = True
+        proc = self.state.get("proc")
+        if proc and proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    def __str__(self):
+        return "".join(self).strip()
+
+
+def _answer_stream(cmds, timeout, state, cwd=None, label="brain", fails=None):
+    """Tries each command streaming, then (for older Claude Code) the plain way. Yields text."""
+    import time
+    fails = fails or {}
+    start, first, any_text = time.time(), None, False
+    for cmd in cmds:
+        try:
+            for piece in _stream_claude(cmd, timeout, cwd, state):
+                if piece.strip() and first is None:
+                    first = time.time() - start
+                    print(f"({label}: first words after {first:.1f}s)")
+                any_text = any_text or bool(piece.strip())
+                yield piece
+        except OSError as e:
+            print(f"(couldn't run Claude: {e})")
+            yield fails.get("oserror", "My brain won't start, I'm afraid.")
+            return
+        if any_text or state.get("cancelled"):
+            break
+        if state.get("timed_out"):
+            yield fails.get("timeout", "That one is taking me too long, I'm afraid.")
+            return
+        print(f"({label}: streaming gave nothing, {state.get('error', '')[:200]})")
+    if not any_text and not state.get("cancelled"):
+        try:                                       # the old, non-streaming way
+            out = run_claude(list(cmds[-1]), timeout=timeout, cwd=cwd)
+            text = out.stdout.strip()
+            if not text:
+                print(f"(claude error: {out.stderr.strip()[:300]})")
+            yield text or fails.get("empty", "I'm sorry, my brain didn't answer. You may need to log in to Claude Code.")
+        except subprocess.TimeoutExpired:
+            yield fails.get("timeout", "That one is taking me too long, I'm afraid.")
+        except OSError as e:
+            print(f"(couldn't run Claude: {e})")
+            yield fails.get("oserror", "My brain won't start, I'm afraid.")
+    print(f"({label} took {time.time() - start:.1f}s)")
+
+
 _guest_chat = []        # what friends said this session (never saved, never mixed with Connor's memory)
 
 
-def guest_think(question, name=None, owner="Connor"):
-    """Answer a friend in the room (group chat mode): no memory, notes, calendar or files."""
+def guest_think_stream(question, name=None, owner="Connor"):
+    """Answer a friend in the room (group chat mode): no memory, notes, calendar or files.
+    Returns an Answer that streams."""
     claude = find_claude()
+    who = name or "a guest"
     if not claude:
-        return "My brain's offline right now, sorry."
+        return Answer(lambda state: iter(["My brain's offline right now, sorry."]))
     import datetime
     import tempfile
-    import time
-    who = name or "a guest"
     now = datetime.datetime.now().strftime("%A %B %d %Y, %I:%M %p")
     past = "\n".join(f"{n}: {q}\nJarvis: {a}" for n, q, a in _guest_chat[-6:])
     prompt = (f"{personality.persona()}\n\nYou are {owner}'s voice assistant, and right now you're talking out loud to "
@@ -149,26 +283,36 @@ def guest_think(question, name=None, owner="Connor"):
     except Exception:
         pass
     print(f"(thinking for guest {who})")
-    start = time.time()
-    try:
-        with tempfile.TemporaryDirectory() as cwd:          # nothing of Connor's in reach
-            out = run_claude([claude, "-p", prompt] + tools, timeout=120, cwd=cwd)
-        answer = out.stdout.strip() or "Sorry, my brain didn't answer that one."
-    except subprocess.TimeoutExpired:
-        answer = "That one's taking me too long, sorry."
-    except OSError:
-        answer = "My brain won't start right now, sorry."
-    print(f"(guest brain took {time.time() - start:.1f}s)")
-    _guest_chat.append((who, question, answer))
-    del _guest_chat[:-12]
-    return answer
+
+    def make(state):
+        said = []
+        cwd = tempfile.mkdtemp()                 # nothing of Connor's in reach
+        try:
+            for piece in _answer_stream([[claude, "-p", prompt] + tools], 120, state, cwd=cwd, label="guest brain",
+                                        fails={"timeout": "That one's taking me too long, sorry.",
+                                               "oserror": "My brain won't start right now, sorry.",
+                                               "empty": "Sorry, my brain didn't answer that one."}):
+                said.append(piece)
+                yield piece
+        finally:
+            shutil.rmtree(cwd, ignore_errors=True)
+            _guest_chat.append((who, question, "".join(said).strip()))
+            del _guest_chat[:-12]
+    return Answer(make)
 
 
-def think(question, context=""):
+def guest_think(question, name=None, owner="Connor"):
+    return str(guest_think_stream(question, name, owner))
+
+
+def think_stream(question, context=""):
+    """Answers a question, streaming: returns an Answer you can start speaking from
+    as soon as the first sentence arrives."""
     claude = find_claude()
     if not claude:
-        return ("I can't find Claude Code on this computer, so I have no brain to think with. "
-                "Run python3 brain.py in my folder for help.")
+        return Answer(lambda state: iter([
+            "I can't find Claude Code on this computer, so I have no brain to think with. "
+            "Run python3 brain.py in my folder for help."]))
     import datetime
     import memory
     now = datetime.datetime.now().strftime("%A %B %d %Y, %I:%M %p")
@@ -189,39 +333,44 @@ def think(question, context=""):
                              "actually help with the question:\n" + notes + "\n\n")
     except Exception as e:
         print(f"(Obsidian context failed: {e})")
-    prompt = (f"{personality.persona()} {ABILITIES}\n\nCurrent time: {now}\n\n{known}\n\n{extra}"
+    prompt = (f"{personality.persona()} {ABILITIES} {SPOKEN}\n\nCurrent time: {now}\n\n{known}\n\n{extra}"
               f"Recent conversation:\n{past}\n\nUser: {question}\nJarvis:")
-    import time
+    try:
+        cfg = json.loads(CONFIG.read_text())
+    except Exception:
+        cfg = {}
+    model = cfg.get("brain_model", "")
+    # The brain only talks and looks things up; edits go through selfedit.py.
+    tools = ["--disallowedTools", "Edit Write NotebookEdit Bash"]
+    if cfg.get("web_search", True):
+        tools += ["--allowedTools", "WebSearch WebFetch"]
+    cmds = ([[claude, "-p", prompt] + tools + ["--model", model]] if model else []) + [[claude, "-p", prompt] + tools]
     print(f"(thinking with {claude})")
-    start = time.time()
-    try:
-        model = json.loads(CONFIG.read_text()).get("brain_model", "")
-        # The brain only talks and looks things up; edits go through selfedit.py.
-        tools = ["--disallowedTools", "Edit Write NotebookEdit Bash"]
-        if json.loads(CONFIG.read_text()).get("web_search", True):
-            tools += ["--allowedTools", "WebSearch WebFetch"]
-        cmd = [claude, "-p", prompt] + tools + (["--model", model] if model else [])
-        out = run_claude(cmd, timeout=150)
-        if out.returncode != 0 and model:
-            print(f"(model {model} failed, retrying with the default: {out.stderr.strip()[:150]})")
-            out = run_claude([claude, "-p", prompt] + tools, timeout=150)
-        answer = out.stdout.strip()
-        print(f"(brain took {time.time() - start:.1f}s, exit code {out.returncode})")
-        if not answer:
-            print(f"(claude error: {out.stderr.strip()[:300]})")
-            answer = "I'm sorry, my brain didn't answer. You may need to log in to Claude Code."
-    except subprocess.TimeoutExpired:
-        answer = "That one is taking me too long, I'm afraid."
-    except OSError as e:
-        print(f"(couldn't run {claude}: {e})")
-        answer = "My brain won't start, I'm afraid. Claude Code may need reinstalling."
-    memory.add_exchange(question, answer)
-    try:
-        import obsidian
-        obsidian.log_exchange(question, answer)
-    except Exception as e:
-        print(f"(Obsidian log failed: {e})")
-    return answer
+
+    def make(state):
+        said = []
+        try:
+            for piece in _answer_stream(cmds, 150, state, fails={
+                    "oserror": "My brain won't start, I'm afraid. Claude Code may need reinstalling."}):
+                said.append(piece)
+                yield piece
+        finally:
+            answer = "".join(said).strip()
+            if state.get("cancelled") and answer:
+                answer += " (cut off)"
+            if answer:
+                memory.add_exchange(question, answer)
+                try:
+                    import obsidian
+                    obsidian.log_exchange(question, answer)
+                except Exception as e:
+                    print(f"(Obsidian log failed: {e})")
+    return Answer(make)
+
+
+def think(question, context=""):
+    """Answers a question and returns the whole reply as text."""
+    return str(think_stream(question, context))
 
 
 if __name__ == "__main__":
