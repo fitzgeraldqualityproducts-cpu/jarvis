@@ -97,7 +97,12 @@ def find_claude():
 ABILITIES = (
     "You can already do these things through voice commands handled elsewhere: open apps "
     "and websites, Google and YouTube searches, Spotify, calendar, reminders, timers, "
-    "alarms, notes, Shortcuts, Oura ring vitals ('give me a vitals analysis'), Twitch stream mode that reads chat aloud ('stream mode' / 'stop stream mode'), and remembering facts. If the user asks for something like "
+    "alarms, notes, Shortcuts, Oura ring vitals ('give me a vitals analysis'), Twitch stream mode that reads chat aloud ('stream mode' / 'stop stream mode'), remembering facts, "
+    "an AI team of specialist agents (researchers, planner, coder, business strategist, writer and more) that "
+    "works on bigger jobs in the background ('get the team on ...', 'how's the team doing', 'read me the report'), "
+    "predictions from their routines and calendar ('what do you think I need', 'what have you noticed about me'), "
+    "and reviewing yourself to improve ('review yourself', 'any upgrade ideas'). For a big research, planning, "
+    "business or coding job, suggest they say 'get the team on' it. If the user asks for something like "
     "that in a way that reached you, tell them the phrase to use, e.g. 'remind me to ...', "
     "'add dentist to my calendar tomorrow at 3', 'play Dead Fresh by Lil Baby', 'open Spotify'. "
     "You cannot take actions yourself from here: never claim something is waiting for approval, "
@@ -333,7 +338,12 @@ def think_stream(question, context=""):
                              "actually help with the question:\n" + notes + "\n\n")
     except Exception as e:
         print(f"(Obsidian context failed: {e})")
-    prompt = (f"{personality.persona()} {ABILITIES} {SPOKEN}\n\nCurrent time: {now}\n\n{known}\n\n{extra}"
+    try:
+        import learn
+        rules = learn.rules_for_prompt()
+    except Exception:
+        rules = ""
+    prompt = (f"{personality.persona()} {ABILITIES} {SPOKEN} {rules}\n\nCurrent time: {now}\n\n{known}\n\n{extra}"
               f"Recent conversation:\n{past}\n\nUser: {question}\nJarvis:")
     try:
         cfg = json.loads(CONFIG.read_text())

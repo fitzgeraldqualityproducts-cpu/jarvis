@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis Agent Network</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
+<!--
+  Live view of Jarvis's AI team. Everything here comes from /team/state, which is built from the real
+  events workforce.py records while the agents run (delegations, handoffs, tool calls, writing, results,
+  the critic's review, approvals). Nothing is simulated: if no mission is running, nothing moves except
+  the background. The spinning rings on a node only appear while that agent is really running.
+-->
+<style>
+  :root {
+    --cyan:#4fd8ff; --cyan2:#a8f0ff; --cyanDim:rgba(79,216,255,.32); --blue:#2f7bff; --violet:#9d8cff;
+    --gold:#f2b84b; --green:#4dffc3; --red:#ff6b7a; --amber:#ffb347;
+    --bg:#02060c; --panel:rgba(5,20,32,.62); --text:#dff6ff; --dim:#6f97a8;
+    --hfont:"Orbitron","Avenir Next","Segoe UI",sans-serif; --bfont:"Rajdhani","Avenir Next","Segoe UI",-apple-system,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; overflow:hidden; color:var(--text); font-family:var(--bfont);
+    background:radial-gradient(ellipse at 50% 45%, #0a2134 0%, #040c16 55%, var(--bg) 100%); }
+  #net { position:fixed; inset:0; z-index:1; }
+  .grid { position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.18;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='97' viewBox='0 0 56 97'%3E%3Cpath d='M28 0L56 16v32L28 64 0 48V16zM28 64v33M0 16L-28 0M56 16L84 0' fill='none' stroke='%234fd8ff' stroke-width='.6' stroke-opacity='.35'/%3E%3C/svg%3E");
+    -webkit-mask-image:radial-gradient(ellipse at 50% 50%, #000 10%, transparent 75%); mask-image:radial-gradient(ellipse at 50% 50%, #000 10%, transparent 75%); }
+  .scan { position:fixed; inset:0; z-index:6; pointer-events:none;
+    background:repeating-linear-gradient(to bottom, rgba(150,230,255,.04) 0 1px, transparent 1px 3px); mix-blend-mode:screen; }
+  .vignette { position:fixed; inset:0; z-index:5; pointer-events:none; box-shadow:inset 0 0 200px 50px rgba(0,0,0,.85); }
+
+  .panel { position:fixed; z-index:3; background:linear-gradient(135deg, rgba(10,40,58,.62), rgba(3,14,24,.6));
+    border:1px solid var(--cyanDim); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+    clip-path:polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+    box-shadow:inset 0 0 26px rgba(79,216,255,.08); }
+  .panel::before { content:""; position:absolute; top:0; left:0; width:36%; height:2px; background:var(--cyan); box-shadow:0 0 10px var(--cyan); }
+  h2 { margin:0 0 8px; font-family:var(--hfont); font-size:10px; letter-spacing:.32em; color:var(--cyan); font-weight:500; }
+  h2 b { color:var(--dim); font-weight:500; }
+
+  /* top: mission */
+  #mission { top:16px; left:16px; right:16px; height:96px; padding:12px 18px; display:grid;
+    grid-template-columns:minmax(0,1fr) 460px; gap:20px; }
+  #mtitle { font-family:var(--hfont); font-size:19px; letter-spacing:.08em; color:var(--cyan2); white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; text-shadow:0 0 12px rgba(79,216,255,.5); }
+  #mgoal { font-size:15px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+  #mmeta { font-family:var(--hfont); font-size:9.5px; letter-spacing:.2em; color:var(--dim); margin-top:6px; }
+  #mmeta span { color:var(--cyan2); }
+  .phases { display:flex; gap:4px; margin-bottom:8px; }
+  .ph { flex:1; text-align:center; font-family:var(--hfont); font-size:8.5px; letter-spacing:.18em; padding:5px 0;
+    border:1px solid rgba(79,216,255,.18); color:#3d6170; }
+  .ph.done { color:var(--cyan); border-color:var(--cyanDim); }
+  .ph.on { color:#02121c; background:var(--cyan); box-shadow:0 0 14px var(--cyan); }
+  .bar { height:8px; background:rgba(79,216,255,.1); border:1px solid rgba(79,216,255,.25); position:relative; overflow:hidden; }
+  .bar i { position:absolute; inset:0 auto 0 0; width:0; background:linear-gradient(90deg, var(--blue), var(--cyan));
+    box-shadow:0 0 12px var(--cyan); transition:width .8s ease; }
+  #ptext { font-family:var(--hfont); font-size:9px; letter-spacing:.2em; color:var(--dim); margin-top:6px; display:flex; justify-content:space-between; }
+  #ptext span { color:var(--cyan2); }
+
+  /* left: activity feed */
+  #feedp { top:124px; left:16px; width:330px; bottom:176px; padding:12px 14px; display:flex; flex-direction:column; }
+  #feed { flex:1; overflow-y:auto; overflow-x:hidden; padding-right:4px; scrollbar-width:thin; scrollbar-color:var(--cyanDim) transparent; }
+  .ev { display:grid; grid-template-columns:52px 1fr; gap:6px; padding:5px 0 6px; border-bottom:1px solid rgba(79,216,255,.08);
+    font-size:13.5px; line-height:1.25; animation:evin .5s ease; }
+  .ev time { font-family:var(--hfont); font-size:8.5px; color:var(--dim); letter-spacing:.1em; padding-top:3px; }
+  .ev .who { color:var(--cyan2); font-weight:600; text-transform:capitalize; }
+  .ev .d { color:var(--dim); word-break:break-word; }
+  .ev.k-tool .who { color:var(--violet); } .ev.k-result .who, .ev.k-finished .who { color:var(--green); }
+  .ev.k-approval .who { color:var(--gold); } .ev.k-review .who { color:var(--violet); } .ev.k-error .who, .ev.k-blocked .who { color:var(--red); }
+  @keyframes evin { from { opacity:0; transform:translateX(-10px); background:rgba(79,216,255,.12); } to { opacity:1; transform:none; } }
+
+  /* right: inspector */
+  #insp { top:124px; right:16px; width:370px; bottom:176px; padding:12px 16px; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--cyanDim) transparent; }
+  #insp .name { font-family:var(--hfont); font-size:16px; letter-spacing:.1em; color:var(--cyan2); text-transform:uppercase; }
+  #insp .about { color:var(--dim); font-size:14px; margin:2px 0 8px; }
+  .st { display:inline-block; font-family:var(--hfont); font-size:8.5px; letter-spacing:.2em; padding:3px 8px; border:1px solid currentColor; text-transform:uppercase; }
+  .sec { margin-top:12px; } .sec h3 { margin:0 0 5px; font-family:var(--hfont); font-size:8.5px; letter-spacing:.28em; color:var(--cyan); font-weight:500; }
+  .kv { font-size:14px; line-height:1.3; } .kv b { color:var(--dim); font-weight:500; }
+  .tool { font-size:13px; padding:3px 0; border-bottom:1px dashed rgba(79,216,255,.1); word-break:break-word; }
+  .tool em { font-style:normal; color:var(--violet); font-weight:600; margin-right:5px; }
+  pre.res { white-space:pre-wrap; word-break:break-word; font-family:var(--bfont); font-size:13.5px; line-height:1.3; margin:0;
+    max-height:300px; overflow:auto; background:rgba(0,0,0,.25); border-left:2px solid var(--cyanDim); padding:6px 8px; color:#bfe4f2; }
+  .hist { font-size:13px; padding:3px 0; color:var(--dim); } .hist b { color:var(--text); font-weight:500; }
+  .muted { color:var(--dim); font-size:14px; }
+
+  /* bottom: task dependency pipeline */
+  #pipep { left:16px; right:16px; bottom:16px; height:148px; padding:10px 16px; }
+  #pipe { position:relative; height:108px; overflow-x:auto; overflow-y:hidden; }
+  #pipe svg { position:absolute; left:0; top:0; pointer-events:none; }
+  .tk { position:absolute; width:190px; height:44px; padding:5px 8px; border:1px solid var(--cyanDim); background:rgba(4,18,28,.85);
+    cursor:pointer; font-size:12.5px; line-height:1.15; overflow:hidden; transition:box-shadow .3s, border-color .3s; }
+  .tk .r { font-family:var(--hfont); font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; display:flex; justify-content:space-between; }
+  .tk .x { color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; margin-top:3px; }
+  .tk.sel { box-shadow:0 0 0 1px var(--cyan2), 0 0 18px rgba(79,216,255,.5); }
+  #approve { position:fixed; z-index:4; left:368px; bottom:184px; width:280px; padding:8px 12px; pointer-events:none;
+    border:1px solid var(--gold); background:rgba(40,26,4,.78); color:#ffe2a8; font-size:13px; line-height:1.25; display:none;
+    box-shadow:0 0 24px rgba(242,184,75,.35); }
+  #approve h2 { color:var(--gold); }
+  #link { position:fixed; z-index:4; bottom:2px; right:22px; font-family:var(--hfont); font-size:8.5px; letter-spacing:.22em; color:var(--dim); }
+  #link.ok span { color:var(--green); } #link.bad span { color:var(--red); }
+  #empty { position:fixed; z-index:2; left:50%; top:50%; transform:translate(-50%, 120px); text-align:center; color:var(--dim);
+    font-family:var(--hfont); font-size:11px; letter-spacing:.25em; display:none; }
+  #empty b { color:var(--cyan2); font-weight:500; }
+  @media (max-width:1100px) { #approve { left:298px; width:220px; } #feedp { width:260px; } #insp { width:290px; } #mission { grid-template-columns:1fr; height:auto; } }
+</style>
+</head>
+<body>
+<canvas id="net"></canvas>
+<div class="grid"></div>
+
+<div class="panel" id="mission">
+  <div style="min-width:0">
+    <h2>J.A.R.V.I.S <b>// NEURAL NETWORK · LIVE AGENT VIEW</b></h2>
+    <div id="mtitle">NO MISSION YET</div>
+    <div id="mgoal">Say "get the team on…" and the network lights up as the agents work.</div>
+    <div id="mmeta"></div>
+  </div>
+  <div>
+    <div class="phases" id="phases"></div>
+    <div class="bar"><i id="pbar"></i></div>
+    <div id="ptext"><span id="pstage">—</span><b id="pcount"></b></div>
+  </div>
+</div>
+
+<div class="panel" id="feedp"><h2>ACTIVITY <b>// LIVE FEED</b></h2><div id="feed"></div></div>
+<div class="panel" id="insp"></div>
+<div class="panel" id="pipep"><h2>TASK PIPELINE <b>// DEPENDENCIES · CLICK TO INSPECT</b></h2><div id="pipe"></div></div>
+<div id="approve"></div>
+<div id="empty">NETWORK STANDING BY<br><br><b>"GET THE TEAM ON …"</b></div>
+<div id="link"><span>●</span> LINK localhost:8765/team</div>
+<div class="scan"></div><div class="vignette"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const COLORS = { working:"#4fd8ff", analyzing:"#9d8cff", waiting:"#ffb347", completed:"#4dffc3", approval:"#f2b84b",
+                 failed:"#ff6b7a", idle:"#2d5568", supervising:"#2f9bff" };
+const LABEL = { working:"WORKING", analyzing:"ANALYZING", waiting:"WAITING", completed:"COMPLETED", approval:"NEEDS APPROVAL",
+                failed:"FAILED", idle:"STANDBY", supervising:"SUPERVISING" };
+const PHASES = [["planning","PLAN"],["working","EXECUTE"],["reviewing","REVIEW"],["reporting","REPORT"],["done","DONE"]];
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const clock = t => new Date(t * 1000).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+const k = n => n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
+
+let S = { pid:null, seq:0, events:[], snap:null, roster:[], history:{}, running:false, now:Date.now() / 1000 };
+let clockSkew = 0, selected = "jarvis", page = null, firstLoad = true, linkOk = false;
+const pulses = [], sparks = [], flashes = {};
+
+// ---------- live data ----------
+async function poll() {
+  try {
+    const r = await fetch(`/team/state?since=${S.seq}&pid=${S.pid == null ? "" : S.pid}`, { cache:"no-store" });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    if (page && d.page && d.page !== page) location.reload();
+    page = d.page;
+    clockSkew = d.now - Date.now() / 1000;
+    const fresh = d.since === 0 ? d.events : d.events;
+    if (d.since === 0) { S.events = []; $("feed").innerHTML = ""; }
+    S.events.push(...fresh);
+    Object.assign(S, { pid:d.pid, seq:d.seq, snap:d.snapshot, roster:d.roster, history:d.history || {}, running:d.running });
+    for (const e of fresh) { addFeed(e); if (!firstLoad) animate(e); }
+    firstLoad = false;
+    setLink(true);
+    render();
+  } catch (e) { setLink(false); console.warn("team state failed", e); }
+  setTimeout(poll, S.running ? 800 : 2500);
+}
+function setLink(ok) { linkOk = ok; $("link").className = ok ? "ok" : "bad"; $("link").innerHTML = `<span>●</span> ${ok ? "LIVE LINK" : "LINK LOST · IS JARVIS RUNNING?"} · localhost:8765/team`; }
+const now = () => Date.now() / 1000 + clockSkew;
+
+// ---------- feed ----------
+function nm(n) { return n === "jarvis" ? "JARVIS" : n === "lead" ? "Team lead" : n === "critic" ? "Critic" : n; }
+function describe(e) {
+  const T = e.task ? ` <b>[${esc(e.task)}]</b>` : "";
+  switch (e.type) {
+    case "mission": return ["JARVIS", `New mission: “${esc(e.goal)}”`];
+    case "phase": return ["Mission", `Phase → ${esc(e.phase)}${e.score != null ? ` · score ${e.score}/10` : ""}${e.error ? " · " + esc(e.error) : ""}`];
+    case "plan": return ["Team lead", `Planned “${esc(e.title)}”: ${e.tasks.map(t => esc(t.role)).join(", ")}`];
+    case "delegate": return [nm(e.from), `→ <span class="who">${esc(nm(e.to))}</span>${T}: ${esc(e.text)}`];
+    case "handoff": return [nm(e.from), `passed ${e.chars ? k(e.chars) + " chars of " : ""}work → <span class="who">${esc(nm(e.to))}</span>${T}`];
+    case "tool": return [nm(e.node), `${esc(e.tool)}${e.detail ? ": " + esc(e.detail) : ""}${T}`];
+    case "blocked": return [nm(e.node), `<span style="color:var(--red)">${esc(e.tool)} refused</span>${e.reason ? ": " + esc(e.reason.slice(0, 90)) : ""}${T}`];
+    case "agent": return [nm(e.node), `${esc(LABEL[e.status] || e.status).toLowerCase()} · ${esc(e.activity)}${T}`];
+    case "finished": return [nm(e.node), `${e.ok ? "finished" : "came back empty"} in ${e.seconds}s · ${k(e.chars)} chars${T}`];
+    case "result": return [nm(e.node), `delivered result${e.needs_ok ? " (needs your OK)" : ""}${T}`];
+    case "review": return ["Critic", `Score ${e.score ?? "?"}/10: ${esc(e.verdict)}${e.redo && e.redo.length ? " · sent back " + e.redo.join(", ") : ""}`];
+    case "approval": return ["JARVIS", `Waiting for your OK: ${esc((e.items || []).join("; ") || e.change)}`];
+    case "writing": return null;          // too chatty for the feed; shown on the node instead
+  }
+  return [e.type, ""];
+}
+function addFeed(e) {
+  const d = describe(e);
+  if (!d) return;
+  if (e.type === "agent" && !/^(waiting|completed|approval|failed)$/.test(e.status) && e.activity !== "thinking") return;
+  const el = document.createElement("div");
+  el.className = "ev k-" + e.type;
+  el.innerHTML = `<time>${clock(e.t)}</time><div><span class="who">${esc(d[0])}</span> <span class="d">${d[1]}</span></div>`;
+  const f = $("feed");
+  f.prepend(el);
+  while (f.children.length > 250) f.lastChild.remove();
+}
+
+// ---------- layout ----------
+const cv = $("net"), cx2 = cv.getContext("2d");
+let W, H, DPR, area, pos = {};
+function layout() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * DPR; cv.height = H * DPR; cv.style.width = W + "px"; cv.style.height = H + "px";
+  const left = W > 1100 ? 362 : 292, right = W > 1100 ? 402 : 322;
+  area = { x:left, y:124, w:Math.max(200, W - left - right), h:Math.max(200, H - 124 - 176) };
+  const cx = area.x + area.w / 2, cy = area.y + area.h / 2;
+  const R = Math.min(area.w, area.h) * 0.44, r = R * 0.42;
+  pos = { jarvis:{ x:cx, y:cy, r:Math.max(26, R * 0.16) } };
+  pos.lead = { x:cx - r * 0.95, y:cy - r * 0.55, r:15 };
+  pos.critic = { x:cx + r * 0.95, y:cy - r * 0.55, r:15 };
+  const roles = S.roster.map(x => x.id);
+  roles.forEach((id, i) => {
+    const a = -Math.PI / 2 + (i / roles.length) * Math.PI * 2;
+    pos[id] = { x:cx + Math.cos(a) * R * 1.12, y:cy + Math.sin(a) * R * 0.9, r:11, a };
+  });
+}
+addEventListener("resize", () => { layout(); render(); });
+
+// ---------- animations from real events ----------
+function animate(e) {
+  const from = e.from, to = e.to;
+  if ((e.type === "delegate" || e.type === "handoff") && pos[from] && pos[to])
+    pulses.push({ from, to, t0:performance.now(), dur:1300, color:e.type === "delegate" ? "#a8f0ff" : "#4fd8ff", big:e.type === "delegate" });
+  if (e.type === "tool" && pos[e.node]) for (let i = 0; i < 10; i++)
+    sparks.push({ n:e.node, a:Math.random() * 6.28, v:20 + Math.random() * 30, t0:performance.now(), color:"#9d8cff" });
+  if ((e.type === "finished" || e.type === "result" || e.type === "review") && (pos[e.node] || e.type === "review"))
+    flashes[e.node || "critic"] = performance.now();
+  if (e.type === "approval") flashes.jarvis = performance.now();
+}
+
+// ---------- drawing ----------
+function nodeOf(id) { return (S.snap && S.snap.nodes[id]) || { status:"idle", activity:"", tools:0, chars:0, tasks:[] }; }
+function glowLine(x1, y1, x2, y2, color, w, alpha, dash, curve) {
+  const g = cx2;
+  g.save(); g.globalAlpha = alpha; g.strokeStyle = color; g.lineWidth = w; g.shadowColor = color; g.shadowBlur = 10;
+  if (dash) g.setLineDash(dash);
+  g.beginPath(); g.moveTo(x1, y1);
+  if (curve) { const c = curvePt(x1, y1, x2, y2, curve); g.quadraticCurveTo(c.x, c.y, x2, y2); } else g.lineTo(x2, y2);
+  g.stroke(); g.restore();
+}
+function curvePt(x1, y1, x2, y2, k) {
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, J = pos.jarvis;
+  return { x:mx + (J.x - mx) * k, y:my + (J.y - my) * k };
+}
+function along(a, b, t, curve) {
+  if (!curve) return { x:a.x + (b.x - a.x) * t, y:a.y + (b.y - a.y) * t };
+  const c = curvePt(a.x, a.y, b.x, b.y, curve), u = 1 - t;
+  return { x:u * u * a.x + 2 * u * t * c.x + t * t * b.x, y:u * u * a.y + 2 * u * t * c.y + t * t * b.y };
+}
+function arrow(a, b, color, curve) {
+  const p = along(a, b, 0.88, curve), q = along(a, b, 0.84, curve), ang = Math.atan2(p.y - q.y, p.x - q.x), g = cx2;
+  g.save(); g.fillStyle = color; g.shadowColor = color; g.shadowBlur = 8; g.globalAlpha = .9;
+  g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(p.x - 8 * Math.cos(ang - .45), p.y - 8 * Math.sin(ang - .45));
+  g.lineTo(p.x - 8 * Math.cos(ang + .45), p.y - 8 * Math.sin(ang + .45)); g.closePath(); g.fill(); g.restore();
+}
+function edges() {
+  const snap = S.snap, tasks = snap ? Object.values(snap.tasks) : [], J = pos.jarvis;
+  const active = st => st === "working" || st === "analyzing";
+  // the command structure, faint
+  for (const id of ["lead", "critic"]) glowLine(J.x, J.y, pos[id].x, pos[id].y, "#4fd8ff", 1, .25);
+  for (const r of S.roster) glowLine(pos.lead.x, pos.lead.y, pos[r.id].x, pos[r.id].y, "#2f7bff", .5, .07);
+  if (!snap) return;
+  const lst = nodeOf("lead").status, cst = nodeOf("critic").status;
+  if (S.snap.mission.goal) glowLine(J.x, J.y, pos.lead.x, pos.lead.y, "#a8f0ff", active(lst) ? 2.4 : 1.4, active(lst) ? .9 : .5);
+  // delegation: who handed each task to whom
+  for (const t of tasks) {
+    const p = pos[t.role]; if (!p) continue;
+    const from = t.delegated_by === "critic" ? pos.critic : pos.lead;
+    glowLine(from.x, from.y, p.x, p.y, t.delegated_by === "critic" ? "#9d8cff" : "#4fd8ff", active(t.status) ? 2 : 1.1,
+             active(t.status) ? .85 : t.status === "waiting" ? .35 : .5);
+    arrow(from, p, t.delegated_by === "critic" ? "#9d8cff" : "#4fd8ff");
+  }
+  // dependencies: this task needs that one's result
+  for (const t of tasks) for (const n of t.needs || []) {
+    const dep = snap.tasks[n]; if (!dep || !pos[dep.role] || !pos[t.role] || dep.role === t.role) continue;
+    const done = dep.status === "completed" || dep.status === "approval";
+    glowLine(pos[dep.role].x, pos[dep.role].y, pos[t.role].x, pos[t.role].y, done ? "#4dffc3" : "#ffb347", 1.4, .75, [5, 6], .45);
+    arrow(pos[dep.role], pos[t.role], done ? "#4dffc3" : "#ffb347", .45);
+  }
+  // the critic reviewing finished work
+  if (active(cst)) for (const t of tasks) if (pos[t.role]) glowLine(pos[t.role].x, pos[t.role].y, pos.critic.x, pos.critic.y, "#9d8cff", 1, .45, [2, 5]);
+}
+function drawNode(id, label, T) {
+  const p = pos[id]; if (!p) return;
+  const n = nodeOf(id), col = COLORS[n.status] || COLORS.idle, g = cx2, live = n.status === "working" || n.status === "analyzing";
+  const isJ = id === "jarvis", r = p.r;
+  g.save();
+  // halo
+  const halo = g.createRadialGradient(p.x, p.y, r * .3, p.x, p.y, r * (isJ ? 3.2 : 2.6));
+  halo.addColorStop(0, col + (n.status === "idle" ? "22" : "55")); halo.addColorStop(1, col + "00");
+  g.fillStyle = halo; g.beginPath(); g.arc(p.x, p.y, r * (isJ ? 3.2 : 2.6), 0, 7); g.fill();
+  // core
+  g.shadowColor = col; g.shadowBlur = n.status === "idle" ? 4 : 18;
+  g.fillStyle = "rgba(3,16,26,.92)"; g.strokeStyle = col; g.lineWidth = isJ ? 2.5 : 1.6;
+  g.beginPath(); g.arc(p.x, p.y, r, 0, 7); g.fill(); g.stroke();
+  g.fillStyle = col; g.globalAlpha = n.status === "idle" ? .35 : .9;
+  g.beginPath(); g.arc(p.x, p.y, r * (isJ ? .42 : .38), 0, 7); g.fill(); g.globalAlpha = 1;
+  // only a really running agent gets the spinning activity rings
+  if (live || isJ) {
+    const sp = live ? 1 : .25;
+    g.lineWidth = 1.6; g.strokeStyle = col;
+    g.beginPath(); g.arc(p.x, p.y, r + 6, T * 2.2 * sp, T * 2.2 * sp + 1.6); g.stroke();
+    g.beginPath(); g.arc(p.x, p.y, r + 6, T * 2.2 * sp + 3.14, T * 2.2 * sp + 4.4); g.stroke();
+    if (isJ) { g.globalAlpha = .5; g.setLineDash([2, 6]); g.beginPath(); g.arc(p.x, p.y, r + 16, -T * .4, -T * .4 + 6.28); g.stroke(); g.setLineDash([]); }
+  }
+  if (n.status === "approval") { g.globalAlpha = .5 + .5 * Math.sin(T * 4); g.strokeStyle = COLORS.approval; g.lineWidth = 2;
+    g.beginPath(); g.arc(p.x, p.y, r + 10, 0, 7); g.stroke(); g.globalAlpha = 1; }
+  if (n.status === "waiting") { g.globalAlpha = .6; g.setLineDash([3, 4]); g.strokeStyle = col; g.beginPath(); g.arc(p.x, p.y, r + 6, 0, 7); g.stroke(); g.setLineDash([]); g.globalAlpha = 1; }
+  const fl = flashes[id];
+  if (fl) { const k2 = (performance.now() - fl) / 900; if (k2 < 1) { g.globalAlpha = 1 - k2; g.strokeStyle = "#ffffff"; g.lineWidth = 2;
+    g.beginPath(); g.arc(p.x, p.y, r + 4 + k2 * 30, 0, 7); g.stroke(); g.globalAlpha = 1; } }
+  if (id === selected) { g.strokeStyle = "#a8f0ff"; g.lineWidth = 1; g.setLineDash([4, 3]); g.beginPath(); g.arc(p.x, p.y, r + 22, 0, 7); g.stroke(); g.setLineDash([]); }
+  g.shadowBlur = 0;
+  // label + real status
+  g.textAlign = "center";
+  if (n.status !== "idle" && !isJ) {          // a plate so live labels stay readable over neighbours
+    const hasT = n.task && S.snap && S.snap.tasks[n.task];
+    g.fillStyle = "rgba(2,10,18,.82)"; g.fillRect(p.x - 74, p.y + r + 5, 148, hasT ? 42 : 24);
+  }
+  g.font = `${isJ ? 700 : 500} ${isJ ? 13 : 9.5}px Orbitron, sans-serif`;
+  g.fillStyle = n.status === "idle" ? "#5f8797" : "#dff6ff";
+  const ly = isJ ? p.y + r + 28 : p.y + r + 16;
+  g.fillText(label.toUpperCase(), p.x, ly);
+  if (n.status !== "idle" || isJ) {
+    g.font = "500 8px Orbitron, sans-serif"; g.fillStyle = col;
+    g.fillText(LABEL[n.status] || n.status, p.x, ly + 12);
+    const t = n.task && S.snap && S.snap.tasks[n.task];
+    if (t) {         // real per-agent progress: its stage, tool calls and how much it has written
+      const stg = stageOf(t);
+      g.fillStyle = "#7fb3c4"; g.font = "500 12px Rajdhani, sans-serif";
+      g.fillText(`${stg.name} · ${t.tools.length} tool${t.tools.length === 1 ? "" : "s"} · ${k(t.chars)} chars`, p.x, ly + 25);
+      for (let i = 0; i < 4; i++) { g.fillStyle = i < stg.n ? col : "rgba(79,216,255,.15)"; g.fillRect(p.x - 26 + i * 13.5, ly + 31, 11, 3); }
+    }
+  }
+  g.restore();
+}
+function stageOf(t) {
+  if (t.status === "completed" || t.status === "approval") return { n:4, name:"DONE" };
+  if (t.status === "failed") return { n:0, name:"FAILED" };
+  if (t.status === "waiting") return { n:0, name:t.attempts ? "SENT BACK" : "QUEUED" };
+  if (t.chars > 0 && /writ/.test(t.activity)) return { n:3, name:"WRITING" };
+  if (t.tools.length) return { n:2, name:"USING TOOLS" };
+  return { n:1, name:"THINKING" };
+}
+function frame(ts) {
+  const T = ts / 1000, g = cx2;
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  g.clearRect(0, 0, W, H);
+  if (!pos.jarvis || !S.roster.length) { requestAnimationFrame(frame); return; }
+  // backdrop rings around JARVIS
+  const J = pos.jarvis;
+  g.save(); g.strokeStyle = "rgba(79,216,255,.08)"; g.lineWidth = 1;
+  for (const m of [2.2, 4.4, 6.6]) { g.beginPath(); g.ellipse(J.x, J.y, J.r * m * 1.25, J.r * m, 0, 0, 7); g.stroke(); }
+  g.restore();
+  edges();
+  // pulses travelling along connections (each one is a real delegation or handoff)
+  for (let i = pulses.length - 1; i >= 0; i--) {
+    const p = pulses[i], u = (performance.now() - p.t0) / p.dur;
+    if (u >= 1) { flashes[p.to] = performance.now(); pulses.splice(i, 1); continue; }
+    const a = pos[p.from], b = pos[p.to];
+    for (let j = 0; j < 6; j++) {
+      const q = along(a, b, Math.max(0, u - j * .03));
+      g.save(); g.globalAlpha = 1 - j / 6; g.fillStyle = p.color; g.shadowColor = p.color; g.shadowBlur = 16;
+      g.beginPath(); g.arc(q.x, q.y, (p.big ? 4.5 : 3.5) * (1 - j / 8), 0, 7); g.fill(); g.restore();
+    }
+  }
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i], u = (performance.now() - s.t0) / 700, p = pos[s.n];
+    if (u >= 1 || !p) { sparks.splice(i, 1); continue; }
+    g.save(); g.globalAlpha = 1 - u; g.fillStyle = s.color; g.shadowColor = s.color; g.shadowBlur = 8;
+    g.beginPath(); g.arc(p.x + Math.cos(s.a) * (p.r + u * s.v), p.y + Math.sin(s.a) * (p.r + u * s.v), 1.8, 0, 7); g.fill(); g.restore();
+  }
+  const idleFirst = S.roster.slice().sort((a, b) => (nodeOf(a.id).status === "idle" ? 0 : 1) - (nodeOf(b.id).status === "idle" ? 0 : 1));
+  for (const r of idleFirst) drawNode(r.id, r.id, T);
+  drawNode("lead", "Team lead", T); drawNode("critic", "Critic", T); drawNode("jarvis", "JARVIS", T);
+  requestAnimationFrame(frame);
+}
+
+// ---------- panels ----------
+function render() {
+  if (!pos.jarvis || Object.keys(pos).length < S.roster.length + 3) layout();
+  const snap = S.snap, m = snap ? snap.mission : { phase:"idle" };
+  $("empty").style.display = m.goal ? "none" : "block";
+  if (m.goal) {
+    $("mtitle").textContent = (m.title || m.goal).toUpperCase();
+    $("mgoal").textContent = "“" + m.goal + "”";
+    const end = m.finished || (S.running ? now() : (S.events.length ? S.events[S.events.length - 1].t : now()));
+    const secs = Math.max(0, Math.round(end - m.started));
+    const tasks = Object.values(snap.tasks);
+    const busy = tasks.filter(t => t.status === "working" || t.status === "analyzing").length;
+    $("mmeta").innerHTML = `ELAPSED <span>${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}</span> · AGENTS ACTIVE <span>${busy}</span> · TASKS <span>${tasks.length}</span> · TOOL CALLS <span>${tasks.reduce((a, t) => a + t.tools.length, 0)}</span>`
+      + (m.score != null ? ` · CRITIC <span>${m.score}/10</span>` : "") + ` · STARTED <span>${clock(m.started)}</span>`;
+  }
+  const order = PHASES.map(p => p[0]), cur = m.phase === "redoing" ? "reviewing" : m.phase;
+  const ci = order.indexOf(cur);
+  $("phases").innerHTML = PHASES.map(([id, name], i) =>
+    `<div class="ph ${cur === id && id !== "done" ? "on" : ""} ${ci > i || m.phase === "done" ? "done" : ""}">${name}</div>`).join("");
+  const pr = (m.progress || { done:0, total:0 });
+  $("pbar").style.width = (pr.total ? (100 * pr.done / pr.total) : 0) + "%";
+  $("pstage").textContent = ({ idle:"STANDING BY", planning:"TEAM LEAD IS PLANNING", working:"SPECIALISTS AT WORK", reviewing:"CRITIC IS REVIEWING",
+    redoing:"REDOING WHAT THE CRITIC SENT BACK", reporting:"WRITING THE REPORT", done:"MISSION COMPLETE", failed:"MISSION FAILED",
+    cancelled:"MISSION CALLED OFF", cancelling:"CALLING THE TEAM OFF" })[m.phase] || m.phase.toUpperCase();
+  $("pcount").textContent = pr.total ? `${pr.done} / ${pr.total} STAGES · ${Math.round(100 * pr.done / pr.total)}%` : "";
+  const ap = $("approve");
+  if (m.approvals && (m.approvals.length || m.change)) {
+    ap.style.display = "block";
+    ap.innerHTML = `<h2>AWAITING YOUR APPROVAL</h2>${m.approvals.map(a => "• " + esc(a)).join("<br>")}${m.change ? `<br>• Change to Jarvis: ${esc(m.change)}` : ""}<div class="muted" style="color:#d9b874">Say “read me the report”. Nothing happens without your OK.</div>`;
+  } else ap.style.display = "none";
+  renderPipe(); renderInspector();
+}
+function renderPipe() {
+  const snap = S.snap, pipe = $("pipe");
+  if (!snap || !Object.keys(snap.tasks).length) { pipe.innerHTML = `<div class="muted">The team lead's plan shows up here, with arrows for which task needs which.</div>`; return; }
+  const tasks = snap.tasks, depth = {};
+  const d = id => depth[id] != null ? depth[id] : (depth[id] = 0, depth[id] = Math.max(0, ...(tasks[id].needs || []).filter(n => tasks[n]).map(n => d(n) + 1)));
+  Object.keys(tasks).forEach(d);
+  const cols = {}; Object.keys(tasks).forEach(id => (cols[depth[id]] = cols[depth[id]] || []).push(id));
+  const P = {}; let maxX = 0;
+  Object.keys(cols).forEach(c => cols[c].forEach((id, i) => { P[id] = { x:c * 250, y:i * 52 + (cols[c].length === 1 ? 26 : 0) }; maxX = Math.max(maxX, c * 250 + 190); }));
+  let svg = `<svg width="${maxX + 10}" height="108">`;
+  for (const id in tasks) for (const n of tasks[id].needs || []) if (P[n]) {
+    const a = P[n], b = P[id], done = /completed|approval/.test(tasks[n].status), c = done ? "#4dffc3" : "#ffb347";
+    svg += `<path d="M${a.x + 190} ${a.y + 22} C ${a.x + 220} ${a.y + 22}, ${b.x - 30} ${b.y + 22}, ${b.x} ${b.y + 22}" stroke="${c}" stroke-width="1.4" fill="none" stroke-dasharray="5 5" opacity=".85"/>`
+         + `<path d="M${b.x - 7} ${b.y + 18} L${b.x} ${b.y + 22} L${b.x - 7} ${b.y + 26}" fill="${c}"/>`;
+  }
+  svg += "</svg>";
+  pipe.innerHTML = svg + Object.entries(tasks).map(([id, t]) => {
+    const c = COLORS[t.status] || COLORS.idle, stg = stageOf(t);
+    return `<div class="tk ${selected === t.role ? "sel" : ""}" data-role="${esc(t.role)}" style="left:${P[id].x}px;top:${P[id].y}px;border-color:${c}66">
+      <div class="r"><span style="color:${c}">${esc(id)} · ${esc(t.role)}</span><span style="color:${c}">${stg.name}</span></div>
+      <span class="x">${esc(t.task)}</span></div>`;
+  }).join("");
+  pipe.querySelectorAll(".tk").forEach(el => el.onclick = () => { selected = el.dataset.role; render(); });
+}
+function lastOf(type, test) { for (let i = S.events.length - 1; i >= 0; i--) { const e = S.events[i]; if (e.type === type && test(e)) return e; } return null; }
+function renderInspector() {
+  const el = $("insp"), snap = S.snap, n = nodeOf(selected), col = COLORS[n.status] || COLORS.idle;
+  const info = S.roster.find(r => r.id === selected);
+  const title = nm(selected), about = selected === "jarvis" ? "Central intelligence. Takes your mission, hands it to the team lead, and brings the result back to you."
+    : selected === "lead" ? "Splits the mission into tasks, assigns specialists, and writes the final report."
+    : selected === "critic" ? "Scores the team's work against what you asked and sends weak parts back to be redone."
+    : info ? info.about + ` (tools: ${info.tools})` : "";
+  let h = `<h2>INSPECTOR <b>// CLICK ANY NODE</b></h2><div class="name">${esc(title)}</div><div class="about">${esc(about)}</div>
+    <span class="st" style="color:${col}">${esc(LABEL[n.status] || n.status)}</span>
+    ${n.activity ? `<span class="muted" style="margin-left:8px">${esc(n.activity)}</span>` : ""}`;
+  const m = snap ? snap.mission : {};
+  if (selected === "jarvis") {
+    h += sec("MISSION", m.goal ? `<div class="kv">${esc(m.goal)}</div><div class="kv"><b>Phase</b> ${esc(m.phase)}${m.score != null ? ` · <b>Critic</b> ${m.score}/10` : ""}</div>` : `<div class="muted">No mission yet.</div>`);
+    if (m.spoken) h += sec("RESULT", `<div class="kv">${esc(m.spoken)}</div>`);
+    if (m.approvals && (m.approvals.length || m.change)) h += sec("NEEDS YOUR OK", m.approvals.map(a => `<div class="kv">• ${esc(a)}</div>`).join("") + (m.change ? `<div class="kv">• ${esc(m.change)}</div>` : ""));
+  } else if (selected === "lead" || selected === "critic") {
+    if (selected === "lead") {
+      const plan = lastOf("plan", () => true);
+      h += sec("PLAN", plan ? plan.tasks.map(t => `<div class="kv"><b>${esc(t.id)} → ${esc(t.role)}</b> ${esc(t.task)}${t.needs.length ? ` <b>(needs ${t.needs.join(", ")})</b>` : ""}</div>`).join("") : `<div class="muted">Not planned yet.</div>`);
+    } else {
+      const revs = S.events.filter(e => e.type === "review");
+      h += sec("REVIEWS", revs.length ? revs.map(r => `<div class="kv"><b>Round ${r.round}: ${r.score ?? "?"}/10</b> ${esc(r.verdict)}${r.redo.length ? ` <b>sent back ${r.redo.join(", ")}</b>` : ""}</div>`).join("") : `<div class="muted">Hasn't reviewed anything yet.</div>`);
+    }
+    h += runs(selected, null);
+  } else {
+    const mine = snap ? n.tasks.map(id => snap.tasks[id]).filter(Boolean) : [];
+    if (!mine.length) h += sec("CURRENT TASK", `<div class="muted">Not on this mission.</div>`);
+    for (const t of mine) {
+      const deps = (t.needs || []).map(x => `${x} (${snap.tasks[x] ? snap.tasks[x].role : "?"})`).join(", ");
+      h += sec(`TASK ${esc(t.id)}`, `<div class="kv">${esc(t.task)}</div>
+        <div class="kv"><b>Delegated by</b> ${esc(nm(t.delegated_by))}${t.redo ? ` · <b>${esc(t.redo)}</b>` : ""}</div>
+        <div class="kv"><b>Depends on</b> ${esc(deps || "nothing")} · <b>Attempts</b> ${t.attempts}${t.seconds != null ? ` · <b>Took</b> ${t.seconds}s` : ""}</div>`);
+      h += sec(`TOOL USAGE (${t.tools.length})`, t.tools.length ? t.tools.slice().reverse().map(x => `<div class="tool"><em>${esc(x.tool)}</em>${esc(x.detail)} <span class="muted">${clock(x.t)}</span>${x.blocked ? ` <span style="color:var(--red)">· refused (not allowed)</span>` : ""}</div>`).join("") : `<div class="muted">No tools used${t.status === "completed" ? "" : " yet"}.</div>`);
+      const res = lastOf("result", e => e.task === t.id), wr = lastOf("writing", e => e.task === t.id);
+      h += sec(res ? "RESULT" : "LIVE OUTPUT", res ? `<pre class="res">${esc(res.preview || "(nothing came back)")}</pre>` : wr ? `<pre class="res">…${esc(wr.tail)}</pre>` : `<div class="muted">Nothing written yet.</div>`);
+    }
+  }
+  if (selected !== "jarvis" && selected !== "lead" && selected !== "critic") {
+    const past = (S.history[selected] || []).filter(x => x.pid !== S.pid).slice().reverse();
+    h += sec("EXECUTION HISTORY", past.length ? past.map(x => `<div class="hist"><b>${esc(x.title || "")}</b> · ${x.when ? new Date(x.when * 1000).toLocaleDateString() : ""} · ${x.ok === false ? "failed" : esc(x.status)}<br>${esc(x.task || "")}</div>`).join("") : `<div class="muted">No earlier missions.</div>`);
+  }
+  const keep = el.scrollTop;
+  el.innerHTML = h; el.scrollTop = keep;
+}
+function runs(node, task) {
+  const fin = S.events.filter(e => e.type === "finished" && e.node === node);
+  return sec("EXECUTION HISTORY", fin.length ? fin.map(e => `<div class="hist">${clock(e.t)} · ${e.ok ? "finished" : "empty"} in ${e.seconds}s · ${k(e.chars)} chars</div>`).join("") : `<div class="muted">No runs yet this mission.</div>`);
+}
+function sec(t, body) { return `<div class="sec"><h3>${t}</h3>${body}</div>`; }
+
+cv.addEventListener("click", ev => {
+  let best = null, bd = 1e9;
+  for (const id in pos) { const p = pos[id], d = Math.hypot(ev.clientX - p.x, ev.clientY - p.y); if (d < p.r + 18 && d < bd) { bd = d; best = id; } }
+  if (best) { selected = best; render(); }
+});
+cv.addEventListener("mousemove", ev => {
+  let hit = false; for (const id in pos) { const p = pos[id]; if (Math.hypot(ev.clientX - p.x, ev.clientY - p.y) < p.r + 18) hit = true; }
+  cv.style.cursor = hit ? "pointer" : "default";
+});
+setInterval(() => { if (S.running) render(); }, 1000);     // the elapsed clock
+poll();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -28,6 +28,11 @@ updates/
 *.tgz
 lessons.json
 lessons.tmp
+habits.json
+habits.tmp
+team.json
+team.tmp
+team/
 """
 PROMPT = """You are editing the source code of Jarvis, a Python voice assistant that lives in this folder.
 It runs on macOS and on Windows (Windows-only parts are in win.py and behind sys.platform == "win32"

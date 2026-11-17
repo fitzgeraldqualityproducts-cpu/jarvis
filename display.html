@@ -111,6 +111,7 @@
   .status::before, .status::after { content:"//"; color:var(--dim); margin:0 .6em; letter-spacing:0; }
   .caption { min-height:56px; max-width:680px; text-align:center; font-size:22px; line-height:1.35; }
   .sysline { position:fixed; z-index:3; font-family:var(--hfont); font-size:9px; letter-spacing:.25em; color:var(--dim); }
+  #teamlink { color:var(--cyan); text-decoration:none; cursor:pointer; } #teamlink:hover { color:var(--cyan2); text-shadow:0 0 8px var(--cyan); }
   .sysline.tl { top:8px; left:30px; } .sysline.tr { top:8px; right:30px; } .sysline.bl { bottom:8px; left:30px; } .sysline.br { bottom:8px; right:30px; }
   .offline { position:fixed; bottom:26px; left:50%; transform:translateX(-50%); color:var(--red); font-size:14px; z-index:6; display:none;
     font-family:var(--hfont); letter-spacing:.15em; }
@@ -168,7 +169,7 @@
 <div class="sysline tl">J.A.R.V.I.S // PERSONAL INTERFACE</div>
 <div class="sysline tr" id="uptime">UPTIME 00:00:00</div>
 <div class="sysline bl" id="sysstate">CORE NOMINAL</div>
-<div class="sysline br"><span id="hint"></span><span id="view" title="Switch between the 3D and flat display">VIEW · 2D</span> · LINK localhost:8765</div>
+<div class="sysline br"><span id="hint"></span><span id="view" title="Switch between the 3D and flat display">VIEW · 2D</span> · <a id="teamlink" href="/team" target="_blank" title="Live view of my AI team">AGENT NET</a> · LINK localhost:8765</div>
 
 <div class="hud">
   <div class="col left">
