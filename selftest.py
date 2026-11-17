@@ -7,6 +7,7 @@ It checks, each in a separate little Python run so a broken part can't take Jarv
   brain   Claude Code still answers
   mic     the microphone still opens
   speaker there's still a speaker to talk through
+  display the HUD page and its 3D engine are there and the display's web server serves them
 
 updater.py runs it before and after installing an update (before restarting) and again when
 he starts up on the new version. Anything that worked before the update but not after is a
@@ -22,7 +23,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SKIP = {"mac", "menubar", "inbox"} if sys.platform == "win32" else {"win", "menubar_win", "wincal"}
 NAMES = {"code": "my code", "parts": "some of my parts", "voice": "my voice", "brain": "my brain",
-         "mic": "the microphone", "speaker": "the speaker"}
+         "mic": "the microphone", "speaker": "the speaker", "display": "my display"}
 
 
 def _py(code, timeout):
@@ -101,7 +102,24 @@ def _speaker():
     return ok, detail, []
 
 
-CHECKS = {"code": _code, "parts": _parts, "voice": _voice, "brain": _brain, "mic": _mic, "speaker": _speaker}
+def _display():
+    ok, detail = _py("import json, re, threading, urllib.request\n"
+                     "from http.server import ThreadingHTTPServer\n"
+                     "import display\n"
+                     "srv = ThreadingHTTPServer(('127.0.0.1', 0), display._Handler)\n"
+                     "threading.Thread(target=srv.serve_forever, daemon=True).start()\n"
+                     "base = f'http://127.0.0.1:{srv.server_address[1]}'\n"
+                     "page = urllib.request.urlopen(base + '/', timeout=10).read().decode('utf-8', 'replace')\n"
+                     "state = json.load(urllib.request.urlopen(base + '/state', timeout=10))\n"
+                     "libs = sorted(set(re.findall(r'/vendor/([\\w.-]+[.]js)', page)))\n"
+                     "sizes = [len(urllib.request.urlopen(base + '/vendor/' + n, timeout=10).read()) for n in libs]\n"
+                     "srv.shutdown()\n"
+                     "good = '<canvas id=\"gl\"' in page and 'status' in state and all(n > 1000 for n in sizes)\n"
+                     "print('@@' + json.dumps([good, f'page and {len(libs)} 3D engine file(s) served' if good else 'the page or its 3D engine is broken']))", 60)
+    return ok, detail, []
+
+
+CHECKS = {"code": _code, "parts": _parts, "voice": _voice, "brain": _brain, "mic": _mic, "speaker": _speaker, "display": _display}
 
 
 def run(skip=()):
@@ -149,7 +167,7 @@ def describe(results):
     """A short spoken summary."""
     bad = [n for n, r in results.items() if not r["ok"]]
     if not bad:
-        return "Everything checks out: my code, voice, brain, microphone and speaker are all working."
+        return "Everything checks out: my code, voice, brain, microphone, speaker and display are all working."
     parts = [f"{NAMES.get(n, n)} {'are' if n == 'parts' else 'is'}n't working "
              f"({', '.join(results[n]['extra']) if n == 'parts' else results[n]['detail'][:90]})" for n in bad]
     good = [NAMES.get(n, n) for n in results if n not in bad]

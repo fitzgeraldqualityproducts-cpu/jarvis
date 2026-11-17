@@ -1,7 +1,9 @@
 """Display: a live sci-fi HUD in your browser (holographic orb, time, weather, Spotify,
 reminders, timers and the conversation).
 
-Jarvis serves it at http://localhost:8765 and opens it when he starts.
+Jarvis serves it at http://localhost:8765 and opens it when he starts. It's a real 3D scene
+(three.js, in vendor/) that you can turn with the mouse, and it falls back to a flat 2D view on
+computers where 3D runs slowly.
 Other modules call display.update(...) to change what it shows. While the page is open,
 this module also keeps the weather and the "now playing" panel fresh by itself."""
 import json
@@ -19,6 +21,7 @@ from pathlib import Path
 
 PORT = 8765
 HTML = Path(__file__).with_name("display.html")
+VENDOR = HTML.with_name("vendor")       # the 3D engine (three.js), served to the page
 WINDOWS = sys.platform == "win32"
 
 _lock = threading.Lock()
@@ -32,8 +35,8 @@ STATE = {
     "log": [],
     "today": [],
     "timers": [],
-    "music": None,
-    "sky": None,            # {code, is_day, sunrise, sunset} for the live weather effects          # {title, artist, album, art, state, pos, dur, at}
+    "music": None,          # {title, artist, album, art, state, pos, dur, at}
+    "sky": None,            # {code, is_day, sunrise, sunset} for the live weather effects
     "boot": time.time(),    # changes when Jarvis restarts, so the page replays its boot-up
     "updated": time.time(),
 }
@@ -207,13 +210,35 @@ def _weather_loop():
 
 # ---------------- Web server ----------------
 
+def _page_version():
+    """Changes when display.html changes (an update or a voice edit), so an open page reloads itself."""
+    try:
+        return int(HTML.stat().st_mtime)
+    except OSError:
+        return 0
+
+
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/state"):
             _last_view[0] = time.time()
             with _lock:
-                body = json.dumps(dict(STATE, now=time.time(), token=TOKEN)).encode()
+                body = json.dumps(dict(STATE, now=time.time(), token=TOKEN, page=_page_version())).encode()
             ctype = "application/json"
+        elif self.path.startswith("/vendor/"):
+            name = urllib.parse.unquote(urllib.parse.urlparse(self.path).path[len("/vendor/"):])
+            f = VENDOR / name
+            if "/" in name or "\\" in name or name.startswith(".") or not name.endswith(".js") or not f.is_file():
+                self.send_response(404)
+                self.end_headers()
+                return
+            body = f.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/javascript; charset=utf-8")
+            self.send_header("Cache-Control", "max-age=3600")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         else:
             body = HTML.read_bytes()
             ctype = "text/html; charset=utf-8"

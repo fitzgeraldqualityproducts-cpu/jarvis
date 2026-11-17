@@ -125,25 +125,50 @@
   .boot .pb { width:min(520px,86vw); height:3px; background:rgba(79,216,255,.15); }
   .boot .pb div { height:100%; width:0; background:var(--cyan); box-shadow:0 0 12px var(--cyan); transition:width .25s; }
   @keyframes flick { 0% { opacity:0 } 30% { opacity:1 } 40% { opacity:.2 } 55% { opacity:1 } 65% { opacity:.4 } 100% { opacity:1 } }
-  body.booting .hud .panel { opacity:0; transform:translateX(var(--from, -30px)); }
-  .hud .panel { transition:opacity .5s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
-  body.booting .center .status, body.booting .center .caption { opacity:0; }
-  .center .status, .center .caption { transition:opacity .6s ease .3s; }
+  body.booting .panel { opacity:0; transform:translateX(var(--from, -30px)); }
+  .panel { transition:opacity .5s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
+  body.booting #status, body.booting #caption { opacity:0; }
+  #status, #caption { transition:opacity .6s ease .3s; }
   .col.right .panel { --from:30px; }
 
   @media (max-width:1100px) { .hud { grid-template-columns:270px 1fr 270px; gap:16px; padding:20px; } .clock{font-size:38px} .temp{font-size:40px} }
   @media (max-width:900px) { .hud { grid-template-columns:1fr; overflow:auto; height:auto; } html,body{overflow:auto} .sysline{display:none} }
   @media (prefers-reduced-motion:reduce) { .sweep { display:none; } }
+
+  /* ---- real 3D view (three.js): orb in WebGL, panels floating in 3D space ---- */
+  #gl { position:fixed; inset:0; z-index:2; width:100%; height:100%; display:none; mix-blend-mode:screen; pointer-events:none; }
+  body.mode3d #gl { display:block; }
+  body.mode3d .hud { display:none; }
+  #css3d { position:fixed !important; inset:0; z-index:3; pointer-events:none; }
+  body.mode3d { cursor:grab; user-select:none; -webkit-user-select:none; }
+  body.mode3d.dragging { cursor:grabbing; }
+  body.mode3d .col { transform-style:preserve-3d; }
+  body.mode3d .panel { backdrop-filter:none; -webkit-backdrop-filter:none; cursor:inherit;
+    background:linear-gradient(135deg, rgba(10,44,64,.72), rgba(4,16,26,.66)); box-shadow:inset 0 0 30px rgba(79,216,255,.12); }
+  body.mode3d .col .panel { animation:float 8s ease-in-out infinite; }
+  body.mode3d .col .panel:nth-child(2) { animation-delay:-2s; } body.mode3d .col .panel:nth-child(3) { animation-delay:-4s; }
+  body.mode3d .col .panel:nth-child(4) { animation-delay:-6s; }
+  @keyframes float { 0%,100% { translate:0 0 10px; } 50% { translate:0 -5px 34px; } }
+  body.mode3d .typebox input { user-select:text; -webkit-user-select:text; cursor:text; }
+  body.mode3d .typebox button { cursor:pointer; }
+  .center3d { width:720px; display:flex; flex-direction:column; align-items:center; gap:14px; text-align:center; }
+  .center3d .status { text-shadow:0 0 14px rgba(79,216,255,.8); }
+  .center3d .caption { text-shadow:0 0 18px rgba(0,0,0,.9), 0 0 4px rgba(0,0,0,.8); }
+  #view { cursor:pointer; color:var(--cyan); pointer-events:auto; }
+  #view:hover { color:var(--cyan2); text-shadow:0 0 8px var(--cyan); }
+  .sysline, #view { z-index:6; }
+  .offline { z-index:7; }
 </style>
 </head>
 <body class="booting">
 <canvas id="bg"></canvas>
 <canvas id="fx"></canvas>
+<canvas id="gl"></canvas>
 <div class="grid"></div>
 <div class="sysline tl">J.A.R.V.I.S // PERSONAL INTERFACE</div>
 <div class="sysline tr" id="uptime">UPTIME 00:00:00</div>
 <div class="sysline bl" id="sysstate">CORE NOMINAL</div>
-<div class="sysline br">LINK localhost:8765</div>
+<div class="sysline br"><span id="hint"></span><span id="view" title="Switch between the 3D and flat display">VIEW · 2D</span> · LINK localhost:8765</div>
 
 <div class="hud">
   <div class="col left">
@@ -189,9 +214,10 @@ let S = { status:"sleeping", level:0 };
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const nowS = () => Date.now() / 1000;
+const Q = new URLSearchParams(location.search);          // ?wx=rain&phase=night&view=2d for testing
 
 // ---------- boot-up ----------
-let bootStart = performance.now(), bootSeen = null, booting = true;
+let bootStart = performance.now(), bootSeen = null, pageSeen = null, booting = true;
 const BOOT_LINES = ["Initialising neural core", "Calibrating audio array", "Loading voice synthesis",
   "Syncing chronometer", "Linking atmospheric sensors", "Connecting media relay", "Holographic projection"];
 function runBoot() {
@@ -205,9 +231,9 @@ function runBoot() {
   }, 250 + i * 260));
   setTimeout(() => { box.classList.add("done"); bootStart = performance.now(); }, 250 + BOOT_LINES.length * 260 + 350);
   setTimeout(() => {
-    document.querySelectorAll(".hud .panel").forEach((p, i) => p.style.transitionDelay = (i * 0.09) + "s");
+    document.querySelectorAll(".panel").forEach((p, i) => p.style.transitionDelay = (i * 0.09) + "s");
     document.body.classList.remove("booting");
-    setTimeout(() => { booting = false; document.querySelectorAll(".hud .panel").forEach(p => p.style.transitionDelay = ""); }, 1400);
+    setTimeout(() => { booting = false; document.querySelectorAll(".panel").forEach(p => p.style.transitionDelay = ""); }, 1400);
   }, 250 + BOOT_LINES.length * 260 + 900);
 }
 $("boot").addEventListener("click", () => { $("boot").classList.add("done"); document.body.classList.remove("booting"); });
@@ -236,6 +262,8 @@ async function poll() {
   try {
     const r = await fetch("/state", { cache:"no-store" });
     S = await r.json(); $("offline").style.display = "none";
+    if (S.page && pageSeen && S.page !== pageSeen) { location.reload(); return; }   // the display itself was updated
+    pageSeen = pageSeen || S.page;
     if (bootSeen !== null && S.boot !== bootSeen) runBoot();   // Jarvis restarted
     bootSeen = S.boot;
     render();
@@ -349,7 +377,6 @@ setInterval(tick, 250); tick(); poll();
 
 // ---------- living sky: day/night colors + weather effects ----------
 const bk = $("bg"), bx = bk.getContext("2d"), fx = $("fx"), fxx = fx.getContext("2d");
-const Q = new URLSearchParams(location.search);          // ?wx=rain&phase=night for testing
 const LITE = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let W = 0, H = 0, stars = [], drops = [], flakes = [], clouds = [], fogs = [], splashes = [];
 let flash = 0, nextBolt = 0, bolt = null;
@@ -495,20 +522,23 @@ function drawSky() {
 }
 
 // ---------- orb + holographic rings ----------
+// Two ways to draw him: the real 3D scene (three.js, WebGL) or the flat 2D canvas, which is the
+// lighter fallback for slow computers (it switches by itself if 3D runs choppy).
 const oc = $("orb"), ox = oc.getContext("2d");
-let t = 0, energy = 0;
+let t = 0, energy = 0, VIEW = "loading", lastFrame = performance.now();
 const ease = x => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
 function cy(a) { return `rgba(79,216,255,${a})`; }
-function drawOrb() {
+function bootAmount() {
+  const bt = (performance.now() - bootStart) / 1000;            // seconds since boot reveal
+  return { bt, B: booting ? ease(bt / 1.6) : 1,                    // 0..1 ring draw-in
+           pulse: booting && bt < 1.2 ? Math.max(0, 1 - bt / 1.2) : 0 };
+}
+function drawOrb2D() {
   const dpr = devicePixelRatio || 1, w = oc.clientWidth;
   if (oc.width !== Math.round(w * dpr)) { oc.width = oc.height = Math.round(w * dpr); }
   ox.setTransform(dpr, 0, 0, dpr, 0, 0);
   const c = w / 2, R = w * 0.15;
-  const target = { sleeping:.1, paused:.05, listening:.45 + (S.level || 0) * 1.5, thinking:.6, speaking:.8 + .25 * Math.sin(t * 9) }[S.status] ?? .1;
-  energy += (target - energy) * .08; t += 1 / 60;
-  const bt = (performance.now() - bootStart) / 1000;            // seconds since boot reveal
-  const B = booting ? ease(bt / 1.6) : 1;                         // 0..1 ring draw-in
-  const pulse = booting && bt < 1.2 ? Math.max(0, 1 - bt / 1.2) : 0;
+  const { B, pulse } = bootAmount();
   ox.clearRect(0, 0, w, w);
 
   // ---- the orb (glow, globe core, particles, tick ring, orbit arcs) ----
@@ -604,11 +634,324 @@ function drawOrb() {
   if (pulse > 0) { ox.strokeStyle = cy(pulse * .9); ox.lineWidth = 3 * pulse + .5;
     ox.beginPath(); ox.arc(c, c, R * (1 + (1 - pulse) * 2.4), 0, 7); ox.stroke(); }
   ox.shadowBlur = 0;
-
-  drawSky();
-  requestAnimationFrame(drawOrb);
 }
-drawOrb();
+
+function frame() {
+  const now = performance.now(), raw = (now - lastFrame) / 1000, dt = Math.min(.1, raw); lastFrame = now;
+  const target = { sleeping:.1, paused:.05, listening:.45 + (S.level || 0) * 1.5, thinking:.6, speaking:.8 + .25 * Math.sin(t * 9) }[S.status] ?? .1;
+  energy += (target - energy) * Math.min(1, dt * 4.8); t += dt;
+  if (VIEW === "3d") { try { G.frame(dt, raw); } catch (e) { console.warn("3D view failed", e); enter2D(); } }
+  else if (VIEW === "2d") drawOrb2D();
+  drawSky();
+  requestAnimationFrame(frame);
+}
+
+// ---------- choosing the view ----------
+const STORE = (() => { try { return localStorage; } catch { return null; } })();
+const pref = () => { try { return JSON.parse(STORE.getItem("jarvis.view") || "{}"); } catch { return {}; } };
+const savePref = v => { try { STORE.setItem("jarvis.view", JSON.stringify(v)); } catch {} };
+function want3D() {
+  const q = Q.get("view");
+  if (q) return q !== "2d";
+  if (innerWidth < 900) return false;
+  const p = pref();
+  if (p.mode === "2d") return false;                        // he picked the flat view
+  if (p.mode === "auto2d" && Date.now() - (p.at || 0) < 3 * 864e5) return false;   // 3D was too slow lately
+  return true;
+}
+function setViewLabel() {
+  $("view").textContent = "VIEW · " + (VIEW === "3d" ? "3D" : "2D");
+  $("hint").textContent = VIEW === "3d" ? "DRAG TO ROTATE · DOUBLE-CLICK TO RESET · " : "";
+}
+$("view").addEventListener("click", e => {
+  e.stopPropagation();
+  if (VIEW === "3d") { savePref({ mode:"2d" }); enter2D(); }
+  else { savePref({ mode:"3d" }); location.reload(); }
+});
+function enter2D(auto) {
+  if (G) { try { G.destroy(); } catch {} G = null; }
+  VIEW = "2d"; document.body.classList.remove("mode3d", "dragging");
+  if (auto) savePref({ mode:"auto2d", at:Date.now() });
+  setViewLabel();
+}
+let G = null;
+async function start3D() {
+  let THREE;
+  try { THREE = await import("/vendor/three-jarvis.min.js"); }
+  catch (e) { console.warn("3D engine didn't load", e); return enter2D(); }
+  try { G = build3D(THREE); } catch (e) { console.warn("3D view unavailable", e); G = null; return enter2D(); }
+  VIEW = "3d"; document.body.classList.add("mode3d"); setViewLabel();
+}
+
+function build3D(T) {
+  const canvas = $("gl");
+  if (!canvas.getContext("webgl2") && !canvas.getContext("webgl")) throw new Error("no WebGL");
+  const renderer = new T.WebGLRenderer({ canvas, antialias:(devicePixelRatio || 1) < 2, alpha:false, powerPreference:"high-performance" });
+  renderer.setClearColor(0x000000, 1);
+  const scene = new T.Scene(), camera = new T.PerspectiveCamera(35, 1, 1, 30000);
+  const css = new T.CSS3DRenderer(); css.domElement.id = "css3d"; document.body.appendChild(css.domElement);
+  const cssScene = new T.Scene();
+  const composer = new T.EffectComposer(renderer);
+  composer.addPass(new T.RenderPass(scene, camera));
+  const bloom = new T.UnrealBloomPass(new T.Vector2(256, 256), .5, .35, .5);
+  composer.addPass(bloom); composer.addPass(new T.OutputPass());
+  if (Q.get("bloom") === "0") bloom.enabled = false;                   // for testing
+  const forced = Q.get("q"), auto = forced == null && !LITE;
+  let tier = forced != null ? +forced : LITE ? 1 : (pref().tier || 0);   // 0 = full quality, 1 = lighter
+
+  // --- materials & helpers (one world unit = one CSS pixel on the panels' plane) ---
+  const CY = 0x4fd8ff, CY2 = 0x38e8ff, ADD = T.AdditiveBlending;
+  const mats = [];
+  const mat = (M, o) => { const m = new M(Object.assign({ transparent:true, depthWrite:false, blending:ADD }, o)); m.userData.base = o.opacity ?? 1; mats.push(m); return m; };
+  const basic = (color, opacity, extra) => mat(T.MeshBasicMaterial, Object.assign({ color, opacity, side:T.DoubleSide }, extra));
+  const lineM = (color, opacity) => mat(T.LineBasicMaterial, { color, opacity });
+  const geo = pts => new T.BufferGeometry().setAttribute("position", new T.Float32BufferAttribute(pts, 3));
+  const circle = (r, n = 128, a0 = 0, a1 = Math.PI * 2) => { const p = []; for (let i = 0; i <= n; i++) { const a = a0 + (a1 - a0) * i / n; p.push(Math.cos(a) * r, Math.sin(a) * r, 0); } return geo(p); };
+  const tex = draw => { const c = document.createElement("canvas"); c.width = c.height = 128; draw(c.getContext("2d"), c); const tx = new T.CanvasTexture(c); tx.colorSpace = T.SRGBColorSpace; return tx; };
+  const radial = stops => tex(x => { const g = x.createRadialGradient(64, 64, 0, 64, 64, 64); stops.forEach(([o, c]) => g.addColorStop(o, c)); x.fillStyle = g; x.fillRect(0, 0, 128, 128); });
+  const dotTex = radial([[0, "rgba(255,255,255,1)"], [.35, "rgba(200,248,255,.8)"], [1, "rgba(79,216,255,0)"]]);
+
+  const world = new T.Group(); scene.add(world);
+  const orb = new T.Group(); world.add(orb);          // everything in "R" units (R = orb radius in px)
+  const inner = new T.Group(); orb.add(inner);        // core + globe + particles (grows in at boot)
+  const rings = new T.Group(); orb.add(rings);
+
+  // the glowing core: a shaded sphere, brighter where it faces you, with a hot rim and a highlight
+  const coreMat = new T.ShaderMaterial({ uniforms:{ uE:{ value:0 } },
+    vertexShader:`varying vec3 vN; varying vec3 vV; void main(){ vN = normalize(normalMatrix * normal);
+      vec4 mv = modelViewMatrix * vec4(position, 1.); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+    fragmentShader:`uniform float uE; varying vec3 vN; varying vec3 vV;
+      vec3 lin(vec3 c){ return pow(c, vec3(2.2)); }
+      void main(){ float f = 1. - max(dot(vN, vV), 0.);
+        vec3 c = mix(lin(vec3(.8,.98,1.)), lin(vec3(.35,.86,1.)), smoothstep(0., .6, f));
+        c = mix(c, lin(vec3(.06,.5,.75)), smoothstep(.6, 1., f));
+        c += lin(vec3(.8,.99,1.)) * pow(f, 5.) * (1.2 + uE);
+        c += vec3(1.) * pow(max(dot(vN, normalize(vec3(-.45,.55,.7))), 0.), 14.) * .5;
+        gl_FragColor = vec4(c * (.5 + uE * .12), 1.); }` });
+  const coreG = new T.Group(); inner.add(coreG);
+  const core = new T.Mesh(new T.SphereGeometry(.55, 48, 32), coreMat); coreG.add(core);
+  // globe lines on the core (the cyan holographic globe from Connor's "more 3D and holographic" voice edit)
+  const gl = []; for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI; const c = circle(.566, 64).attributes.position.array;
+    for (let k = 0; k < c.length; k += 3) gl.push(c[k] * Math.cos(a), c[k + 1], c[k] * Math.sin(a)); }
+  for (let i = -3; i <= 3; i++) { const y = i / 4 * .566, r = Math.sqrt(.566 * .566 - y * y); const c = circle(r, 64).attributes.position.array;
+    for (let k = 0; k < c.length; k += 3) gl.push(c[k], y, c[k + 1]); }
+  const globePts = []; for (let i = 0; i + 3 < gl.length; i += 3) { if ((i / 3 + 1) % 65 === 0) continue; globePts.push(gl[i], gl[i + 1], gl[i + 2], gl[i + 3], gl[i + 4], gl[i + 5]); }
+  const globeMat = new T.LineBasicMaterial({ color:0x0a5f86, transparent:true, opacity:.7 });
+  const globe = new T.LineSegments(geo(globePts), globeMat); globe.rotation.x = .35; coreG.add(globe);
+  // an outer geodesic shell, faint, turning the other way
+  const shell = new T.LineSegments(new T.WireframeGeometry(new T.IcosahedronGeometry(.82, 2)), lineM(CY, .1)); inner.add(shell);
+  // soft glow around the core
+  const glow = new T.Sprite(mat(T.SpriteMaterial, { map:radial([[0, "rgba(230,252,255,1)"], [.35, "rgba(120,240,255,.6)"], [.7, "rgba(56,232,255,.12)"], [1, "rgba(56,232,255,0)"]]), opacity:.8 }));
+  inner.add(glow);
+  // particles swirling around the core, in 3D
+  const pp = []; for (let i = 0; i < 520; i++) { const r = .62 + Math.random() * .6, th = Math.random() * Math.PI * 2, y = (Math.random() * 2 - 1) * (i % 3 ? .25 : .9);
+    const k = Math.sqrt(Math.max(0, 1 - y * y)); pp.push(Math.cos(th) * r * k, y * r, Math.sin(th) * r * k); }
+  const parts = new T.Points(geo(pp), mat(T.PointsMaterial, { map:dotTex, color:0xa0f4ff, size:7, opacity:.5 })); parts.rotation.x = .3; inner.add(parts);
+
+  // tick ring that dances with the voice
+  const NT = 60, tickPos = new Float32Array(NT * 6), ticks = new T.LineSegments(new T.BufferGeometry().setAttribute("position", new T.BufferAttribute(tickPos, 3)), lineM(CY2, .6));
+  rings.add(ticks);
+  // orbit arcs (tilted, so they show depth when you turn him)
+  const arcs = [[1.65, .9, 1], [1.85, 1.4, -1], [2.05, .6, .7]].map(([k, len, dir], j) => { const g = new T.Group(); const m = basic(CY2, .5);
+    g.add(new T.Mesh(new T.TorusGeometry(k, .014, 6, 64, len), m)); const b = new T.Mesh(new T.TorusGeometry(k, .014, 6, 64, len * .6), m); b.rotation.z = Math.PI; g.add(b);
+    g.rotation.x = (j - 1) * .22; g.userData = { dir, a:j * 2 }; rings.add(g); return g; });
+  // 1. degree ring with ticks and numbers (sits a little behind)
+  const r1 = 2.35, deg = new T.Group(); deg.position.z = -.25; rings.add(deg);
+  deg.add(new T.Line(circle(r1, 180), lineM(CY, .55)));
+  const dt1 = []; for (let i = 0; i < 120; i++) { const a = i / 120 * Math.PI * 2, l = i % 10 === 0 ? .1 : .045; dt1.push(Math.cos(a) * r1, Math.sin(a) * r1, 0, Math.cos(a) * (r1 + l), Math.sin(a) * (r1 + l), 0); }
+  deg.add(new T.LineSegments(geo(dt1), lineM(CY, .55)));
+  const numMat = [], nums = [...Array(12)].map((_, i) => {
+    const c = document.createElement("canvas"); c.width = 128; c.height = 48; const tx = new T.CanvasTexture(c); tx.colorSpace = T.SRGBColorSpace;
+    const m = basic(CY, .75, { map:tx }); numMat.push([c, tx, String(i * 30).padStart(3, "0")]);
+    const p = new T.Mesh(new T.PlaneGeometry(.36, .135), m); const a = i / 12 * Math.PI * 2; p.position.set(Math.cos(a) * (r1 + .24), Math.sin(a) * (r1 + .24), 0); deg.add(p); return p; });
+  const drawNums = () => numMat.forEach(([c, tx, s]) => { const x = c.getContext("2d"); x.clearRect(0, 0, 128, 48);
+    x.font = "500 30px Orbitron, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle"; x.fillStyle = "#4fd8ff"; x.fillText(s, 64, 26); tx.needsUpdate = true; });
+  drawNums(); document.fonts && document.fonts.ready.then(drawNums);
+  // 2. thick segmented ring, counter-rotating
+  const r2 = 2.1, segs = new T.Group(); rings.add(segs);
+  const segM = [...Array(24)].map((_, i) => { const m = basic(CY, .5); const a0 = i / 24 * Math.PI * 2;
+    segs.add(new T.Mesh(new T.RingGeometry(r2 - .04, r2 + .04, 6, 1, a0, Math.PI * 2 / 24 * .78), m)); return m; });
+  // 3. dashed ring (a little in front)
+  const dashM = mat(T.LineDashedMaterial, { color:CY, opacity:.5, dashSize:.03, gapSize:.08 });
+  const dash = new T.Line(circle(2.65, 360), dashM); dash.computeLineDistances(); dash.position.z = .2; rings.add(dash);
+  // 4. outer bracket arcs with end dots (furthest in front)
+  const brk = new T.Group(); brk.position.z = .4; rings.add(brk); const brM = basic(CY, .8), dotM = basic(0xa8f0ff, .95);
+  for (let q = 0; q < 4; q++) { const g = new T.Group(); g.rotation.z = q * Math.PI / 2 - .32;
+    g.add(new T.Mesh(new T.TorusGeometry(2.95, .016, 6, 40, .64), brM));
+    const d = new T.Mesh(new T.SphereGeometry(.035, 10, 8), dotM); d.position.set(Math.cos(.64) * 2.95, Math.sin(.64) * 2.95, 0); g.add(d); brk.add(g); }
+  // 5. gyroscope rings: real 3D now, lit by the core
+  const gyroM = new T.MeshStandardMaterial({ color:0x4fd8ff, emissive:0x0b4a66, metalness:.4, roughness:.35, transparent:true, opacity:.55 });
+  const gyros = [[0, 1], [Math.PI / 3, -1.3], [-Math.PI / 3, .8]].map(([rot, dir], j) => { const outer = new T.Group(); outer.rotation.z = rot;
+    const m = new T.Mesh(new T.TorusGeometry(1.75, .012, 8, 128), gyroM); outer.add(m); outer.userData = { rot, dir, a:j }; rings.add(outer); return outer; });
+  // 6. radar sweep
+  const radarMat = new T.ShaderMaterial({ transparent:true, depthWrite:false, blending:ADD, side:T.DoubleSide, uniforms:{ uA:{ value:0 }, uO:{ value:.2 } },
+    vertexShader:`varying vec2 vP; void main(){ vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }`,
+    fragmentShader:`uniform float uA, uO; varying vec2 vP; void main(){ float d = mod(uA - atan(vP.y, vP.x), 6.2831853);
+      float f = d < .9 ? 1. - d / .9 : 0.; gl_FragColor = vec4(pow(vec3(.31,.85,1.), vec3(2.2)) * f * uO, 1.); }` });
+  radarMat.blending = ADD; rings.add(new T.Mesh(new T.RingGeometry(1.25, r2 - .05, 96, 1), radarMat));
+  // 7. voice waveform ring
+  const NW = 181, wavePos = new Float32Array(NW * 3), wave = new T.Line(new T.BufferGeometry().setAttribute("position", new T.BufferAttribute(wavePos, 3)), lineM(CY, .8));
+  wave.position.z = .1; rings.add(wave);
+  // boot shockwave
+  const shockM = basic(CY, 0), shock = new T.Mesh(new T.RingGeometry(.97, 1.03, 128), shockM); orb.add(shock);
+  // light from the core
+  const light = new T.PointLight(0x7fe6ff, 3, 0, 0); orb.add(light);
+  scene.add(new T.HemisphereLight(0x4fd8ff, 0x000000, .25));
+
+  // the hologram projector he floats above
+  const base = new T.Group(); world.add(base);
+  const disc = new T.Group(); disc.rotation.x = -Math.PI / 2 + .42; base.add(disc);
+  const metal = new T.MeshStandardMaterial({ color:0x2a6a82, metalness:.85, roughness:.3, emissive:0x05202c });
+  [[1.15, .045], [1.55, .03], [1.95, .02]].forEach(([r, tb]) => disc.add(new T.Mesh(new T.TorusGeometry(r, tb, 10, 96), metal)));
+  const pad = new T.Mesh(new T.CircleGeometry(2.3, 64), basic(CY, .18, { map:radial([[0, "rgba(160,240,255,.9)"], [.45, "rgba(79,216,255,.25)"], [1, "rgba(79,216,255,0)"]]) }));
+  disc.add(pad);
+  const baseDash = new T.Line(circle(2.35, 240), mat(T.LineDashedMaterial, { color:CY, opacity:.6, dashSize:.06, gapSize:.06 })); baseDash.computeLineDistances(); disc.add(baseDash);
+  const beamMat = new T.ShaderMaterial({ transparent:true, depthWrite:false, blending:ADD, side:T.DoubleSide, uniforms:{ uO:{ value:.1 } },
+    vertexShader:`varying float vY; varying vec3 vN; varying vec3 vV; void main(){ vY = uv.y; vN = normalize(normalMatrix * normal);
+      vec4 mv = modelViewMatrix * vec4(position, 1.); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+    fragmentShader:`uniform float uO; varying float vY; varying vec3 vN; varying vec3 vV; void main(){
+      float side = pow(1. - abs(dot(vN, vV)), 1.5); float a = (1. - vY) * (.25 + side) * uO;
+      gl_FragColor = vec4(pow(vec3(.45,.9,1.), vec3(2.2)) * a, 1.); }` });
+  const beam = new T.Mesh(new T.CylinderGeometry(.3, 1.25, 1, 48, 1, true), beamMat); base.add(beam);
+
+  // deep-space dust all around, so turning the view shows depth
+  const dp = []; for (let i = 0; i < 900; i++) dp.push((Math.random() - .5) * 5000, (Math.random() - .5) * 3200, -200 - Math.random() * 3200);
+  const dustPos = new Float32Array(dp), dust = new T.Points(new T.BufferGeometry().setAttribute("position", new T.BufferAttribute(dustPos, 3)),
+    mat(T.PointsMaterial, { map:dotTex, color:0x9fe8ff, size:9, opacity:.35 }));
+  scene.add(dust);
+
+  // --- the panels, floating in 3D space ---
+  const hud = document.querySelector(".hud"), left = document.querySelector(".col.left"), right = document.querySelector(".col.right");
+  const center = document.querySelector(".center"), wrap = document.createElement("div"); wrap.className = "center3d";
+  wrap.append($("status"), $("caption"));
+  const oL = new T.CSS3DObject(left), oR = new T.CSS3DObject(right), oC = new T.CSS3DObject(wrap);
+  cssScene.add(oL, oR, oC);
+
+  // --- camera: drag to turn, wheel to zoom, double-click to reset ---
+  const cam = { yaw:.9, pitch:.25, zoom:1.9, ty:0, tp:0, tz:1, mx:0, my:0 };
+  let drag = null, Wd = 0, Hd = 0, D = 1000, R = 80, orbY = 0;
+  const skip = e => e.target.closest && e.target.closest("input,button,a,textarea,select,#view");
+  const onDown = e => { if (e.button !== 0 || skip(e)) return; drag = { x:e.clientX, y:e.clientY }; document.body.classList.add("dragging"); };
+  const onMove = e => { cam.mx = e.clientX / innerWidth - .5; cam.my = e.clientY / innerHeight - .5;
+    if (!drag) return; cam.ty = Math.max(-.6, Math.min(.6, cam.ty - (e.clientX - drag.x) * .0035));
+    cam.tp = Math.max(-.4, Math.min(.5, cam.tp + (e.clientY - drag.y) * .003)); drag = { x:e.clientX, y:e.clientY }; };
+  const onUp = () => { drag = null; document.body.classList.remove("dragging"); };
+  const onWheel = e => { if (skip(e)) return; e.preventDefault(); cam.tz = Math.max(.7, Math.min(1.45, cam.tz * (1 + e.deltaY * .0012))); };
+  const onDbl = e => { if (!skip(e)) { cam.ty = 0; cam.tp = 0; cam.tz = 1; } };
+  addEventListener("pointerdown", onDown); addEventListener("pointermove", onMove); addEventListener("pointerup", onUp);
+  addEventListener("pointercancel", onUp); addEventListener("wheel", onWheel, { passive:false }); addEventListener("dblclick", onDbl);
+
+  function quality() {
+    const pr = Math.min(devicePixelRatio || 1, tier ? 1 : 1.5);
+    renderer.setPixelRatio(pr); composer.setPixelRatio(tier ? .75 : pr);
+    renderer.setSize(Wd, Hd, false); composer.setSize(Wd, Hd);
+    parts.geometry.setDrawRange(0, tier ? 300 : 520);
+  }
+  function layout() {
+    Wd = innerWidth; Hd = innerHeight;
+    if (Wd < 900 && !Q.get("view")) { enter2D(); return; }
+    camera.aspect = Wd / Hd; camera.updateProjectionMatrix();
+    D = (Hd / 2) / Math.tan(camera.fov * Math.PI / 360);
+    css.setSize(Wd, Hd); quality();
+    const small = Wd < 1100, colW = small ? 270 : 330, pad = small ? 20 : 30, colH = Hd - 2 * (small ? 20 : 26), th = .3;
+    for (const [o, el, s] of [[oL, left, -1], [oR, right, 1]]) {
+      el.style.width = colW + "px"; el.style.height = colH + "px";
+      o.position.set(s * (Wd / 2 - pad - colW / 2 * Math.cos(th)) , 0, -colW / 2 * Math.sin(th));
+      o.rotation.y = -s * th;
+    }
+    const cw = Wd - 2 * (pad + colW) - 40;
+    R = Math.max(40, Math.min(Hd * .6, 600, cw) * .14);
+    orbY = Hd * .085;
+    orb.position.set(0, orbY, 0); orb.scale.setScalar(R);
+    base.position.set(0, orbY - 3.45 * R, -.3 * R); base.scale.setScalar(R * .78);
+    beam.scale.set(1, 3.45 / .78, 1); beam.position.y = 3.45 / .78 / 2;
+    oC.position.set(0, orbY - 3.45 * R - Math.max(56, R * 1.05), 30);
+  }
+  addEventListener("resize", layout); layout();
+  const lost = e => { e.preventDefault(); enter2D(true); };
+  canvas.addEventListener("webglcontextlost", lost);
+
+  // --- runs smoothly or steps down: full -> lighter -> flat 2D ---
+  let ft = [], checkAt = performance.now() + 4500;
+  function watchSpeed(dt) {
+    if (!auto || document.hidden) return;
+    if (dt < 1) ft.push(dt);           // (a longer gap means the window was hidden)
+    const now = performance.now();
+    if (now < checkAt || ft.length < 10 || booting) return;
+    const fps = ft.length / ft.reduce((a, b) => a + b, 0); ft = []; checkAt = now + 3000;
+    if (fps >= 42) return;
+    if (tier === 0 && fps >= 22) { tier = 1; savePref({ tier:1 }); quality(); console.log("(3D: lighter mode, " + fps.toFixed(0) + " fps)"); }
+    else { console.log("(3D: too slow at " + fps.toFixed(0) + " fps, switching to the flat view)"); enter2D(true); return true; }
+  }
+
+  const acc = { seg:0, brk:0, radar:0, gyro:0 };
+  function frame(dt, raw) {
+    if (watchSpeed(raw)) return;
+    const { bt, B, pulse } = bootAmount(), sp = .3 + energy;
+    const flick = .85 + .15 * Math.sin(t * 23) * Math.sin(t * 7);
+    const fade = Math.min(1, B * 1.5), active = S.status === "speaking" || S.status === "listening";
+    // camera: flies in at boot, then follows your drag (and drifts a touch with the mouse)
+    const k = Math.min(1, dt * (booting && bt < 2.5 ? 2.2 : 5));
+    const idle = Math.sin(t * .23) * .035;
+    cam.yaw += (cam.ty + cam.mx * .07 + idle - cam.yaw) * k; cam.pitch += (cam.tp + cam.my * .05 - cam.pitch) * k;
+    cam.zoom += (cam.tz - cam.zoom) * k;
+    const d = D * cam.zoom;
+    camera.position.set(Math.sin(cam.yaw) * Math.cos(cam.pitch) * d, Math.sin(cam.pitch) * d, Math.cos(cam.yaw) * Math.cos(cam.pitch) * d);
+    camera.lookAt(0, 0, 0);
+
+    // the orb
+    inner.scale.setScalar(.3 + .7 * B);
+    rings.scale.setScalar(.55 + .45 * B); rings.rotation.z = (1 - B) * -1.2;
+    mats.forEach(m => m.opacity = m.userData.base * fade);
+    coreMat.uniforms.uE.value = energy;
+    coreG.scale.setScalar(1 + energy * .22);
+    glow.scale.setScalar(2 * Math.min(1.5 + energy * .7, 2.3)); glow.material.opacity = (.4 + energy * .3) * fade;
+    globe.rotation.y += dt * (.35 + energy * .6); globeMat.opacity = (.55 + energy * .3) * fade;
+    shell.rotation.y -= dt * (.12 + energy * .3); shell.rotation.x += dt * .04; shell.material.opacity = (.08 + energy * .22) * fade;
+    parts.rotation.y += dt * (.2 + energy * .7); parts.material.opacity = (.25 + energy * .5) * fade;
+    for (let i = 0; i < NT; i++) { const a = i / NT * Math.PI * 2 + t * .15, r = 1.35;
+      const len = .07 + (active ? Math.abs(Math.sin(i * 1.7 + t * 8)) * .16 * energy : 0);
+      tickPos.set([Math.cos(a) * r, Math.sin(a) * r, 0, Math.cos(a) * (r + len), Math.sin(a) * (r + len), 0], i * 6); }
+    ticks.geometry.attributes.position.needsUpdate = true; ticks.material.opacity = (.45 + energy * .5) * fade;
+    arcs.forEach(g => { g.userData.a += dt * g.userData.dir * (.4 + energy); g.rotation.z = g.userData.a; g.children[0].material.opacity = (.35 + energy * .5) * fade; });
+    deg.rotation.z = -t * .05; nums.forEach(p => p.rotation.z = t * .05);
+    acc.seg += dt * .25 * sp; segs.rotation.z = -acc.seg;
+    segM.forEach((m, i) => { const on = (i % 6 !== 0) && ((i * 7 + Math.floor(t * 1.5)) % 11 !== 0); m.opacity = (on ? .5 * flick : .12) * fade; });
+    dash.rotation.z = t * .12;
+    acc.brk += dt * .08 * sp; brk.rotation.z = Math.PI / 4 - acc.brk; brM.opacity = .7 * flick * fade;
+    acc.gyro += dt * sp;
+    gyros.forEach(g => { const u = g.userData; g.rotation.z = u.rot + t * .05 * u.dir; g.children[0].rotation.x = acc.gyro * .4 * u.dir + u.a; g.children[0].rotation.y = acc.gyro * .25 * u.dir; });
+    gyroM.opacity = (.3 + energy * .35) * flick * fade;
+    acc.radar += dt * (.8 + energy * 2); radarMat.uniforms.uA.value = acc.radar; radarMat.uniforms.uO.value = (.14 + energy * .12) * fade;
+    wave.visible = active;
+    if (active) { for (let i = 0; i < NW; i++) { const a = i / (NW - 1) * Math.PI * 2;
+        const amp = energy * .18 * (Math.sin(a * 9 + t * 7) * .5 + Math.sin(a * 17 - t * 11) * .3 + Math.sin(a * 4 + t * 3) * .2);
+        wavePos.set([Math.cos(a) * (2.45 + amp), Math.sin(a) * (2.45 + amp), 0], i * 3); }
+      wave.geometry.attributes.position.needsUpdate = true; }
+    shock.visible = pulse > 0; shock.scale.setScalar(1 + (1 - pulse) * 2.4); shockM.opacity = pulse * .9;
+    light.intensity = (1.2 + energy * 3.5) * fade + (currentKind() === "storm" ? flash * 4 : 0);
+    beamMat.uniforms.uO.value = (.045 + energy * .06) * fade; baseDash.rotation.z = -t * .1;
+    for (let i = 2; i < dustPos.length; i += 3) { dustPos[i] += dt * 40; if (dustPos[i] > 0) dustPos[i] = -3400; }
+    dust.geometry.attributes.position.needsUpdate = true;
+    bloom.strength = (tier ? .4 : .5) + energy * .35;
+    composer.render();
+    css.render(cssScene, camera);
+  }
+
+  function destroy() {
+    removeEventListener("pointerdown", onDown); removeEventListener("pointermove", onMove); removeEventListener("pointerup", onUp);
+    removeEventListener("pointercancel", onUp); removeEventListener("wheel", onWheel); removeEventListener("dblclick", onDbl);
+    removeEventListener("resize", layout); canvas.removeEventListener("webglcontextlost", lost);
+    for (const el of [left, right, wrap]) el.removeAttribute("style");
+    hud.prepend(left); hud.append(right); center.append($("status"), $("caption"));
+    css.domElement.remove();
+    try { renderer.dispose(); renderer.forceContextLoss(); } catch {}
+  }
+  return { frame, destroy };
+}
+
+if (want3D()) start3D(); else enter2D();
+frame();
 </script>
 </body>
 </html>
