@@ -195,9 +195,10 @@ starts StoreForge itself if it isn't running.
 - Two things always wait for you: confirming you have the right to use a product's photos and text,
   and pushing to your real Shopify store (as a draft). Jarvis asks "Should I go ahead?" when the
   team's done, or say **"what needs my OK"** any time.
-- Setup once: double-click **Connect StoreForge.command**. It asks for an Anthropic API key
-  (StoreForge's AI uses the Claude API, separate from your Claude plan) and, for pushes, your
-  store's myshopify.com address and Admin API token. They're saved in StoreForge's own .env.local.
+- StoreForge's AI runs on your Claude plan through Claude Code, so no API key or extra cost. (A
+  paid Anthropic API key is optional; if StoreForge's .env.local has one, it uses that instead.)
+- Pushing to Shopify needs setup once: double-click **Connect StoreForge.command** and give it
+  your store's myshopify.com address and Admin API token (press Enter at the API key question).
 
 ## Type to him
 His display has a **Type to Jarvis** box under the conversation (press / to jump to it). Type

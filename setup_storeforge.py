@@ -72,9 +72,9 @@ def main():
     if env.get("ANTHROPIC_API_KEY"):
         print("\nAnthropic API key: already set (press Enter to keep it).")
     else:
-        print("\nStoreForge's AI needs an Anthropic API key (separate from your Claude plan).")
-        print("Get one at https://console.anthropic.com > API keys. It starts with sk-ant-.")
-    key = getpass.getpass("Anthropic API key (hidden as you type, Enter to skip): ").strip()
+        print("\nStoreForge's AI uses your Claude plan through Claude Code, so you don't need an API key.")
+        print("Just press Enter. (Only if you'd rather pay per use: paste an Anthropic API key, sk-ant-...)")
+    key = getpass.getpass("Anthropic API key (optional, hidden; press Enter to use your Claude plan): ").strip()
     if key:
         updates["ANTHROPIC_API_KEY"] = key
 

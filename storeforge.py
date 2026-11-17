@@ -12,8 +12,9 @@ agent. The agent files a request (storeforge_actions.json) and Jarvis asks you:
   - pushing a store to Shopify (it goes in as a draft product and an unpublished theme)
 Say yes and Jarvis does it; say no and nothing happens.
 
-Setup: double-click "Connect StoreForge.command" (StoreForge's AI needs an Anthropic API key, and
-pushing needs your store's myshopify.com address and Admin API token). Config: "storeforge_path"
+Setup: StoreForge's AI runs on Connor's Claude plan through the signed-in Claude Code CLI (no API
+key needed; an ANTHROPIC_API_KEY in its .env.local is used instead if he adds one). Pushing needs
+the store's myshopify.com address and Admin API token: double-click "Connect StoreForge.command". Config: "storeforge_path"
 (default ~/storeforge), "storeforge_url" (default http://localhost:3000)."""
 import json
 import os
@@ -101,7 +102,7 @@ def _log_problem(since):
 
 def _start(f):
     npm = "npm.cmd" if sys.platform == "win32" else "npm"
-    env = dict(os.environ)
+    env = {k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")}
     env["PATH"] = env.get("PATH", "") + os.pathsep + os.pathsep.join(
         ["/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/.npm-global/bin")])
     log = open(HERE / "storeforge.log", "a")
