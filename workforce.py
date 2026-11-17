@@ -66,7 +66,31 @@ ROLES = {
     "editor": ("Editor: tightens and corrects writing, and makes it sound like the owner.", THINK),
     "coach": ("Coach: habits, health, training and personal routines, practical and encouraging.", THINK),
     "devil's advocate": ("Devil's advocate: finds the weak spots, risks and better alternatives.", THINK),
+    "store builder": ("Store builder: uses the owner's own StoreForge app to turn product links into a "
+                      "ready-to-launch Shopify store (analysis, brand, listing, content, export ZIP). Pushing "
+                      "to the real store waits for the owner's OK.", "STORE"),
 }
+
+
+def _roles():
+    """The specialists available on this computer (the store builder only where StoreForge is)."""
+    try:
+        import storeforge
+        store = storeforge.available()
+    except Exception:
+        store = False
+    return {k: v for k, v in ROLES.items() if v[1] != "STORE" or store}
+
+
+def _store_tools(folder, pid):
+    """Tools for the store builder: StoreForge (through storeforge_mcp.py) and the web, nothing else."""
+    import sys
+    cfg = Path(folder) / "storeforge-mcp.json"
+    cfg.write_text(json.dumps({"mcpServers": {"storeforge": {
+        "command": sys.executable, "args": [str(HERE / "storeforge_mcp.py")],
+        "env": {"JARVIS_TEAM_PID": str(pid), "PYTHONUTF8": "1"}}}}))
+    return ["--mcp-config", str(cfg), "--allowedTools", "mcp__storeforge WebSearch WebFetch",
+            "--disallowedTools", "Read Glob Grep Edit Write NotebookEdit Bash Task"]
 
 LEAD_PROMPT = """You are the team lead of Jarvis's AI team, working for {owner}. {owner} asked out loud:
 "{goal}"
@@ -206,7 +230,8 @@ def _begin_live(pid, folder):
 
 def _tool_detail(name, inp):
     inp = inp or {}
-    for k in ("query", "url", "file_path", "pattern", "path", "command", "description", "prompt"):
+    for k in ("query", "url", "file_path", "pattern", "path", "command", "description", "prompt", "name",
+              "project_id", "section"):
         if inp.get(k):
             v = str(inp[k])
             if k == "file_path":
@@ -344,7 +369,7 @@ def _slug(text):
 
 
 def _plan(goal, owner, folder):
-    roster = "\n".join(f"- {name}: {about}" for name, (about, _) in ROLES.items())
+    roster = "\n".join(f"- {name}: {about}" for name, (about, _) in _roles().items())
     context = ""
     try:
         import memory
@@ -362,7 +387,7 @@ def _plan(goal, owner, folder):
     tasks = []
     for i, t in enumerate(plan["tasks"][:6]):
         role = str(t.get("role", "")).lower()
-        if role not in ROLES:
+        if role not in _roles():
             role = "researcher" if re.search(r"research|find|search|look", str(t.get("task", "")), re.I) else "planner"
         tasks.append({"id": str(t.get("id") or f"t{i + 1}"), "role": role, "task": str(t.get("task") or goal),
                       "needs": [str(n) for n in (t.get("needs") or [])], "result": "", "status": "waiting"})
@@ -382,6 +407,8 @@ def _plan(goal, owner, folder):
 
 def _do_task(t, plan, goal, owner, folder, notes=""):
     about, tools = ROLES[t["role"]]
+    if tools == "STORE":
+        tools = _store_tools(folder, LIVE.get("pid"))
     inputs = ""
     for n in t["needs"]:
         dep = next((x for x in plan["tasks"] if x["id"] == n), None)
@@ -404,7 +431,7 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
     prompt = WORKER_PROMPT.format(role=t["role"], owner=owner, about=about, goal=goal, task=t["task"],
                                   inputs=inputs, notes=notes, rules=_rules())
     t["status"] = "working"
-    timeout = 900 if tools is BUILD else 600
+    timeout = 1500 if t["role"] == "store builder" else 900 if tools is BUILD else 600
     t["result"] = _run(prompt, tools, folder, timeout, t["role"], node=t["role"], task=t["id"]) or t["result"]
     t["status"] = "done" if t["result"] else "failed"
     m = re.search(r"^#+\s*needs .{0,20}ok\W*\n+\s*(?:[-*]\s*)?(.{0,40})", t["result"], re.I | re.M)
@@ -514,6 +541,12 @@ def _project(pid, goal):
         if not spoken:
             spoken = "They've written it all up for you."
         needs_ok = [str(x) for x in (plan.get("needs_ok") or []) if str(x).strip()]
+        try:
+            import storeforge
+            store_asks = storeforge.waiting(str(pid))
+        except Exception:
+            store_asks = []
+        needs_ok += [f"StoreForge: {a['text']}" for a in store_asks]
         full = (f"# {plan.get('title') or goal}\n\n_Asked: {goal}_  \n_Team: "
                 + ", ".join(t["role"] for t in plan["tasks"])
                 + (f"  \n_Critic's score: {score}/10_" if score else "") + "\n\n" + report + "\n\n---\n\n# The team's work\n\n"
@@ -661,7 +694,7 @@ def cancel():
 
 
 def roster():
-    names = list(ROLES)
+    names = list(_roles())
     return ("My team: " + ", ".join(names[:-1]) + " and " + names[-1] + ". Plus a team lead who hands out the work "
             "and a critic who checks it. Say get the team on, then what you want.")
 
@@ -823,6 +856,7 @@ def live_state(since=0):
     return {"pid": pid, "seq": len(events), "since": since, "events": events[since:], "running": busy(),
             "snapshot": _reduce(events), "now": time.time(),
             "roster": [{"id": n, "about": a.split(":", 1)[-1].strip(),
-                        "tools": "web" if t is WEB else "files" if t is BUILD else "thinking"}
-                       for n, (a, t) in ROLES.items()],
+                        "tools": "web" if t is WEB else "files" if t is BUILD else "StoreForge + web"
+                        if t == "STORE" else "thinking"}
+                       for n, (a, t) in _roles().items()],
             "history": {k: v[-8:] for k, v in history.items()}}

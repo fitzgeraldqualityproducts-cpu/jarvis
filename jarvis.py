@@ -499,7 +499,10 @@ def handle(text, _part=False):
     if re.fullmatch(r"(stop talking|shut up|be quiet|quiet|hush|enough|that's enough|ok stop|okay stop|stop stop)", t):
         return True                     # he's already stopped: just listen for what's next
     if not t or SLEEP_RE.fullmatch(t):
-        if PENDING.get("kind") == "predict":          # "no thanks" to a suggestion still counts as a no
+        if PENDING.get("kind") == "store":             # "no thanks" to a store request: decline it
+            import storeforge
+            storeforge.answer(PENDING["action"], False)
+        elif PENDING.get("kind") == "predict":          # "no thanks" to a suggestion still counts as a no
             predict.answered(PENDING["key"], False)
         elif PENDING.get("kind") == "rule":
             learn.answered(PENDING["idea"], False)
@@ -560,6 +563,16 @@ def handle(text, _part=False):
         sfx.blinker()
         voice.say(personality.line("blinker_end"))
         return True
+    if PENDING.get("kind") == "store":
+        if YES_RE.search(t) and len(t.split()) <= 6 or NO_RE.fullmatch(t):
+            import storeforge
+            action = PENDING.pop("action")
+            PENDING.clear()
+            voice.say("One moment.", interruptible=False) if YES_RE.search(t) else None
+            voice.say(storeforge.answer(action, bool(YES_RE.search(t) and not NO_RE.fullmatch(t))))
+            offer_store_action()                 # the next one, if there's another
+            return True
+        PENDING.clear()                          # he moved on; it stays queued for later
     if PENDING.get("kind") in ("predict", "rule"):
         said = answer_suggestion(t)
         if said is not None:
@@ -776,6 +789,10 @@ def team_command(t):
         display.open_page("/team")
         voice.say("Here's my agent network. Every node and line on it is the team's real work, live.")
         return True
+    if re.search(r"\b(?:store|storeforge|shopify) (?:requests?|approvals?)\b|what needs my (?:ok|okay|approval)", t):
+        if not offer_store_action():
+            voice.say("Nothing's waiting for your OK right now.")
+        return True
     if TEAM_ROSTER.search(t):
         voice.say(workforce.roster())
         return True
@@ -796,12 +813,33 @@ def team_command(t):
 
 
 def offer_team_change():
-    """If the team's last project worked out a change to Jarvis himself, ask before doing it."""
+    """If the team's last project worked out a change to Jarvis himself, ask before doing it.
+    Also asks about anything the store builder queued for Connor's OK (StoreForge)."""
+    if offer_store_action():
+        return
     p = workforce.latest()
     if p and p.get("status") == "done" and p.get("jarvis_change") and not p.get("change_offered") and not PENDING:
         workforce._update(p["id"], change_offered=True)
         PENDING.update(kind="selfedit", request=p["jarvis_change"])
         voice.say(f"They also worked out a change to me: {p['jarvis_change']}. Shall I go ahead and make it?")
+
+
+def offer_store_action():
+    """One StoreForge request waiting for Connor (confirm rights, push to Shopify). True if asked."""
+    if PENDING:
+        return False
+    try:
+        import storeforge
+        asks = storeforge.waiting()
+    except Exception:
+        return False
+    if not asks:
+        return False
+    a = asks[0]
+    PENDING.update(kind="store", action=a["id"])
+    why = f" {a['why'].rstrip('.')}." if a.get("why") else ""
+    voice.say(f"My store builder needs your OK to {a['text']}.{why} Should I go ahead?")
+    return True
 
 
 def tell_team_news():
