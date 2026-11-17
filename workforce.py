@@ -21,6 +21,12 @@ Jarvis himself he asks you first and does it through the normal "upgrade yoursel
   "read me the report"                       the latest report's summary and next steps
   "who's on your team"                       the specialists
   "call off the team"                        stop the current project
+  "show me the team"                         open the live network view
+
+Live view: every real step the team takes (who hands what to whom, each web search, file write and
+tool call, each agent's status, the critic's verdict, approvals) is recorded as an event, saved to
+events.jsonl in the project's folder, and served to the display at http://localhost:8765/team, which
+draws the network from those events. Nothing on that page is made up.
 Set "team": false in config.json to turn it off."""
 import datetime
 import json
@@ -90,8 +96,8 @@ Your task: {task}
 {inputs}{notes}{rules}
 Do the task well and completely, then write your result as clear, well organised markdown for the rest of
 the team. Be concrete (names, numbers, steps). Don't ask questions: make sensible assumptions and say what
-they are. Never send, post, buy or delete anything: if something needs doing in the real world, write it up
-under a heading "Needs {owner}'s OK"."""
+they are. Never send, post, buy or delete anything: only if something actually needs doing in the real
+world, write it up under a heading "Needs {owner}'s OK" (leave that heading out when nothing does)."""
 
 CRITIC_PROMPT = """You are the critic on Jarvis's AI team. {owner} asked: "{goal}"
 
@@ -172,8 +178,128 @@ def _json(text):
         return None
 
 
-def _run(prompt, tools, cwd, timeout, label):
-    """One agent: a claude -p run. Returns its text ('' if it failed or was stopped)."""
+# ---------- live events (for the network view) ----------
+
+_live_lock = threading.RLock()
+LIVE = {"pid": None, "events": [], "folder": None}
+
+
+def _emit(kind, **data):
+    """Record one real thing that just happened in the team. The live view is drawn only from these."""
+    with _live_lock:
+        ev = dict(data, type=kind, seq=len(LIVE["events"]) + 1, t=round(time.time(), 2))
+        LIVE["events"].append(ev)
+        folder = LIVE.get("folder")
+    if folder:
+        try:
+            with open(Path(folder) / "events.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps(ev) + "\n")
+        except Exception:
+            pass
+    return ev
+
+
+def _begin_live(pid, folder):
+    with _live_lock:
+        LIVE.update(pid=pid, events=[], folder=str(folder))
+
+
+def _tool_detail(name, inp):
+    inp = inp or {}
+    for k in ("query", "url", "file_path", "pattern", "path", "command", "description", "prompt"):
+        if inp.get(k):
+            v = str(inp[k])
+            if k == "file_path":
+                v = Path(v).name
+            return v[:160]
+    return ""
+
+
+def _stream(cmd, timeout, cwd, node, task):
+    """Runs claude, turning its stream into live events. Returns (text, ok_stream)."""
+    import subprocess
+    import brain
+    cmd = list(cmd) + ["--output-format", "stream-json", "--include-partial-messages", "--verbose"]
+    prompt = cmd.pop(cmd.index("-p") + 1) if brain.WINDOWS else None
+    kw = {"creationflags": 0x08000000} if brain.WINDOWS else {}
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if prompt is not None else subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                            errors="replace", cwd=cwd, bufsize=1, **kw)
+    _procs.add(proc)
+    err = []
+    threading.Thread(target=lambda: err.extend(proc.stderr), daemon=True).start()
+    if prompt is not None:
+        try:
+            proc.stdin.write(prompt)
+            proc.stdin.close()
+        except OSError:
+            pass
+    timer = threading.Timer(timeout, proc.kill)
+    timer.daemon = True
+    timer.start()
+    text, result, got, last_tick, writing, names = [], None, False, 0.0, False, {}
+    try:
+        for line in proc.stdout:
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            kind = d.get("type")
+            if kind == "stream_event" and not d.get("parent_tool_use_id"):
+                ev = d.get("event") or {}
+                delta = ev.get("delta") or {}
+                if ev.get("type") == "content_block_delta" and delta.get("type") == "text_delta":
+                    got = True
+                    text.append(delta.get("text", ""))
+                    if not writing:
+                        writing = True
+                        _emit("agent", node=node, task=task, status="working", activity="writing")
+                    if time.time() - last_tick > 1.5:
+                        last_tick = time.time()
+                        _emit("writing", node=node, task=task, chars=len("".join(text)),
+                              tail="".join(text)[-240:])
+            elif kind == "assistant" and not d.get("parent_tool_use_id"):
+                for block in (d.get("message") or {}).get("content") or []:
+                    if block.get("type") == "tool_use":
+                        writing = False
+                        names[block.get("id")] = block.get("name", "tool")
+                        _emit("tool", node=node, task=task, tool=block.get("name", "tool"),
+                              detail=_tool_detail(block.get("name"), block.get("input")))
+                        _emit("agent", node=node, task=task, status="working", activity=f"using {block.get('name')}")
+            elif kind == "user" and not d.get("parent_tool_use_id"):
+                for block in (d.get("message") or {}).get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        if block.get("is_error"):
+                            body = block.get("content")
+                            body = " ".join(x.get("text", "") for x in body if isinstance(x, dict)) \
+                                if isinstance(body, list) else str(body or "")
+                            _emit("blocked", node=node, task=task, tool=names.get(block.get("tool_use_id"), "tool"),
+                                  reason=body[:160])
+                        _emit("agent", node=node, task=task, status="analyzing", activity="reading tool results")
+            elif kind == "result":
+                got = True
+                result = "" if d.get("is_error") else (d.get("result") or "")
+    finally:
+        timer.cancel()
+        if proc.poll() is None:
+            proc.kill()
+        try:
+            proc.wait(5)
+        except Exception:
+            pass
+        _procs.discard(proc)
+    out = (result if result else "".join(text)).strip()
+    if not got:
+        print(f"(team: streaming gave nothing for {node}: {''.join(err)[-200:]})")
+    return out, got
+
+
+_procs = set()
+
+
+def _run(prompt, tools, cwd, timeout, label, node=None, task=None):
+    """One agent: a claude -p run. Returns its text ('' if it failed or was stopped).
+    Its tool use and writing are reported live as it goes."""
     import brain
     import subprocess
     if _stop.is_set():
@@ -181,16 +307,25 @@ def _run(prompt, tools, cwd, timeout, label):
     claude = brain.find_claude()
     if not claude:
         raise RuntimeError("I can't find Claude Code")
+    node = node or label
     start = time.time()
+    _emit("agent", node=node, task=task, status="analyzing", activity="thinking")
+    text, streamed = "", False
     try:
-        out = brain.run_claude([claude, "-p", prompt] + list(tools), timeout=timeout, cwd=str(cwd))
-    except subprocess.TimeoutExpired:
-        print(f"(team: {label} ran out of time)")
-        return ""
-    text = (out.stdout or "").strip()
-    if not text:
-        print(f"(team: {label} gave nothing: {(out.stderr or '')[-200:]})")
-    print(f"(team: {label} done in {time.time() - start:.0f}s)")
+        text, streamed = _stream([claude, "-p", prompt] + list(tools), timeout, str(cwd), node, task)
+    except OSError as e:
+        print(f"(team: couldn't stream {label}: {e})")
+    if not streamed and not _stop.is_set():          # older Claude Code: the plain way
+        try:
+            out = brain.run_claude([claude, "-p", prompt] + list(tools), timeout=timeout, cwd=str(cwd))
+            text = (out.stdout or "").strip()
+            if not text:
+                print(f"(team: {label} gave nothing: {(out.stderr or '')[-200:]})")
+        except subprocess.TimeoutExpired:
+            print(f"(team: {label} ran out of time)")
+    secs = round(time.time() - start, 1)
+    print(f"(team: {label} done in {secs:.0f}s)")
+    _emit("finished", node=node, task=task, ok=bool(text), seconds=secs, chars=len(text))
     return text
 
 
@@ -219,7 +354,7 @@ def _plan(goal, owner, folder):
     except Exception:
         pass
     plan = _json(_run(LEAD_PROMPT.format(owner=owner, goal=goal, roster=roster, context=context),
-                      THINK, folder, 180, "team lead (plan)"))
+                      THINK, folder, 180, "team lead (plan)", node="lead"))
     if not plan or not plan.get("tasks"):
         plan = {"title": goal[:40], "tasks": [{"id": "t1", "role": "researcher", "task": goal, "needs": []},
                                              {"id": "t2", "role": "planner", "task": f"Turn the research into a "
@@ -235,6 +370,13 @@ def _plan(goal, owner, folder):
     for t in tasks:
         t["needs"] = [n for n in t["needs"] if n in ids and n != t["id"]]
     plan["tasks"] = tasks
+    _emit("plan", title=plan.get("title") or goal[:40],
+          tasks=[{k: t[k] for k in ("id", "role", "task", "needs")} for t in tasks],
+          needs_ok=[str(x) for x in (plan.get("needs_ok") or [])], jarvis_change=str(plan.get("jarvis_change") or ""))
+    for t in tasks:
+        _emit("delegate", **{"from": "lead", "to": t["role"], "task": t["id"], "text": t["task"][:200]})
+        _emit("agent", node=t["role"], task=t["id"], status="waiting",
+              activity=("waiting for " + ", ".join(t["needs"])) if t["needs"] else "queued")
     return plan
 
 
@@ -245,9 +387,15 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
         dep = next((x for x in plan["tasks"] if x["id"] == n), None)
         if dep and dep["result"]:
             inputs += f"\nFrom the {dep['role']} ({dep['task'][:80]}):\n{dep['result'][:6000]}\n"
+    for n in t["needs"]:
+        dep = next((x for x in plan["tasks"] if x["id"] == n), None)
+        if dep and dep["result"]:
+            _emit("handoff", **{"from": dep["role"], "to": t["role"], "from_task": dep["id"], "task": t["id"],
+                                "chars": len(dep["result"][:6000])})
     if inputs:
         inputs = "\nWork your teammates have already done:" + inputs
     if notes:
+        _emit("delegate", **{"from": "critic", "to": t["role"], "task": t["id"], "text": "Redo: " + notes[:200]})
         notes = f"\nThe critic reviewed your last attempt and wants this fixed: {notes}\nYour last attempt:\n" \
                 f"{t['result'][:5000]}\n"
     if t["role"] in ("coder", "code reviewer"):
@@ -257,8 +405,20 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
                                   inputs=inputs, notes=notes, rules=_rules())
     t["status"] = "working"
     timeout = 900 if tools is BUILD else 600
-    t["result"] = _run(prompt, tools, folder, timeout, t["role"]) or t["result"]
+    t["result"] = _run(prompt, tools, folder, timeout, t["role"], node=t["role"], task=t["id"]) or t["result"]
     t["status"] = "done" if t["result"] else "failed"
+    m = re.search(r"^#+\s*needs .{0,20}ok\W*\n+\s*(?:[-*]\s*)?(.{0,40})", t["result"], re.I | re.M)
+    needs_ok = bool(m) and not re.match(r"(nothing|none|no\b|n/a)", m.group(1).strip(), re.I)
+    _emit("result", node=t["role"], task=t["id"], ok=bool(t["result"]), preview=t["result"][:4000],
+          needs_ok=needs_ok)
+    _emit("agent", node=t["role"], task=t["id"],
+          status=("approval" if needs_ok else "completed") if t["result"] else "failed",
+          activity="needs your OK on something" if needs_ok else "done" if t["result"] else "failed")
+    if t["result"]:
+        try:
+            (folder / f"{t['id']} {t['role']}.md").write_text(t["result"], encoding="utf-8")
+        except Exception:
+            pass
 
 
 def _waves(tasks):
@@ -296,11 +456,15 @@ def _project(pid, goal):
     started = time.time()
     try:
         _current.update(id=pid, step="planning")
+        _emit("phase", phase="planning")
+        _emit("delegate", **{"from": "jarvis", "to": "lead", "task": None, "text": goal[:200]})
         plan = _plan(goal, owner, folder)
+        _emit("agent", node="lead", status="waiting", activity="waiting for the specialists")
         _current["plan"] = plan
         _update(pid, title=plan.get("title") or goal[:40], status="working",
                 tasks=[{"role": t["role"], "task": t["task"]} for t in plan["tasks"]])
         print(f"(team: {plan.get('title')}: " + ", ".join(f"{t['role']}" for t in plan["tasks"]) + ")")
+        _emit("phase", phase="working")
         for wave in _waves(plan["tasks"]):
             if _stop.is_set():
                 break
@@ -308,25 +472,39 @@ def _project(pid, goal):
             _run_wave(wave, plan, goal, owner, folder)
         if _stop.is_set():
             _update(pid, status="cancelled")
+            _emit("phase", phase="cancelled")
             return
         _current["step"] = "critic"
+        _emit("phase", phase="reviewing")
+        for t in plan["tasks"]:
+            _emit("handoff", **{"from": t["role"], "to": "critic", "from_task": t["id"], "task": None,
+                                "chars": len(t["result"][:5000])})
         review = _json(_run(CRITIC_PROMPT.format(owner=owner, goal=goal, work=_work_text(plan)), THINK, folder, 240,
-                            "critic")) or {}
+                            "critic", node="critic")) or {}
         score = review.get("score")
         redo = {str(r.get("id")): str(r.get("fix", "")) for r in (review.get("redo") or []) if r.get("id")}
         redo = {k: v for k, v in redo.items() if any(t["id"] == k for t in plan["tasks"])}
+        _emit("review", score=score, verdict=str(review.get("verdict", ""))[:300], redo=list(redo),
+              round=1)
+        _emit("agent", node="critic", status="completed", activity=f"scored it {score}/10" if score else "reviewed")
         if redo and isinstance(score, (int, float)) and score < 8 and not _stop.is_set():
+            _emit("phase", phase="redoing")
             _current["step"] = "redoing " + ", ".join(t["role"] for t in plan["tasks"] if t["id"] in redo)
             print(f"(team: critic gave {score}/10, redoing {list(redo)})")
             _run_wave([t for t in plan["tasks"] if t["id"] in redo], plan, goal, owner, folder, redo)
+            _emit("phase", phase="reviewing")
             review2 = _json(_run(CRITIC_PROMPT.format(owner=owner, goal=goal, work=_work_text(plan)), THINK, folder,
-                                 240, "critic (second look)")) or {}
+                                 240, "critic (second look)", node="critic")) or {}
             if review2.get("score"):
                 review, score = review2, review2.get("score")
+                _emit("review", score=score, verdict=str(review.get("verdict", ""))[:300], redo=[], round=2)
+            _emit("agent", node="critic", status="completed", activity=f"scored it {score}/10" if score else "reviewed")
         _current["step"] = "writing the report"
+        _emit("phase", phase="reporting")
+        _emit("handoff", **{"from": "critic", "to": "lead", "from_task": None, "task": None, "chars": 0})
         report = _run(REPORT_PROMPT.format(owner=owner, goal=goal, work=_work_text(plan, 8000),
                                            verdict=review.get("verdict", "no verdict")),
-                      THINK, folder, 300, "team lead (report)")
+                      THINK, folder, 300, "team lead (report)", node="lead")
         spoken = ""
         m = re.search(r"\n\s*SPOKEN:\s*(.+)\s*$", report, re.S)
         if m:
@@ -342,10 +520,18 @@ def _project(pid, goal):
                 + "\n\n".join(f"## {t['role'].title()}: {t['task']}\n\n{t['result'] or '(nothing came back)'}"
                               for t in plan["tasks"]))
         (folder / "report.md").write_text(full, encoding="utf-8")
+        _emit("agent", node="lead", status="completed", activity="report written")
+        _emit("handoff", **{"from": "lead", "to": "jarvis", "from_task": None, "task": None, "chars": len(report)})
+        if needs_ok or plan.get("jarvis_change"):
+            _emit("approval", items=needs_ok, change=str(plan.get("jarvis_change") or ""))
         _to_obsidian(plan.get("title") or goal, full)
         _update(pid, status="done", spoken=spoken, score=score, needs_ok=needs_ok,
                 jarvis_change=str(plan.get("jarvis_change") or "").strip(), told=False,
-                minutes=round((time.time() - started) / 60, 1), finished=time.time())
+                minutes=round((time.time() - started) / 60, 1), finished=time.time(),
+                tasks=[{"id": t["id"], "role": t["role"], "task": t["task"], "ok": bool(t["result"])}
+                       for t in plan["tasks"]])
+        _emit("phase", phase="done", score=score, minutes=round((time.time() - started) / 60, 1),
+              spoken=spoken)
         try:
             import learn
             learn.record_result("team", plan.get("title") or goal, (score or 0) >= 7, score=score,
@@ -357,6 +543,7 @@ def _project(pid, goal):
         import traceback
         traceback.print_exc()
         _update(pid, status="failed", error=f"{type(e).__name__}: {e}"[:300], told=False)
+        _emit("phase", phase="failed", error=f"{type(e).__name__}: {e}"[:300])
         try:
             import learn
             learn.note(goal, "My team couldn't finish that project.", "error", f"workforce: {type(e).__name__}: {e}")
@@ -407,6 +594,8 @@ def start(goal):
                                  "folder": str(folder), "started": time.time()})
         _save(data)
         _current.update(id=pid, step="planning")
+        _begin_live(pid, folder)
+        _emit("mission", pid=pid, goal=goal)
     threading.Thread(target=_project, args=(pid, goal), daemon=True, name="team").start()
     return ("On it. I've got the team lead splitting that up between my specialists. They'll work in the "
             "background, so keep talking to me, and I'll tell you when they're done.")
@@ -462,7 +651,13 @@ def cancel():
     if not _current:
         return "The team isn't working on anything."
     _stop.set()
-    return "Calling them off. They'll stop after the task they're on."
+    for proc in list(_procs):             # stop the agents that are running right now
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    _emit("phase", phase="cancelling")
+    return "Calling them off now."
 
 
 def roster():
@@ -494,3 +689,140 @@ def projects_text():
     ps = _load()["projects"][-6:]
     return "; ".join(f"{p.get('title')} ({p.get('status')})" for p in ps)
 
+
+
+# ---------- the live view's data (display.py serves it at /team/state) ----------
+
+RANK = {"working": 6, "analyzing": 5, "waiting": 4, "approval": 3, "failed": 2, "completed": 1, "idle": 0}
+
+
+def _load_last_live():
+    """After a restart: the last project's recorded events, so the view still shows what really happened."""
+    ps = _load()["projects"]
+    for p in reversed(ps):
+        f = Path(p.get("folder", "")) / "events.jsonl"
+        if f.is_file():
+            evs = []
+            for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    evs.append(json.loads(line))
+                except ValueError:
+                    pass
+            LIVE.update(pid=p["id"], events=evs, folder=None)
+            return
+    LIVE["pid"] = 0
+
+
+def _reduce(events):
+    """Works out the current picture (mission, agents, tasks, progress) from the events alone."""
+    mission = {"phase": "idle", "approvals": [], "change": ""}
+    tasks, nodes = {}, {}
+
+    def node(n):
+        return nodes.setdefault(n, {"status": "idle", "activity": "", "tools": 0, "chars": 0, "tasks": []})
+    for e in events:
+        k = e["type"]
+        if k == "mission":
+            mission.update(pid=e.get("pid"), goal=e.get("goal"), started=e["t"], title=e.get("goal", "")[:40])
+            node("jarvis").update(status="supervising", activity="handing the mission to the team lead")
+        elif k == "phase":
+            mission["phase"] = e["phase"]
+            if e["phase"] in ("done", "failed", "cancelled"):
+                mission["finished"] = e["t"]
+                mission.update({x: e[x] for x in ("score", "minutes", "spoken", "error") if x in e})
+                node("jarvis").update(status="approval" if mission["approvals"] or mission["change"] else
+                                      "completed" if e["phase"] == "done" else "failed",
+                                      activity={"done": "mission complete", "failed": "mission failed",
+                                                "cancelled": "mission called off"}[e["phase"]])
+                for t in tasks.values():
+                    if t["status"] in ("working", "analyzing", "waiting"):
+                        t["status"] = "failed" if e["phase"] == "failed" else "idle"
+                        t["activity"] = "stopped"
+            elif e["phase"] != "cancelling":
+                node("jarvis").update(status="supervising", activity="the team is on it")
+        elif k == "plan":
+            mission["title"] = e.get("title") or mission.get("title")
+            mission["planned_ok"] = e.get("needs_ok") or []
+            for t in e["tasks"]:
+                tasks[t["id"]] = dict(t, status="waiting", activity="queued", tools=[], chars=0, attempts=0,
+                                      delegated_by="lead", started=None, finished=None, seconds=None,
+                                      needs_ok=False, ok=None)
+                node(t["role"])["tasks"].append(t["id"])
+        elif k == "delegate":
+            if e.get("task") in tasks and e.get("from") == "critic":
+                tasks[e["task"]]["delegated_by"] = "critic"
+                tasks[e["task"]]["redo"] = e.get("text", "")
+        elif k == "agent":
+            t = tasks.get(e.get("task"))
+            if t is not None:
+                if e["status"] in ("analyzing", "working") and t["status"] not in ("analyzing", "working"):
+                    t["attempts"] += 1
+                    t["started"] = t["started"] or e["t"]
+                t.update(status=e["status"], activity=e.get("activity", ""))
+            else:
+                node(e["node"]).update(status=e["status"], activity=e.get("activity", ""))
+        elif k == "tool":
+            t = tasks.get(e.get("task"))
+            if t is not None:
+                t["tools"].append({"tool": e.get("tool"), "detail": e.get("detail", ""), "t": e["t"]})
+            node(e["node"])["tools"] += 1
+        elif k == "blocked":
+            t = tasks.get(e.get("task"))
+            if t is not None:
+                for x in reversed(t["tools"]):
+                    if x["tool"] == e.get("tool") and not x.get("blocked"):
+                        x.update(blocked=True, reason=e.get("reason", ""))
+                        break
+        elif k == "writing":
+            t = tasks.get(e.get("task"))
+            if t is not None:
+                t["chars"] = e.get("chars", 0)
+        elif k == "finished":
+            t = tasks.get(e.get("task"))
+            if t is not None:
+                t.update(finished=e["t"], seconds=e.get("seconds"), chars=e.get("chars", t["chars"]))
+            node(e["node"])["chars"] += e.get("chars", 0)
+        elif k == "result":
+            t = tasks.get(e.get("task"))
+            if t is not None:
+                t.update(ok=e.get("ok"), needs_ok=e.get("needs_ok", False))
+        elif k == "review":
+            mission.update(score=e.get("score"), verdict=e.get("verdict"), reviewed=True)
+            for tid in e.get("redo") or []:
+                if tid in tasks:
+                    tasks[tid].update(status="waiting", activity="sent back by the critic")
+        elif k == "approval":
+            mission.update(approvals=e.get("items") or [], change=e.get("change") or "")
+    for n in nodes.values():
+        mine = [tasks[i] for i in n["tasks"] if i in tasks]
+        if mine:
+            best = max(mine, key=lambda t: RANK.get(t["status"], 0))
+            n.update(status=best["status"], activity=best["activity"], task=best["id"])
+    # Overall progress: planning, each task, the critic's review and the report.
+    units = 3 + len(tasks)
+    done = (1 if tasks else 0) + sum(1 for t in tasks.values() if t["status"] in ("completed", "approval")) \
+        + (1 if mission.get("reviewed") else 0) + (1 if mission["phase"] == "done" else 0)
+    mission["progress"] = {"done": done, "total": units}
+    return {"mission": mission, "tasks": tasks, "nodes": nodes}
+
+
+def live_state(since=0):
+    """What the live network view needs: the events after `since`, and the picture they add up to."""
+    with _live_lock:
+        if LIVE["pid"] is None:
+            _load_last_live()
+        events = list(LIVE["events"])
+        pid = LIVE["pid"]
+    history = {}
+    for p in _load()["projects"]:
+        for t in p.get("tasks") or []:
+            history.setdefault(t.get("role"), []).append(
+                {"title": p.get("title"), "task": t.get("task"), "when": p.get("started"),
+                 "status": p.get("status"), "ok": t.get("ok"), "pid": p["id"]})
+    since = since if 0 <= since <= len(events) else 0
+    return {"pid": pid, "seq": len(events), "since": since, "events": events[since:], "running": busy(),
+            "snapshot": _reduce(events), "now": time.time(),
+            "roster": [{"id": n, "about": a.split(":", 1)[-1].strip(),
+                        "tools": "web" if t is WEB else "files" if t is BUILD else "thinking"}
+                       for n, (a, t) in ROLES.items()],
+            "history": {k: v[-8:] for k, v in history.items()}}

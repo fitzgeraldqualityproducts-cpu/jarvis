@@ -173,6 +173,12 @@ teammates' work passed along. A critic scores the result and sends weak parts ba
 then the lead writes a report. It all happens in the background, so keep talking to him; he tells
 you when they're done (not between 11pm and 8am, "quiet_hours").
 - **"How's the team doing?"**, **"read me the report"**, **"who's on your team?"**, **"call off the team"**.
+- **"Show me the team"** (or the AGENT NET link at the bottom of the display) opens the live agent
+  network at http://localhost:8765/team: JARVIS in the middle, the team lead, critic and all 16
+  specialists around him, glowing lines for who handed what to whom, dashed lines for which task needs
+  which, a live activity feed, the mission's progress, and a task pipeline. Click any agent to see its
+  task, tool calls, output and past missions. It's drawn only from the team's real events (saved as
+  events.jsonl in each project folder); nothing on it is simulated.
 - Reports are in the **team** folder here (and "Jarvis Team" in Obsidian if you use it).
 - The agents can only search the web, think, and write files in their own project folder. They
   can't send, post, buy, delete or change your stuff or Jarvis. Anything like that is listed in the

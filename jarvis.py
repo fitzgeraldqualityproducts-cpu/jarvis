@@ -760,6 +760,9 @@ TEAM_STATUS = re.compile(r"\b(?:how'?s|how is|what'?s|what is|is) (?:the |my |yo
 TEAM_REPORT = re.compile(r"\bread (?:me )?(?:the |my |your )?(?:last |latest |team'?s? |new )*report\b|"
                          r"what did (?:the|my|your) (?:ai )?(?:team|agents|crew) (?:find|come up with|do|say|make)")
 TEAM_CANCEL = re.compile(r"\b(?:cancel|stop|call off|abort|kill) (?:the |my |your )?(?:ai )?(?:team|agents|crew|team project|project)\b")
+TEAM_VIEW = re.compile(r"\b(?:show|open|pull up|bring up|display|let me see|i want to see) (?:me )?(?:the |your |my )?(?:ai )?"
+                       r"(?:team|agents?|agent network|neural network|network|workforce|crew|command cent(?:er|re))"
+                       r"(?: view| network| map| screen| at work| working)?\b|\bwatch (?:the |my |your )?(?:team|agents)\b")
 TEAM_ROSTER = re.compile(r"who(?:'?s| is| are)? (?:on |in )?(?:your|the) (?:ai )?(?:team|agents|crew)|who are your agents|"
                          r"what agents do you have")
 
@@ -768,6 +771,10 @@ def team_command(t):
     """The AI team (workforce.py). Returns True if handled."""
     if TEAM_CANCEL.search(t):
         voice.say(workforce.cancel())
+        return True
+    if TEAM_VIEW.search(t):
+        display.open_page("/team")
+        voice.say("Here's my agent network. Every node and line on it is the team's real work, live.")
         return True
     if TEAM_ROSTER.search(t):
         voice.say(workforce.roster())

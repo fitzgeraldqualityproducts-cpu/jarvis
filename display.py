@@ -21,6 +21,7 @@ from pathlib import Path
 
 PORT = 8765
 HTML = Path(__file__).with_name("display.html")
+TEAM_HTML = HTML.with_name("team.html")    # the live view of Jarvis's AI team at /team
 VENDOR = HTML.with_name("vendor")       # the 3D engine (three.js), served to the page
 WINDOWS = sys.platform == "win32"
 
@@ -218,6 +219,13 @@ def _page_version():
         return 0
 
 
+def _team_version():
+    try:
+        return int(TEAM_HTML.stat().st_mtime)
+    except OSError:
+        return 0
+
+
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/state"):
@@ -225,6 +233,22 @@ class _Handler(BaseHTTPRequestHandler):
             with _lock:
                 body = json.dumps(dict(STATE, now=time.time(), token=TOKEN, page=_page_version())).encode()
             ctype = "application/json"
+        elif self.path.startswith("/team/state"):
+            # The live agent network: real events from the AI team (workforce.py)
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                import workforce
+                state = workforce.live_state(int((q.get("since") or ["0"])[0]))
+                if str(state.get("pid")) != (q.get("pid") or [""])[0] and state["since"]:
+                    state = workforce.live_state(0)        # a new mission: start from its first event
+                state["page"] = _team_version()
+                body = json.dumps(state).encode()
+            except Exception as e:
+                body = json.dumps({"error": f"{type(e).__name__}: {e}"}).encode()
+            ctype = "application/json"
+        elif self.path.split("?")[0] in ("/team", "/team/"):
+            body = TEAM_HTML.read_bytes()
+            ctype = "text/html; charset=utf-8"
         elif self.path.startswith("/vendor/"):
             name = urllib.parse.unquote(urllib.parse.urlparse(self.path).path[len("/vendor/"):])
             f = VENDOR / name
@@ -282,3 +306,12 @@ def start(open_browser=True):
             webbrowser.open(url)
         else:
             subprocess.run(["open", url])
+
+
+def open_page(path="/"):
+    """Opens one of the display's pages (e.g. /team) in the browser."""
+    url = f"http://localhost:{PORT}{path}"
+    if WINDOWS:
+        webbrowser.open(url)
+    else:
+        subprocess.run(["open", url])
