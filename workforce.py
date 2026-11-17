@@ -437,7 +437,11 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
         except Exception as e:
             print(f"(team: couldn't start StoreForge: {e})")
         notes += "\nUse only the StoreForge tools (and web search). If StoreForge reports an error, don't look for " \
-                 "other ways in: say exactly what the error was and what the owner needs to do.\n"
+                 "other ways in: say exactly what the error was and what the owner needs to do.\n" \
+                 "StoreForge reads the product from the link, so give create_store direct product pages (one " \
+                 "product each), never search or category pages. Amazon, AliExpress and Temu block it: prefer " \
+                 "a small independent online store's product page (Shopify stores work best), found with web " \
+                 "search. Check the page loads with WebFetch first.\n"
     if t["role"] in ("coder", "code reviewer"):
         notes += "\nWrite any code or files in the current folder (the project's own folder). Keep it working " \
                  "and explain how to run it.\n"
