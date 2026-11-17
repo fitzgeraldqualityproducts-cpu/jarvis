@@ -384,3 +384,23 @@ if __name__ == "__main__":
               "  curl -fsSL https://claude.ai/install.sh | bash")
         print("then run `claude` once and log in. If it's installed somewhere unusual,")
         print('add  "claude_path": "/full/path/to/claude"  to config.json.')
+
+
+def selfcheck(timeout=90):
+    """For the self-check after an update: asks Claude for one word, the same streaming way a
+    real question goes, without touching memory. Returns (ok, detail)."""
+    import time
+    claude = find_claude()
+    if not claude:
+        return False, "I can't find Claude Code"
+    start, state = time.time(), {}
+    try:
+        text = "".join(_answer_stream([[claude, "-p", "Reply with just the word OK.",
+                                        "--disallowedTools", "Edit Write NotebookEdit Bash WebSearch WebFetch"]],
+                                      timeout, state, label="self-check",
+                                      fails={"oserror": "", "timeout": "", "empty": ""})).strip()
+    except Exception as e:
+        return False, f"error: {e}"
+    if "ok" not in text.lower():
+        return False, (text or state.get("error") or "no answer, Claude Code may need logging in")[:200]
+    return True, f"answered in {time.time() - start:.1f}s"

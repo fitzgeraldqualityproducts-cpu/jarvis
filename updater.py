@@ -6,8 +6,12 @@ Jarvis checks it with git. When there's something new he:
   1. saves a snapshot of his folder (so your voice edits are kept),
   2. merges the new version in with your own changes (git merge),
   3. installs any new Python parts it needs,
-  4. checks that his code still loads, and puts everything back if it doesn't,
-  5. waits until you're not talking to him, then restarts and tells you what's new.
+  4. runs a self-check (selftest.py: code, modules, voice, brain, microphone, speaker) before
+     and after, and if anything that worked before is now broken, tries to fix it
+     (reinstalling packages) and otherwise puts everything back,
+  5. waits until you're not talking to him, then restarts and tells you what's new,
+  6. checks himself again once he's started on the new version, and undoes the update
+     (and restarts) if something broke that the first check missed.
 If he keeps crashing right after an update, the watchdog (keeper.py) undoes it.
 Your settings, memory, tokens, calendar and notes are never part of an update."""
 import json
@@ -162,6 +166,7 @@ def _check(manual):
         return None, False
     selfedit.ensure_repo()                       # snapshot anything changed since
     old = _out("rev-parse", "HEAD")
+    before = _selftest(None)                     # how well everything works now, to compare with
     news = _summary(old, new)
     print(f"(update: installing {new[:8]}: {'; '.join(news)})")
     r = _git("merge", "--no-edit", "-m", "Update: " + ("; ".join(news) or new[:8]), REMOTE_REF)
@@ -177,13 +182,20 @@ def _check(manual):
     if _git("diff", "--quiet", old, "HEAD", "--", "requirements.txt").returncode != 0:
         problem = _pip_install()
     problem = problem or selfedit._check()
+    after = None
+    if not problem and before is not None:
+        after, problem = _selftest(before, fix=True)
     if problem:
         print(f"(update broke something, undoing it: {problem})")
         _git("reset", "-q", "--hard", old)
         state.setdefault("skip", []).append(new)
+        if problem.startswith("self-check") and not manual:
+            state["note"] = ("I found an update, but it broke " + _broken_names(problem) +
+                             " on this computer, so I left myself as I was.")
         _save(state)
         return ("There's an update, but it didn't work on this computer, so I've put myself back." if manual else None), False
-    state.update(pre=old, applied=new, applied_at=time.time(),
+    state.update(pre=old, applied=new, applied_at=time.time(), verified=False,
+                 baseline=before or state.get("baseline"), selftest=after,
                  note=("I've updated myself. What's new: " + ". ".join(news) + ".") if news else "I've updated myself.")
     state["skip"] = [s for s in state.get("skip", []) if s != new][-20:]
     _save(state)
@@ -192,7 +204,89 @@ def _check(manual):
     return "I've installed an update. " + (("What's new: " + ". ".join(news) + ". ") if news else ""), True
 
 
-def rollback_recent(window=1800):
+def _selftest(before, fix=False):
+    """With before=None: runs the self-check and returns its results (None if it can't run).
+    Otherwise runs it again and returns (results, problem): problem names anything that
+    worked before but doesn't now, after trying to fix it by reinstalling packages."""
+    if not _cfg().get("self_test", True):
+        return None if before is None else (None, None)
+    try:
+        import importlib
+        import selftest
+        importlib.reload(selftest)                # the version that just arrived
+        if before is None:
+            return selftest.run()
+        after = selftest.run()
+        broken = selftest.regressions(before, after)
+        if broken and fix and selftest.missing_packages(after, broken):
+            print("(self-check: something's missing, reinstalling packages)")
+            if not _pip_install():
+                after = selftest.run()
+                broken = selftest.regressions(before, after)
+        if broken:
+            return after, "self-check: " + "; ".join(f"{n} ({after[n]['detail'][:100]})" for n in broken)
+        return after, None
+    except Exception as e:
+        print(f"(self-check couldn't run: {e})")
+        return None if before is None else (None, None)
+
+
+def verify_on_start(restart, is_busy=lambda: False, delay=25):
+    """Runs on startup: if an update was just installed, check everything again on the new
+    version. If something broke, undo the update and restart on the old one."""
+    state = _state()
+    if state.get("verified", True) or not state.get("pre") or not state.get("applied_at"):
+        return
+
+    def go():
+        time.sleep(delay)                         # let him finish starting up
+        while is_busy():
+            time.sleep(5)
+        st = _state()
+        baseline = st.get("baseline")
+        if not baseline:
+            import selftest
+            st.update(verified=True, baseline=selftest.run())
+            _save(st)
+            return
+        after, problem = _selftest(baseline, fix=True)
+        st = _state()
+        st["verified"] = True
+        if after:
+            st["selftest"] = after
+        _save(st)
+        if problem:
+            print(f"(the new version failed its self-check, undoing the update: {problem})")
+            if rollback_recent(window=7 * 24 * 3600,
+                               note="I tried an update, but it broke " + _broken_names(problem) +
+                                    ", so I undid it and went back to how I was."):
+                while is_busy():
+                    time.sleep(5)
+                restart()
+        else:
+            print("(self-check after the update: all good)")
+    threading.Thread(target=go, daemon=True, name="selfcheck").start()
+
+
+def _broken_names(problem):
+    import selftest
+    names = [v for k, v in selftest.NAMES.items() if f" {k} (" in " " + problem.split(":", 1)[-1]]
+    return " and ".join(names) or "something"
+
+
+def self_check():
+    """For "run a self check": returns what to say."""
+    import importlib
+    import selftest
+    importlib.reload(selftest)
+    results = selftest.run()
+    st = _state()
+    st["last_selftest"] = results
+    _save(st)
+    return selftest.describe(results)
+
+
+def rollback_recent(window=1800, note=None):
     """Undo an automatic update installed in the last half hour. Used when Jarvis keeps crashing."""
     state = _state()
     pre, applied = state.get("pre"), state.get("applied")
@@ -202,7 +296,8 @@ def rollback_recent(window=1800):
     if r.returncode != 0:
         return False
     state.setdefault("skip", []).append(applied)
-    state.update(pre=None, applied_at=0, note="An update made me crash, so I undid it and went back to how I was.")
+    state.update(pre=None, applied_at=0, verified=True,
+                 note=note or "An update made me crash, so I undid it and went back to how I was.")
     _save(state)
     return True
 

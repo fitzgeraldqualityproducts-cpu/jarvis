@@ -121,9 +121,13 @@ def speak(text):
 def _hook_voice():
     """While Jarvis is in your call, everything he says out loud also plays there."""
     import voice
-    if getattr(voice, "_original_synthesize", None):
+    if getattr(voice, "_discord_mirror", False):
         return
-    original = voice.synthesize
+    voice._discord_mirror = True
+    if hasattr(voice, "add_mirror"):
+        voice.add_mirror(lambda: _mirror.is_set() and connected(), lambda path: _queue_pcm(to_pcm(path)))
+        return
+    original = voice.synthesize          # older voice.py
     voice._original_synthesize = original
 
     def synthesize(text):

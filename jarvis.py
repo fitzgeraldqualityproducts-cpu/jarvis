@@ -409,7 +409,7 @@ PRIVATE = re.compile(
     r"|\b(upgrade|update|edit|modify|reprogram|rewrite|change|fix|tweak|teach|improve) (yourself|your)\b"
     r"|\b(undo|revert|roll back|from now on|learn (how )?to)\b"
     r"|\b(discord|stream mode|going live|twitch|hype ?man|hype mode|butler|personality|vitals?|oura|readiness|hrv|"
-    r"how did i sleep|shortcuts?|e-?mails?|inbox|group chat mode|party mode|guest mode|voice ?prints?|check for updates|"
+    r"how did i sleep|shortcuts?|e-?mails?|inbox|group chat mode|party mode|guest mode|voice ?prints?|check for updates|self[- ]?(check|test)|diagnostics?|"
     r"upgrade ideas?|improvement ideas?|struggling with)\b")
 GUEST_OK = re.compile(r"\b(timer|alarm|time left|how long left|weather|youtube|google|blinker|cough|breath)\b")
 
@@ -589,6 +589,12 @@ def handle(text, _part=False):
             updater.pop_note()
             restart_jarvis()
         voice.say(reply)
+        return True
+    if re.search(r"\b(run|do|start)( a| an| your)? (self[- ]?(check|test)|systems? check|diagnostics?)|"
+                 r"^(self[- ]?(check|test)|diagnostics?|systems? check)$|are you (working|running) (properly|ok(ay)?|right)", t):
+        display.update(status="thinking")
+        voice.say("Running a quick self-check. This takes about half a minute.", interruptible=False)
+        voice.say(updater.self_check())
         return True
     if re.search(r"what('s| is| did you get) new|what (did|have) you (just )?update|what was (in )?(the|your) (last )?update", t):
         voice.say(updater.last_note())
@@ -806,6 +812,7 @@ def main():
         organizer.start_reminder_watch()
     if "--text" not in sys.argv:
         updater.start(is_busy, restart_jarvis)
+        updater.verify_on_start(restart_jarvis, is_busy)      # after an update: check the new version works
         learn.start(is_busy)
         threading.Thread(target=typed_loop, daemon=True, name="typed").start()
     if "--text" in sys.argv:
