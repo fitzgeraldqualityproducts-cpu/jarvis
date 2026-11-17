@@ -437,7 +437,11 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
         except Exception as e:
             print(f"(team: couldn't start StoreForge: {e})")
         notes += "\nUse only the StoreForge tools (and web search). If StoreForge reports an error, don't look for " \
-                 "other ways in: say exactly what the error was and what the owner needs to do.\n"
+                 "other ways in: say exactly what the error was and what the owner needs to do.\n" \
+                 "StoreForge reads the product from the link, so give create_store direct product pages (one " \
+                 "product each), never search or category pages. Amazon, AliExpress and Temu block it: prefer " \
+                 "a small independent online store's product page (Shopify stores work best), found with web " \
+                 "search. Check the page loads with WebFetch first.\n"
     if t["role"] in ("coder", "code reviewer"):
         notes += "\nWrite any code or files in the current folder (the project's own folder). Keep it working " \
                  "and explain how to run it.\n"
@@ -720,14 +724,15 @@ def recover():
 
 
 def resume():
-    """Start the last cut-off (or failed) project again, from the top."""
-    for p in reversed(_load()["projects"]):
-        if p.get("status") in ("interrupted", "failed", "cancelled"):
-            _update(p["id"], status="restarted", told=True)
-            return start(p["goal"])
-        if p.get("status") in ("planning", "working", "done"):
-            break
-    return "There's nothing of the team's to restart. Say get the team on, then what you want."
+    """Run the last project again, from the top (cut off, failed, or done but not good enough)."""
+    if _current:
+        return "The team's still working on something. Say call off the team first if you want to start over."
+    p = latest()
+    if not p:
+        return "There's nothing of the team's to restart. Say get the team on, then what you want."
+    if p.get("status") in ("interrupted", "failed", "cancelled"):
+        _update(p["id"], status="restarted", told=True)
+    return start(p["goal"])
 
 
 def cancel():
