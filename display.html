@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cyan:#4fd8ff; --cyan2:#a8f0ff; --cyanDim:rgba(79,216,255,.35); --gold:#f2b84b; --gold2:#ffd98a;
+    --bg:#03070d; --panel:rgba(6,22,34,.55); --text:#dff6ff; --dim:#6f97a8; --red:#ff6b6b;
+    --hfont:"Orbitron","Avenir Next","Segoe UI",sans-serif; --bfont:"Rajdhani","Avenir Next","Segoe UI",-apple-system,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; color:var(--text); font-family:var(--bfont); overflow:hidden;
+    background:radial-gradient(ellipse at 50% 45%, #0b2233 0%, #050d16 55%, var(--bg) 100%); }
+  #bg { position:fixed; inset:0; z-index:0; }
+  #fx { position:fixed; inset:0; z-index:1; pointer-events:none; }
+  /* hex grid + vignette */
+  .grid { position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.22;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='97' viewBox='0 0 56 97'%3E%3Cpath d='M28 0L56 16v32L28 64 0 48V16zM28 64v33M0 16L-28 0M56 16L84 0' fill='none' stroke='%234fd8ff' stroke-width='.6' stroke-opacity='.35'/%3E%3C/svg%3E");
+    -webkit-mask-image:radial-gradient(ellipse at 50% 50%, #000 10%, transparent 75%); mask-image:radial-gradient(ellipse at 50% 50%, #000 10%, transparent 75%); }
+  /* scan lines */
+  .scan { position:fixed; inset:0; z-index:5; pointer-events:none;
+    background:repeating-linear-gradient(to bottom, rgba(150,230,255,.045) 0 1px, transparent 1px 3px); mix-blend-mode:screen; }
+  .sweep { position:fixed; left:0; right:0; height:22vh; z-index:5; pointer-events:none; top:-25vh;
+    background:linear-gradient(to bottom, transparent, rgba(79,216,255,.06) 70%, rgba(168,240,255,.16) 98%, transparent);
+    animation:sweep 7s linear infinite; }
+  @keyframes sweep { to { top:110vh; } }
+  .vignette { position:fixed; inset:0; z-index:4; pointer-events:none; box-shadow:inset 0 0 180px 40px rgba(0,0,0,.85); }
+
+  .hud { position:relative; z-index:2; height:100%; display:grid; grid-template-columns:330px 1fr 330px; gap:26px; padding:26px 30px; }
+  .col { display:flex; flex-direction:column; gap:16px; min-height:0; }
+  .panel { position:relative; padding:14px 18px 16px; background:linear-gradient(135deg, rgba(10,40,58,.55), rgba(4,16,26,.5));
+    border:1px solid var(--cyanDim); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);
+    clip-path:polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+    box-shadow:inset 0 0 24px rgba(79,216,255,.08); }
+  .panel::before { content:""; position:absolute; top:0; left:0; width:38%; height:2px; background:var(--cyan); box-shadow:0 0 10px var(--cyan); }
+  .panel::after { content:""; position:absolute; right:0; bottom:0; width:22%; height:2px; background:var(--cyan); opacity:.7; }
+  .label { display:flex; justify-content:space-between; align-items:center; font-family:var(--hfont); font-size:10px;
+    letter-spacing:.28em; text-transform:uppercase; color:var(--cyan); margin-bottom:10px; }
+  .label i { font-style:normal; color:var(--dim); letter-spacing:.15em; }
+  .label .live { width:6px; height:6px; border-radius:50%; background:var(--cyan); box-shadow:0 0 8px var(--cyan); animation:blink 1.6s infinite; }
+  @keyframes blink { 50% { opacity:.2; } }
+  .glow { text-shadow:0 0 12px rgba(79,216,255,.65); }
+  .sub { color:var(--dim); font-size:15px; margin-top:4px; }
+  .empty { color:var(--dim); font-size:15px; }
+
+  .clock { font-family:var(--hfont); font-size:46px; font-weight:500; letter-spacing:.04em; font-variant-numeric:tabular-nums; line-height:1; }
+  .clock small { font-size:20px; color:var(--cyan); margin-left:6px; }
+  .wx { display:flex; align-items:center; gap:14px; }
+  .wx svg { width:58px; height:58px; flex:none; filter:drop-shadow(0 0 6px rgba(79,216,255,.7)); }
+  .temp { font-family:var(--hfont); font-size:50px; line-height:1; }
+  .hilo { display:flex; gap:14px; margin-top:8px; font-size:15px; color:var(--dim); }
+  .hilo b { color:var(--text); font-weight:600; }
+
+  .next { border-left:2px solid var(--gold); padding:2px 0 2px 12px; margin-bottom:10px; }
+  .next .k { font-size:11px; letter-spacing:.2em; color:var(--gold); font-family:var(--hfont); }
+  .next .what { font-size:21px; font-weight:600; line-height:1.2; margin-top:4px; }
+  .next .when { color:var(--gold2); font-size:15px; margin-top:2px; }
+  .today { display:flex; flex-direction:column; gap:6px; }
+  .item { display:flex; gap:10px; align-items:baseline; font-size:15px; }
+  .item .t { color:var(--cyan); min-width:62px; font-size:13px; font-variant-numeric:tabular-nums; }
+  .item .x { width:8px; height:8px; flex:none; border:1.5px solid var(--cyan); transform:rotate(45deg) translateY(-1px); }
+  .item.reminder .x { border-color:var(--gold); border-radius:50%; transform:none; }
+
+  .timer { display:flex; align-items:center; gap:14px; }
+  .timer + .timer { margin-top:10px; }
+  .timer svg { width:54px; height:54px; flex:none; transform:rotate(-90deg); }
+  .timer .tl { font-size:15px; color:var(--dim); text-transform:capitalize; }
+  .timer b { display:block; font-family:var(--hfont); font-size:24px; color:var(--gold2); font-weight:500; font-variant-numeric:tabular-nums; }
+
+  .music { display:flex; gap:14px; align-items:center; }
+  .art { position:relative; width:104px; height:104px; flex:none; border:1px solid var(--cyanDim); background:#071824; overflow:hidden; }
+  .art img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; filter:saturate(1.1) contrast(1.05); }
+  .art::after { content:""; position:absolute; inset:0; background:repeating-linear-gradient(to bottom, rgba(79,216,255,.12) 0 1px, transparent 1px 3px), linear-gradient(135deg, rgba(79,216,255,.25), transparent 50%); }
+  .art .none { position:absolute; inset:0; display:grid; place-items:center; color:var(--cyanDim); font-size:34px; }
+  .mi { min-width:0; flex:1; }
+  .mt { font-size:20px; font-weight:600; line-height:1.15; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+  .ma { color:var(--cyan2); font-size:15px; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mal { color:var(--dim); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .bar { height:3px; background:rgba(79,216,255,.15); margin-top:10px; position:relative; }
+  .bar div { position:absolute; left:0; top:0; bottom:0; background:var(--cyan); box-shadow:0 0 8px var(--cyan); }
+  .times { display:flex; justify-content:space-between; font-size:12px; color:var(--dim); margin-top:4px; font-variant-numeric:tabular-nums; }
+  .eq { display:inline-flex; gap:2px; align-items:flex-end; height:12px; }
+  .eq span { width:3px; background:var(--cyan); animation:eq .9s ease-in-out infinite; }
+  .eq span:nth-child(2){ animation-delay:-.3s } .eq span:nth-child(3){ animation-delay:-.6s } .eq span:nth-child(4){ animation-delay:-.15s }
+  .paused .eq span { animation:none; height:3px !important; }
+  @keyframes eq { 0%,100% { height:3px } 50% { height:12px } }
+
+  .apps { display:flex; flex-wrap:wrap; gap:6px; }
+  .app { border:1px solid var(--cyanDim); padding:2px 9px; font-size:13px; color:var(--cyan2); background:rgba(79,216,255,.05); }
+  .log { flex:1; overflow:hidden; display:flex; flex-direction:column; justify-content:flex-end; gap:8px; font-size:15px; line-height:1.3; }
+  .log .you { color:var(--dim); }
+  .log .you::before { content:"YOU › "; color:var(--dim); font-size:10px; letter-spacing:.15em; font-family:var(--hfont); }
+  .typebox { display:flex; gap:8px; margin-top:10px; }
+  .typebox input { flex:1; min-width:0; background:rgba(4,16,26,.7); border:1px solid var(--cyanDim); color:var(--cyan2);
+    font:inherit; font-size:14px; padding:7px 10px; outline:none; }
+  .typebox input:focus { border-color:var(--cyan); box-shadow:0 0 10px var(--cyanDim); }
+  .typebox input::placeholder { color:var(--dim); }
+  .typebox button { background:transparent; border:1px solid var(--cyan); color:var(--cyan); font-family:var(--hfont);
+    font-size:10px; letter-spacing:.2em; text-transform:uppercase; padding:0 12px; cursor:pointer; }
+  .typebox button:hover { background:var(--cyanDim); }
+  .log .jarvis::before { content:"JARVIS › "; color:var(--cyan); font-size:10px; letter-spacing:.15em; font-family:var(--hfont); }
+
+  .center { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; min-width:0; }
+  .orb-wrap { position:relative; width:min(66vh,620px,100%); aspect-ratio:1; }
+  canvas#orb { width:100%; height:100%; display:block; }
+  .status { font-family:var(--hfont); font-size:14px; letter-spacing:.5em; text-transform:uppercase; color:var(--cyan); }
+  .status::before, .status::after { content:"//"; color:var(--dim); margin:0 .6em; letter-spacing:0; }
+  .caption { min-height:56px; max-width:680px; text-align:center; font-size:22px; line-height:1.35; }
+  .sysline { position:fixed; z-index:3; font-family:var(--hfont); font-size:9px; letter-spacing:.25em; color:var(--dim); }
+  .sysline.tl { top:8px; left:30px; } .sysline.tr { top:8px; right:30px; } .sysline.bl { bottom:8px; left:30px; } .sysline.br { bottom:8px; right:30px; }
+  .offline { position:fixed; bottom:26px; left:50%; transform:translateX(-50%); color:var(--red); font-size:14px; z-index:6; display:none;
+    font-family:var(--hfont); letter-spacing:.15em; }
+
+  /* boot-up */
+  .boot { position:fixed; inset:0; z-index:10; background:#010307; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:22px;
+    font-family:var(--hfont); color:var(--cyan); transition:opacity .7s ease; }
+  .boot.done { opacity:0; pointer-events:none; }
+  .boot h1 { margin:0; font-size:44px; letter-spacing:.6em; padding-left:.6em; font-weight:700; text-shadow:0 0 22px var(--cyan); animation:flick 1.2s steps(2) 1; }
+  .boot .lines { width:min(520px,86vw); font-family:"SF Mono",Menlo,Consolas,monospace; font-size:13px; color:var(--cyan2); min-height:150px; line-height:1.6; }
+  .boot .lines div span { float:right; color:var(--cyan); }
+  .boot .pb { width:min(520px,86vw); height:3px; background:rgba(79,216,255,.15); }
+  .boot .pb div { height:100%; width:0; background:var(--cyan); box-shadow:0 0 12px var(--cyan); transition:width .25s; }
+  @keyframes flick { 0% { opacity:0 } 30% { opacity:1 } 40% { opacity:.2 } 55% { opacity:1 } 65% { opacity:.4 } 100% { opacity:1 } }
+  body.booting .hud .panel { opacity:0; transform:translateX(var(--from, -30px)); }
+  .hud .panel { transition:opacity .5s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
+  body.booting .center .status, body.booting .center .caption { opacity:0; }
+  .center .status, .center .caption { transition:opacity .6s ease .3s; }
+  .col.right .panel { --from:30px; }
+
+  @media (max-width:1100px) { .hud { grid-template-columns:270px 1fr 270px; gap:16px; padding:20px; } .clock{font-size:38px} .temp{font-size:40px} }
+  @media (max-width:900px) { .hud { grid-template-columns:1fr; overflow:auto; height:auto; } html,body{overflow:auto} .sysline{display:none} }
+  @media (prefers-reduced-motion:reduce) { .sweep { display:none; } }
+</style>
+</head>
+<body class="booting">
+<canvas id="bg"></canvas>
+<canvas id="fx"></canvas>
+<div class="grid"></div>
+<div class="sysline tl">J.A.R.V.I.S // PERSONAL INTERFACE</div>
+<div class="sysline tr" id="uptime">UPTIME 00:00:00</div>
+<div class="sysline bl" id="sysstate">CORE NOMINAL</div>
+<div class="sysline br">LINK localhost:8765</div>
+
+<div class="hud">
+  <div class="col left">
+    <div class="panel"><div class="label">01 · Chrono <span class="live"></span></div>
+      <div class="clock glow" id="clock">--:--</div><div class="sub" id="date"></div></div>
+    <div class="panel"><div class="label">02 · Atmos <i id="city"></i></div>
+      <div class="wx"><svg id="wxicon" viewBox="0 0 64 64"></svg>
+        <div><div class="temp glow" id="temp">--°</div><div class="sub" id="sky">Locating…</div></div></div>
+      <div class="hilo"><span>HIGH <b id="hi">--</b></span><span>LOW <b id="lo">--</b></span><span id="sunEv"></span></div></div>
+    <div class="panel" style="flex:1;min-height:0;overflow:hidden"><div class="label">03 · Next up <i id="todayCount"></i></div>
+      <div id="next"></div><div class="today" id="today"></div></div>
+    <div class="panel" id="timersPanel" style="display:none"><div class="label">04 · Timers <span class="live"></span></div><div id="timers"></div></div>
+  </div>
+  <div class="center">
+    <div class="orb-wrap"><canvas id="orb"></canvas></div>
+    <div class="status" id="status">Sleeping</div>
+    <div class="caption" id="caption">Clap twice to wake me.</div>
+  </div>
+  <div class="col right">
+    <div class="panel" id="musicPanel"><div class="label">05 · Audio <span id="eq" class="eq"><span></span><span></span><span></span><span></span></span></div>
+      <div class="music"><div class="art" id="art"><div class="none">♪</div></div>
+        <div class="mi"><div class="mt" id="mt">Nothing playing</div><div class="ma" id="ma">Spotify is idle</div><div class="mal" id="mal"></div></div></div>
+      <div class="bar"><div id="mbar" style="width:0"></div></div>
+      <div class="times"><span id="mpos"></span><span id="mdur"></span></div></div>
+    <div class="panel" style="flex:1;display:flex;flex-direction:column;min-height:0"><div class="label">06 · Comms</div>
+      <div class="log" id="log"></div>
+      <form class="typebox" id="typeForm" autocomplete="off"><input id="typeIn" maxlength="500" placeholder="Type to Jarvis…" aria-label="Type to Jarvis"><button type="submit">Send</button></form></div>
+    <div class="panel"><div class="label">07 · Modules</div><div class="apps" id="apps"></div></div>
+  </div>
+</div>
+
+<div class="scan"></div><div class="sweep"></div><div class="vignette"></div>
+<div class="offline" id="offline">⚠ JARVIS OFFLINE · START HIM WITH THE START JARVIS FILE</div>
+
+<div class="boot" id="boot">
+  <h1>JARVIS</h1>
+  <div class="lines" id="bootLines"></div>
+  <div class="pb"><div id="bootBar"></div></div>
+</div>
+
+<script>
+let S = { status:"sleeping", level:0 };
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const nowS = () => Date.now() / 1000;
+
+// ---------- boot-up ----------
+let bootStart = performance.now(), bootSeen = null, booting = true;
+const BOOT_LINES = ["Initialising neural core", "Calibrating audio array", "Loading voice synthesis",
+  "Syncing chronometer", "Linking atmospheric sensors", "Connecting media relay", "Holographic projection"];
+function runBoot() {
+  booting = true; bootStart = performance.now();
+  document.body.classList.add("booting");
+  const box = $("boot"), lines = $("bootLines"), bar = $("bootBar");
+  box.classList.remove("done"); lines.innerHTML = ""; bar.style.width = "0";
+  BOOT_LINES.forEach((l, i) => setTimeout(() => {
+    lines.insertAdjacentHTML("beforeend", `<div>› ${l}…<span>${i === BOOT_LINES.length - 1 ? "ONLINE" : "OK"}</span></div>`);
+    bar.style.width = ((i + 1) / BOOT_LINES.length * 100) + "%";
+  }, 250 + i * 260));
+  setTimeout(() => { box.classList.add("done"); bootStart = performance.now(); }, 250 + BOOT_LINES.length * 260 + 350);
+  setTimeout(() => {
+    document.querySelectorAll(".hud .panel").forEach((p, i) => p.style.transitionDelay = (i * 0.09) + "s");
+    document.body.classList.remove("booting");
+    setTimeout(() => { booting = false; document.querySelectorAll(".hud .panel").forEach(p => p.style.transitionDelay = ""); }, 1400);
+  }, 250 + BOOT_LINES.length * 260 + 900);
+}
+$("boot").addEventListener("click", () => { $("boot").classList.add("done"); document.body.classList.remove("booting"); });
+runBoot();
+
+// ---------- typing to Jarvis ----------
+$("typeForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const box = $("typeIn"), text = box.value.trim();
+  if (!text || !S.token) return;
+  box.value = ""; box.placeholder = "Sent. Jarvis is on it…";
+  try {
+    const r = await fetch("/say", { method:"POST", headers:{ "Content-Type":"application/json", "X-Jarvis-Token":S.token },
+                                    body:JSON.stringify({ text }) });
+    if (!r.ok) throw new Error(r.status);
+  } catch { box.value = text; box.placeholder = "Couldn't reach Jarvis. Try again."; return; }
+  setTimeout(() => { box.placeholder = "Type to Jarvis…"; }, 2500);
+});
+if (/[?&]type=1/.test(location.search)) setTimeout(() => $("typeIn").focus(), 300);
+document.addEventListener("keydown", e => {        // press / anywhere to start typing
+  if (e.key === "/" && document.activeElement !== $("typeIn")) { e.preventDefault(); $("typeIn").focus(); }
+});
+
+// ---------- data ----------
+async function poll() {
+  try {
+    const r = await fetch("/state", { cache:"no-store" });
+    S = await r.json(); $("offline").style.display = "none";
+    if (bootSeen !== null && S.boot !== bootSeen) runBoot();   // Jarvis restarted
+    bootSeen = S.boot;
+    render();
+  } catch { $("offline").style.display = "block"; }
+  setTimeout(poll, 250);
+}
+const LABELS = { sleeping:"Standby", listening:"Listening", thinking:"Processing", speaking:"Speaking", paused:"Paused" };
+let lastLog = "", lastApps = "", lastToday = "", lastArt = null;
+
+function wxKind(sky) {
+  sky = (sky || "").toLowerCase();
+  if (/thunder|storm/.test(sky)) return "storm";
+  if (/snow/.test(sky)) return "snow";
+  if (/rain|drizz|shower/.test(sky)) return "rain";
+  if (/fog/.test(sky)) return "fog";
+  if (/overcast/.test(sky)) return "cloud";
+  if (/partly|mostly/.test(sky)) return "part";
+  return "sun";
+}
+function wxSvg(kind) {
+  const st = 'fill="none" stroke="#4fd8ff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"';
+  const sun = (x, y, r) => `<circle cx="${x}" cy="${y}" r="${r}" ${st}/>` + [...Array(8)].map((_, i) => { const a = i * Math.PI / 4;
+    return `<line x1="${x + Math.cos(a) * (r + 4)}" y1="${y + Math.sin(a) * (r + 4)}" x2="${x + Math.cos(a) * (r + 9)}" y2="${y + Math.sin(a) * (r + 9)}" ${st}/>`; }).join("");
+  const cloud = `<path d="M18 44h28a9 9 0 0 0 0-18 13 13 0 0 0-25-3 10 10 0 0 0-3 21z" ${st}/>`;
+  return { sun: sun(32, 32, 11), part: sun(22, 22, 8) + `<path d="M22 50h24a8 8 0 0 0 0-16 11 11 0 0 0-21-2 8 8 0 0 0-3 18z" fill="#03101a" stroke="#4fd8ff" stroke-width="2.2" stroke-linejoin="round"/>`,
+    cloud, rain: cloud + `<path d="M24 50l-3 7M34 50l-3 7M44 50l-3 7" ${st}/>`,
+    snow: cloud + `<path d="M24 52v6M21 55h6M38 52v6M35 55h6" ${st}/>`,
+    storm: cloud + `<path d="M33 46l-5 8h7l-4 8" ${st}/>`,
+    fog: `<path d="M12 26h40M8 34h48M14 42h36M20 50h24" ${st}/>` }[kind];
+}
+function clock12(d) { return d.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }); }
+function inWords(sec) {
+  if (sec < 60) return "now";
+  const m = Math.round(sec / 60), h = Math.floor(m / 60);
+  return "in " + (h ? h + "h " + (m % 60) + "m" : m + " min");
+}
+
+function render() {
+  $("status").textContent = LABELS[S.status] || S.status;
+  $("sysstate").textContent = "CORE " + (S.status === "sleeping" ? "STANDBY" : (LABELS[S.status] || S.status).toUpperCase());
+  $("caption").textContent = S.status === "sleeping" ? "Say “Hey Jarvis” or clap twice."
+    : S.status === "paused" ? "Not listening. Resume from the menu bar."
+    : S.status === "listening" ? (S.you ? "“" + S.you + "”" : "Go ahead…")
+    : S.status === "thinking" ? "One moment…" : S.jarvis;
+
+  if (S.weather) {
+    const w = S.weather, k = Q.get("wx") || codeKind(S.sky && S.sky.code) || wxKind(w.sky);
+    $("temp").textContent = w.temp + "°";
+    $("sky").textContent = w.sky.replace(/^./, c => c.toUpperCase());
+    $("city").textContent = w.city || ""; $("hi").textContent = w.hi + "°"; $("lo").textContent = w.lo + "°";
+    const sk = S.sky || {}, nowT = nowS();
+    if (sk.sunrise && sk.sunset) { const up = nowT < sk.sunrise ? ["SUNRISE", sk.sunrise] : nowT < sk.sunset ? ["SUNSET", sk.sunset] : null;
+      $("sunEv").innerHTML = up ? `${up[0]} <b>${new Date(up[1] * 1000).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}</b>` : ""; }
+    if ($("wxicon").dataset.k !== k) { $("wxicon").innerHTML = wxSvg(k); $("wxicon").dataset.k = k; }
+  }
+
+  // next up: the next reminder (or event) today, then the rest of the day
+  const today = S.today || [], tk = JSON.stringify(today) + Math.floor(nowS() / 30);
+  if (tk !== lastToday) {
+    lastToday = tk;
+    const now = nowS(), upcoming = today.filter(i => !i.ts || i.ts > 1e12 || i.ts >= now - 60 || i.kind === "reminder");
+    const rem = upcoming.find(i => i.kind === "reminder") , nx = rem || upcoming[0];
+    $("todayCount").textContent = today.length ? today.length + " TODAY" : "";
+    $("next").innerHTML = nx ? `<div class="next"><div class="k">${nx.kind === "reminder" ? "NEXT REMINDER" : "NEXT EVENT"}</div>
+        <div class="what">${esc(nx.text)}</div>
+        <div class="when">${nx.ts && nx.ts < 1e12 ? (nx.ts < now - 60 ? "Overdue · " + esc(nx.time) : esc(nx.time) + " · " + inWords(nx.ts - now)) : (nx.time ? esc(nx.time) : "Today")}</div></div>` : "";
+    const rest = today.filter(i => i !== nx).slice(0, 7);
+    $("today").innerHTML = rest.length ? rest.map(i =>
+        `<div class="item ${i.kind}"><span class="x"></span><span class="t">${esc(i.time || "")}</span><span>${esc(i.text)}</span></div>`).join("")
+      : (nx ? "" : `<div class="empty">Nothing on today. Say “remind me to…”</div>`);
+  }
+
+  const apps = JSON.stringify(S.apps || []);
+  if (apps !== lastApps) { lastApps = apps; $("apps").innerHTML = (S.apps || []).map(a => `<span class="app">${esc(a)}</span>`).join(""); }
+  const lg = JSON.stringify(S.log || []);
+  if (lg !== lastLog) { lastLog = lg; $("log").innerHTML = (S.log || []).map(m => `<div class="${m.who}">${esc(m.text)}</div>`).join(""); }
+
+  const m = S.music;
+  $("musicPanel").classList.toggle("paused", !m || m.state !== "playing");
+  if (m) {
+    $("mt").textContent = m.title; $("ma").textContent = m.artist; $("mal").textContent = m.album || (m.state === "playing" ? "" : "Paused");
+    if (m.album && m.state !== "playing") $("mal").textContent = m.album + " · Paused";
+  } else { $("mt").textContent = "Nothing playing"; $("ma").textContent = "Say “play” and a song"; $("mal").textContent = ""; }
+  const art = m && m.art || "";
+  if (art !== lastArt) { lastArt = art;
+    $("art").innerHTML = art ? `<div class="none">♪</div><img src="${esc(art)}" alt="" onerror="this.remove()">` : `<div class="none">♪</div>`; }
+}
+function fmt(sec) { sec = Math.max(0, Math.round(sec)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0"); }
+function tick() {
+  const d = new Date(), now = d.getTime() / 1000;
+  const timers = S.timers || [];
+  $("timersPanel").style.display = timers.length ? "" : "none";
+  const C = 2 * Math.PI * 22;
+  $("timers").innerHTML = timers.map(t => { const left = t.end - now, total = Math.max(1, t.end - (t.start || now)), f = Math.max(0, Math.min(1, left / total));
+    return `<div class="timer"><svg viewBox="0 0 54 54"><circle cx="27" cy="27" r="22" fill="none" stroke="rgba(79,216,255,.15)" stroke-width="4"/>
+      <circle cx="27" cy="27" r="22" fill="none" stroke="${left < 60 ? "#ffd98a" : "#4fd8ff"}" stroke-width="4" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - f)}"/></svg>
+      <div><b>${fmt(left)}</b><span class="tl">${esc(t.label)}</span></div></div>`; }).join("");
+  const parts = d.toLocaleTimeString([], { hour:"numeric", minute:"2-digit", second:"2-digit" }).split(" ");
+  const hm = parts[0].replace(/:\d\d$/, ""), sec = parts[0].slice(-2);
+  $("clock").innerHTML = `${hm}<small>${sec}${parts[1] ? " " + parts[1] : ""}</small>`;
+  $("date").textContent = d.toLocaleDateString([], { weekday:"long", month:"long", day:"numeric", year:"numeric" });
+  if (S.boot) { const u = Math.max(0, Math.floor(now - S.boot));
+    $("uptime").textContent = "UPTIME " + [u / 3600, u % 3600 / 60, u % 60].map(x => String(Math.floor(x)).padStart(2, "0")).join(":"); }
+  const m = S.music;
+  if (m && m.dur > 0) { const pos = Math.min(m.dur, m.pos + (m.state === "playing" ? now - (m.at || now) : 0));
+    $("mbar").style.width = (pos / m.dur * 100) + "%"; $("mpos").textContent = fmt(pos); $("mdur").textContent = fmt(m.dur);
+  } else { $("mbar").style.width = m && m.state === "playing" ? "100%" : "0"; $("mpos").textContent = ""; $("mdur").textContent = ""; }
+}
+setInterval(tick, 250); tick(); poll();
+
+// ---------- living sky: day/night colors + weather effects ----------
+const bk = $("bg"), bx = bk.getContext("2d"), fx = $("fx"), fxx = fx.getContext("2d");
+const Q = new URLSearchParams(location.search);          // ?wx=rain&phase=night for testing
+const LITE = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let W = 0, H = 0, stars = [], drops = [], flakes = [], clouds = [], fogs = [], splashes = [];
+let flash = 0, nextBolt = 0, bolt = null;
+function sizeBg() {
+  W = bk.width = fx.width = innerWidth; H = bk.height = fx.height = innerHeight;
+  stars = Array.from({ length:140 }, () => ({ x:Math.random() * W, y:Math.random() * H * .8, r:Math.random() * 1.4 + .3, p:Math.random() * 6, v:.08 + Math.random() * .25 }));
+  drops = Array.from({ length:LITE ? 120 : 380 }, () => ({ x:Math.random() * W * 1.3 - W * .15, y:Math.random() * H, l:10 + Math.random() * 22, v:13 + Math.random() * 10, a:.12 + Math.random() * .3 }));
+  flakes = Array.from({ length:LITE ? 70 : 220 }, () => ({ x:Math.random() * W, y:Math.random() * H, r:.8 + Math.random() * 2.6, v:.4 + Math.random() * 1.1, p:Math.random() * 6, a:.35 + Math.random() * .5 }));
+  clouds = Array.from({ length:9 }, (_, i) => ({ x:Math.random() * W, y:H * (.02 + Math.random() * .35), r:W * (.12 + Math.random() * .14), v:.08 + Math.random() * .18, s:.6 + Math.random() * .5 }));
+  fogs = Array.from({ length:7 }, () => ({ x:Math.random() * W, y:H * (.25 + Math.random() * .75), r:W * (.25 + Math.random() * .25), v:.15 + Math.random() * .3 }));
+}
+addEventListener("resize", sizeBg); sizeBg();
+
+function codeKind(c) {
+  if (c == null) return null;
+  if (c >= 95) return "storm";
+  if ((c >= 71 && c <= 77) || c === 85 || c === 86) return "snow";
+  if ((c >= 51 && c <= 67) || (c >= 80 && c <= 82)) return "rain";
+  if (c === 45 || c === 48) return "fog";
+  if (c === 3) return "cloud";
+  if (c === 1 || c === 2) return "part";
+  return "sun";
+}
+function currentKind() {
+  if (Q.get("wx")) return Q.get("wx");
+  return codeKind(S.sky && S.sky.code) || (S.weather ? wxKind(S.weather.sky) : "sun");
+}
+function heavy() { const c = S.sky && S.sky.code; return Q.get("heavy") ? 1 : [65, 67, 82, 75, 86, 96, 99].includes(c) ? 1 : [51, 53, 56, 61, 71, 80, 85].includes(c) ? .45 : .75; }
+// 0 = night, 1 = full day; plus a "golden hour" amount near sunrise/sunset
+function daylight() {
+  const q = Q.get("phase");
+  if (q) return { day:{ night:0, dawn:.35, dusk:.35, day:1 }[q] ?? 1, gold:(q === "dusk" || q === "dawn") ? 1 : 0 };
+  const now = Date.now() / 1000, sk = S.sky || {};
+  let rise = sk.sunrise, set = sk.sunset;
+  if (!rise || !set) { const d = new Date(); d.setHours(7, 0, 0, 0); rise = d / 1000; set = rise + 11 * 3600; }
+  const span = 50 * 60, sm = x => Math.max(0, Math.min(1, x));
+  const day = sm((now - (rise - span)) / (2 * span)) * sm(((set + span) - now) / (2 * span));
+  const gold = Math.max(0, 1 - Math.abs(now - rise) / span) + Math.max(0, 1 - Math.abs(now - set) / span);
+  return { day, gold:Math.min(1, gold) };
+}
+const mix = (a, b, k) => a.map((v, i) => Math.round(v + (b[i] - v) * k));
+const rgb = a => `rgb(${a[0]},${a[1]},${a[2]})`;
+let lastPhase = "", _moon = null;
+function moonCanvas(r) {               // a crescent moon, drawn once
+  if (_moon && _moon.r === r) return _moon.c;
+  const c = document.createElement("canvas"); c.width = c.height = Math.ceil(r * 2 + 4); const m = c.getContext("2d");
+  m.fillStyle = "rgb(225,245,255)"; m.beginPath(); m.arc(r + 2, r + 2, r, 0, 7); m.fill();
+  m.globalCompositeOperation = "destination-out"; m.beginPath(); m.arc(r + 2 + r * .45, r + 2 - r * .25, r * .9, 0, 7); m.fill();
+  _moon = { r, c }; return c;
+}
+
+function drawSky() {
+  const kind = currentKind(), { day, gold } = daylight();
+  const grey = { cloud:.55, rain:.7, storm:.85, snow:.5, fog:.6, part:.2 }[kind] || 0;
+  // sky colors: night navy -> day teal-blue, washed grey by clouds, warmed at golden hour
+  let top = mix([3, 7, 16], [16, 58, 92], day), mid = mix([6, 16, 28], [20, 70, 100], day), low = mix([2, 5, 10], [10, 40, 62], day);
+  const g = [60, 66, 74];
+  top = mix(top, mix(g, [30, 36, 44], 1 - day), grey * .6); mid = mix(mid, mix(g, [24, 28, 34], 1 - day), grey * .55);
+  if (gold) { low = mix(low, [140, 62, 40], gold * .75); mid = mix(mid, [70, 40, 70], gold * .5); }
+  const phase = day > .6 ? "Day" : gold > .2 ? (new Date().getHours() < 12 ? "Dawn" : "Dusk") : "Night";
+  if (phase !== lastPhase) { lastPhase = phase; document.body.dataset.phase = phase.toLowerCase(); }
+  const sg = bx.createLinearGradient(0, 0, 0, H);
+  sg.addColorStop(0, rgb(top)); sg.addColorStop(.55, rgb(mid)); sg.addColorStop(1, rgb(low));
+  bx.fillStyle = sg; bx.fillRect(0, 0, W, H);
+  // vignette glow behind the orb
+  const og = bx.createRadialGradient(W / 2, H * .45, 0, W / 2, H * .45, Math.max(W, H) * .55);
+  og.addColorStop(0, "rgba(40,140,190,.22)"); og.addColorStop(1, "rgba(0,0,0,0)");
+  bx.fillStyle = og; bx.fillRect(0, 0, W, H);
+
+  const clear = kind === "sun" || kind === "part";
+  // stars at night (hidden by clouds)
+  const sa = (1 - day) * (clear ? 1 : .15);
+  if (sa > .02) stars.forEach(s => { const tw = .55 + .45 * Math.sin(t * 1.5 + s.p);
+    bx.fillStyle = `rgba(210,240,255,${sa * tw * .9})`; bx.beginPath(); bx.arc(s.x, s.y, s.r, 0, 7); bx.fill(); });
+  // sun / moon
+  const cx = W * .64, cy = H * .09;
+  if (day > .05 && kind !== "fog") {
+    const a = day * (clear ? 1 : .35), sr = Math.min(W, H) * .32;
+    const sun = bx.createRadialGradient(cx, cy, 0, cx, cy, sr);
+    sun.addColorStop(0, `rgba(255,${gold ? 200 : 240},${gold ? 150 : 210},${.55 * a})`); sun.addColorStop(.12, `rgba(255,220,160,${.25 * a})`);
+    sun.addColorStop(1, "rgba(255,220,160,0)"); bx.fillStyle = sun; bx.fillRect(cx - sr, cy - sr, sr * 2, sr * 2);
+  }
+  if (day < .6 && clear && gold < .3) {
+    const a = (1 - day) * .9, mr = Math.min(W, H) * .028;
+    const halo = bx.createRadialGradient(cx, cy, 0, cx, cy, mr * 6);
+    halo.addColorStop(0, `rgba(200,235,255,${.18 * a})`); halo.addColorStop(1, "rgba(200,235,255,0)");
+    bx.fillStyle = halo; bx.fillRect(cx - mr * 6, cy - mr * 6, mr * 12, mr * 12);
+    const mc = moonCanvas(mr);
+    bx.globalAlpha = a; bx.drawImage(mc, cx - mr - 2, cy - mr - 2); bx.globalAlpha = 1;
+  }
+  // drifting dust specks (daytime) — the old background particles
+  if (day > .3 && clear) stars.slice(0, 60).forEach(s => { s.y -= s.v; if (s.y < -4) { s.y = H + 4; s.x = Math.random() * W; }
+    bx.fillStyle = `rgba(160,230,255,${.25 * day})`; bx.fillRect(s.x, s.y, 1.4, 1.4); });
+
+  // ---- weather effects (on top of the sky, behind the panels) ----
+  fxx.clearRect(0, 0, W, H);
+  const k = heavy();
+  if (kind === "part" || kind === "cloud" || kind === "rain" || kind === "storm" || kind === "snow") {
+    const n = kind === "part" ? 4 : clouds.length, dark = 1 - day;
+    for (let i = 0; i < n; i++) { const c = clouds[i]; c.x += c.v * (kind === "storm" ? 2.5 : 1); if (c.x - c.r > W) c.x = -c.r;
+      const cg = fxx.createRadialGradient(c.x, c.y, 0, c.x, c.y, c.r);
+      const col = kind === "storm" || kind === "rain" ? [70, 85, 100] : mix([150, 175, 195], [60, 75, 95], dark);
+      const al = (kind === "part" ? .12 : .2) * c.s;
+      cg.addColorStop(0, `rgba(${col},${al})`); cg.addColorStop(1, `rgba(${col},0)`);
+      fxx.fillStyle = cg; fxx.save(); fxx.translate(c.x, c.y); fxx.scale(1.8, .55); fxx.translate(-c.x, -c.y);
+      fxx.beginPath(); fxx.arc(c.x, c.y, c.r, 0, 7); fxx.fill(); fxx.restore(); }
+  }
+  if (kind === "rain" || kind === "storm") {
+    const n = Math.floor(drops.length * k), wind = kind === "storm" ? 4.5 : 2.2;
+    fxx.lineCap = "round"; fxx.lineWidth = 1.2;
+    for (let i = 0; i < n; i++) { const d = drops[i]; d.y += d.v; d.x += wind;
+      if (d.y > H) { if (Math.random() < .25) splashes.push({ x:d.x, y:H - 2 - Math.random() * 30, r:0 }); d.y = -d.l; d.x = Math.random() * W * 1.3 - W * .15; }
+      fxx.strokeStyle = `rgba(170,225,255,${d.a})`; fxx.beginPath(); fxx.moveTo(d.x, d.y); fxx.lineTo(d.x - wind * d.l / d.v, d.y - d.l); fxx.stroke(); }
+    splashes = splashes.filter(s => (s.r += .7) < 9);
+    splashes.forEach(s => { fxx.strokeStyle = `rgba(170,225,255,${.35 * (1 - s.r / 9)})`; fxx.beginPath(); fxx.ellipse(s.x, s.y, s.r, s.r * .3, 0, 0, 7); fxx.stroke(); });
+  }
+  if (kind === "storm") {
+    const now = performance.now();
+    if (!nextBolt) nextBolt = now + 2500;
+    if (now > nextBolt) { flash = 1; nextBolt = now + 4000 + Math.random() * 9000;
+      let x = W * (.1 + Math.random() * .8), y = 0; bolt = [[x, y]];
+      while (y < H * (.45 + Math.random() * .3)) { x += (Math.random() - .5) * 70; y += 20 + Math.random() * 40; bolt.push([x, y]); } }
+    if (flash > .01) {
+      fxx.fillStyle = `rgba(200,230,255,${flash * .28})`; fxx.fillRect(0, 0, W, H);
+      if (bolt && flash > .4) { fxx.strokeStyle = `rgba(235,248,255,${flash})`; fxx.lineWidth = 2.5; fxx.shadowColor = "#bfe8ff"; fxx.shadowBlur = 18;
+        fxx.beginPath(); bolt.forEach(([x, y], i) => i ? fxx.lineTo(x, y) : fxx.moveTo(x, y)); fxx.stroke(); fxx.shadowBlur = 0; }
+      flash *= Math.random() < .08 ? 1.6 : .9; if (flash > 1) flash = 1;
+    }
+  }
+  if (kind === "snow") {
+    const n = Math.floor(flakes.length * k);
+    for (let i = 0; i < n; i++) { const f = flakes[i]; f.y += f.v; f.x += Math.sin(t * .8 + f.p) * .6 + .2;
+      if (f.y > H + 4) { f.y = -4; f.x = Math.random() * W; }
+      fxx.fillStyle = `rgba(235,248,255,${f.a})`; fxx.beginPath(); fxx.arc(f.x, f.y, f.r, 0, 7); fxx.fill(); }
+  }
+  if (kind === "fog") {
+    fogs.forEach(f => { f.x += f.v; if (f.x - f.r > W) f.x = -f.r;
+      const fg = fxx.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.r);
+      fg.addColorStop(0, "rgba(170,200,215,.16)"); fg.addColorStop(1, "rgba(170,200,215,0)");
+      fxx.save(); fxx.translate(f.x, f.y); fxx.scale(2.2, .45); fxx.translate(-f.x, -f.y);
+      fxx.fillStyle = fg; fxx.beginPath(); fxx.arc(f.x, f.y, f.r, 0, 7); fxx.fill(); fxx.restore(); });
+  }
+}
+
+// ---------- orb + holographic rings ----------
+const oc = $("orb"), ox = oc.getContext("2d");
+let t = 0, energy = 0;
+const ease = x => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
+function cy(a) { return `rgba(79,216,255,${a})`; }
+function drawOrb() {
+  const dpr = devicePixelRatio || 1, w = oc.clientWidth;
+  if (oc.width !== Math.round(w * dpr)) { oc.width = oc.height = Math.round(w * dpr); }
+  ox.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const c = w / 2, R = w * 0.15;
+  const target = { sleeping:.1, paused:.05, listening:.45 + (S.level || 0) * 1.5, thinking:.6, speaking:.8 + .25 * Math.sin(t * 9) }[S.status] ?? .1;
+  energy += (target - energy) * .08; t += 1 / 60;
+  const bt = (performance.now() - bootStart) / 1000;            // seconds since boot reveal
+  const B = booting ? ease(bt / 1.6) : 1;                         // 0..1 ring draw-in
+  const pulse = booting && bt < 1.2 ? Math.max(0, 1 - bt / 1.2) : 0;
+  ox.clearRect(0, 0, w, w);
+
+  // ---- the orb (glow, globe core, particles, tick ring, orbit arcs) ----
+  ox.save(); ox.translate(c, c); ox.scale(.3 + .7 * B, .3 + .7 * B); ox.translate(-c, -c); ox.globalAlpha = Math.min(1, B * 1.5);
+  // (the cyan holographic globe from Connor's "more 3D and holographic" voice edit)
+  const GR = Math.min(R * (1.9 + energy), c);
+  const g = ox.createRadialGradient(c, c, 0, c, c, GR);
+  g.addColorStop(0, "rgba(230,252,255,1)"); g.addColorStop(.35, `rgba(120,240,255,${.55 + energy * .4})`);
+  g.addColorStop(.7, "rgba(56,232,255,.12)"); g.addColorStop(1, "rgba(56,232,255,0)");
+  ox.fillStyle = g; ox.beginPath(); ox.arc(c, c, GR, 0, 7); ox.fill();
+  const CR = R * (.55 + energy * .12);
+  const cg = ox.createRadialGradient(c - CR * .35, c - CR * .4, CR * .05, c, c, CR);
+  cg.addColorStop(0, "rgba(255,255,255,1)"); cg.addColorStop(.45, "rgba(170,246,255,.95)"); cg.addColorStop(1, "rgba(30,170,210,.9)");
+  ox.fillStyle = cg; ox.beginPath(); ox.arc(c, c, CR, 0, 7); ox.fill();
+  ox.lineWidth = 1; ox.strokeStyle = `rgba(20,120,170,${.35 + energy * .3})`;
+  for (let i = 0; i < 6; i++) { const k = Math.cos(i / 6 * Math.PI + t * .5);
+    ox.beginPath(); ox.ellipse(c, c, Math.abs(k) * CR, CR, 0, 0, 7); ox.stroke(); }
+  for (let i = -2; i <= 2; i++) { const y = i / 3, ry = Math.sqrt(1 - y * y) * CR;
+    ox.beginPath(); ox.ellipse(c, c + y * CR, ry, ry * .18, 0, 0, 7); ox.stroke(); }
+  ox.strokeStyle = `rgba(200,252,255,${.5 + energy * .4})`; ox.lineWidth = 1.5;
+  ox.beginPath(); ox.arc(c, c, CR, 0, 7); ox.stroke();
+  for (let i = 0; i < 160; i++) { const a = i * 2.399 + t * (.2 + energy * .6), rr = R * (.6 + ((i * 37) % 100) / 100 * .55);
+    ox.fillStyle = `rgba(160,244,255,${.25 + energy * .5})`; ox.fillRect(c + Math.cos(a) * rr, c + Math.sin(a) * rr, 1.6, 1.6); }
+  const ring = R * 1.35, n = 60;
+  for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2 + t * .15; const len = 6 + (S.status === "speaking" || S.status === "listening" ? Math.abs(Math.sin(i * 1.7 + t * 8)) * 14 * energy : 0);
+    ox.strokeStyle = `rgba(56,232,255,${.45 + energy * .5})`; ox.lineWidth = 2; ox.beginPath();
+    ox.moveTo(c + Math.cos(a) * ring, c + Math.sin(a) * ring); ox.lineTo(c + Math.cos(a) * (ring + len), c + Math.sin(a) * (ring + len)); ox.stroke(); }
+  ox.lineCap = "round";
+  [[1.65, .9, 1], [1.85, 1.4, -1], [2.05, .6, .7]].forEach(([k, len, dir], j) => { const s = t * dir * (.4 + energy) + j * 2;
+    ox.strokeStyle = `rgba(56,232,255,${.35 + energy * .5})`; ox.lineWidth = 2.5;
+    ox.beginPath(); ox.arc(c, c, R * k, s, s + len); ox.stroke();
+    ox.beginPath(); ox.arc(c, c, R * k, s + Math.PI, s + Math.PI + len * .6); ox.stroke(); });
+  ox.restore();
+
+  // ---- holographic rings (cyan) ----
+  ox.lineCap = "butt";
+  const sp = .3 + energy;                                         // spin faster when active
+  const flick = .85 + .15 * Math.sin(t * 23) * Math.sin(t * 7);    // hologram flicker
+  ox.shadowColor = "rgba(79,216,255,.9)"; ox.shadowBlur = 8;
+
+  // 1. thin full ring with degree ticks + numbers
+  const r1 = R * 2.35;
+  ox.strokeStyle = cy(.55 * flick); ox.lineWidth = 1;
+  ox.beginPath(); ox.arc(c, c, r1, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * B); ox.stroke();
+  for (let i = 0; i < 120 * B; i++) { const a = i / 120 * Math.PI * 2 - t * .05, long = i % 10 === 0;
+    ox.strokeStyle = cy(long ? .8 : .35); ox.lineWidth = long ? 1.6 : 1;
+    ox.beginPath(); ox.moveTo(c + Math.cos(a) * r1, c + Math.sin(a) * r1); ox.lineTo(c + Math.cos(a) * (r1 + (long ? 9 : 4)), c + Math.sin(a) * (r1 + (long ? 9 : 4))); ox.stroke(); }
+  ox.shadowBlur = 0; ox.fillStyle = cy(.6); ox.font = `${Math.max(8, w * .016)}px Orbitron, sans-serif`; ox.textAlign = "center"; ox.textBaseline = "middle";
+  for (let i = 0; i < 12 * B; i++) { const a = i / 12 * Math.PI * 2 - t * .05; ox.fillText(String(i * 30).padStart(3, "0"), c + Math.cos(a) * (r1 + 20), c + Math.sin(a) * (r1 + 20)); }
+  ox.shadowBlur = 8;
+
+  // 2. thick segmented ring, counter-rotating
+  const r2 = R * 2.1, segs = 24;
+  ox.lineWidth = Math.max(3, w * .011);
+  for (let i = 0; i < segs; i++) { if (i / segs > B) break; const a0 = i / segs * Math.PI * 2 - t * .25 * sp;
+    const on = (i % 6 !== 0) && ((i * 7 + Math.floor(t * 1.5)) % 11 !== 0);
+    ox.strokeStyle = cy(on ? .5 * flick : .12); ox.beginPath(); ox.arc(c, c, r2, a0, a0 + Math.PI * 2 / segs * .78); ox.stroke(); }
+
+  // 3. dashed ring
+  const r3 = R * 2.65;
+  ox.setLineDash([2, 7]); ox.lineWidth = 1.5; ox.strokeStyle = cy(.45);
+  ox.beginPath(); ox.arc(c, c, r3, t * .12, t * .12 + Math.PI * 2 * B); ox.stroke(); ox.setLineDash([]);
+
+  // 4. outer bracket arcs
+  const r4 = R * 2.95; ox.lineWidth = 2.5;
+  for (let q = 0; q < 4; q++) { const a = q * Math.PI / 2 + Math.PI / 4 - t * .08 * sp;
+    ox.strokeStyle = cy(.7 * flick); ox.beginPath(); ox.arc(c, c, r4, a - .32 * B, a + .32 * B); ox.stroke();
+    ox.fillStyle = cy(.9); ox.beginPath(); ox.arc(c + Math.cos(a + .32 * B) * r4, c + Math.sin(a + .32 * B) * r4, 2.5, 0, 7); ox.fill(); }
+
+  // 5. gyroscope ellipses (3D tilt)
+  [[0, 1], [Math.PI / 3, -1.3], [-Math.PI / 3, .8]].forEach(([rot, dir], j) => {
+    const squash = Math.abs(Math.cos(t * .4 * dir * sp + j)) * .85 + .1;
+    ox.save(); ox.translate(c, c); ox.rotate(rot + t * .05 * dir); ox.scale(1, squash);
+    ox.strokeStyle = cy((.22 + energy * .25) * flick); ox.lineWidth = 1.2 / Math.max(squash, .3);
+    ox.beginPath(); ox.arc(0, 0, R * 1.75 * B, 0, Math.PI * 2); ox.stroke();
+    ox.restore(); });
+
+  // 6. radar sweep
+  const sa = t * (0.8 + energy * 2);
+  const sg = ox.createConicGradient ? ox.createConicGradient(sa - .9, c, c) : null;
+  if (sg) { sg.addColorStop(0, "rgba(79,216,255,0)"); sg.addColorStop(.14, `rgba(79,216,255,${.12 + energy * .1})`); sg.addColorStop(.143, "rgba(79,216,255,0)");
+    ox.shadowBlur = 0; ox.fillStyle = sg; ox.beginPath(); ox.arc(c, c, r2 - 4, 0, 7); ox.arc(c, c, R * 1.25, 0, 7, true); ox.fill(); ox.shadowBlur = 8; }
+
+  // 7. voice waveform ring while listening/speaking
+  if (S.status === "listening" || S.status === "speaking") {
+    const rw = R * 2.45; ox.strokeStyle = cy(.75); ox.lineWidth = 1.5; ox.beginPath();
+    for (let i = 0; i <= 180; i++) { const a = i / 180 * Math.PI * 2;
+      const amp = energy * R * .18 * (Math.sin(a * 9 + t * 7) * .5 + Math.sin(a * 17 - t * 11) * .3 + Math.sin(a * 4 + t * 3) * .2);
+      const x = c + Math.cos(a) * (rw + amp), y = c + Math.sin(a) * (rw + amp); i ? ox.lineTo(x, y) : ox.moveTo(x, y); }
+    ox.stroke(); }
+
+  // boot shockwave
+  if (pulse > 0) { ox.strokeStyle = cy(pulse * .9); ox.lineWidth = 3 * pulse + .5;
+    ox.beginPath(); ox.arc(c, c, R * (1 + (1 - pulse) * 2.4), 0, 7); ox.stroke(); }
+  ox.shadowBlur = 0;
+
+  drawSky();
+  requestAnimationFrame(drawOrb);
+}
+drawOrb();
+</script>
+</body>
+</html>

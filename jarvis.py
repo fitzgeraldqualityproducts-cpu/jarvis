@@ -1,0 +1,691 @@
+"""Jarvis: say "Hey Jarvis" or clap twice to wake him, then talk.
+
+  python3 jarvis.py               start Jarvis (menu bar icon + display)
+  python3 jarvis.py --no-display  don't open the browser display on start
+  python3 jarvis.py --text        type instead of speaking (for testing)
+  python3 settings.py             choose which apps Jarvis may open
+"""
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+
+class _Tee:
+    """Mirror everything printed into jarvis.log so problems can be diagnosed."""
+    def __init__(self, stream, path):
+        self.stream, self.file = stream, open(path, "a", buffering=1, encoding="utf-8", errors="replace")
+    def write(self, text):
+        self.stream.write(text)
+        if text.strip():
+            stamp = datetime.datetime.now().strftime("%H:%M:%S")
+            self.file.write("".join(f"[{stamp}] {line}\n" for line in text.splitlines() if line.strip()))
+    def flush(self):
+        self.stream.flush()
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
+_LOG = Path(__file__).with_name("jarvis.log")
+if __name__ == "__main__" and not os.environ.get("JARVIS_CHILD") and not os.environ.get("JARVIS_CHECK") \
+        and "--text" not in sys.argv:
+    # Start the watchdog: it runs Jarvis, restarts him if he crashes and stops a second copy.
+    import keeper
+    sys.exit(keeper.supervise(Path(__file__).resolve()))
+if not os.environ.get("JARVIS_CHECK"):          # set when selfedit just checks the code imports
+    sys.stdout = _Tee(sys.stdout, _LOG)
+    sys.stderr = _Tee(sys.stderr, _LOG)
+    print("---- Jarvis starting ----")
+
+import brain  # noqa: E402
+import briefing  # noqa: E402
+import display  # noqa: E402
+import hands  # noqa: E402
+import inbox  # noqa: E402
+import keeper  # noqa: E402
+import mac  # noqa: E402
+import obsidian  # noqa: E402
+import personality  # noqa: E402
+import memory  # noqa: E402
+import organizer  # noqa: E402
+import selfedit  # noqa: E402
+import spotify_control as spotify  # noqa: E402
+import timeparse  # noqa: E402
+import twitch  # noqa: E402
+import updater  # noqa: E402
+import voice  # noqa: E402
+import weather  # noqa: E402
+
+CONFIG = json.loads(Path(__file__).with_name("config.json").read_text())
+SLEEP_RE = re.compile(r"(ok |okay |thanks |thank you )?(goodbye|bye|go to sleep|sleep|that's all|thats all|that is all|"
+                      r"dismissed|nothing|never mind|nevermind|no thanks|no thank you|that's it|thats it)( for now)?( jarvis)?")
+PAUSED = threading.Event()
+TALKING = threading.Event()     # set while he's in a conversation (updates wait for this to clear)
+TYPING = threading.Event()      # set while he's answering something typed into the display
+HANDLE_LOCK = threading.RLock()  # one command at a time, whether spoken or typed
+PENDING = {}          # a question Jarvis asked and is waiting on, e.g. {"kind": "event"}
+TIME_WORDS = re.compile(r"\d|noon|midnight|morning|afternoon|evening|tonight|night")
+EVENT_FILLER = re.compile(
+    r"\b(add|put|schedule|create|make|book|set up|can you|could you|please|i need|i want|"
+    r"a new|new|an event|a calendar event|event|a meeting(?! with)|an appointment(?! with)|meeting(?! with)|appointment(?! with)|"
+    r"to my calendar|on my calendar|in my calendar|to the calendar|on the calendar|in the calendar|"
+    r"to calendar|my calendar|calendar|called|named|titled|something|make it|call it|it's|it is|it)\b")
+
+CAPABILITIES = (
+    "I can tell you the weather, your calendar and reminders, and give you a morning briefing. "
+    "I can set reminders, timers and alarms, take notes (in Obsidian if you use it), answer questions about your notes, and remember things about you. "
+    "I can open apps and websites, search Google or YouTube, close or switch apps, run your Shortcuts, "
+    "and control Spotify. Say stream mode when you go live and I'll read your Twitch chat out loud. And you can ask me anything else."
+)
+
+
+def greeting():
+    p = briefing.part_of_day()
+    return f"{personality.line('greet_open', part=p)} {weather.report()} {personality.line('greet_close')}"
+
+
+def music(t):
+    """Spotify commands. Returns what to say, or None if it isn't a music command."""
+    if re.fullmatch(r"(pause|stop)( the)?( music| song| spotify)?|pause it|stop playing", t):
+        return spotify.pause()
+    if re.fullmatch(r"(resume|unpause|play)( the)?( music| song| spotify)?|keep playing|continue( playing)?", t):
+        return spotify.play()
+    if re.fullmatch(r"(next|skip)( the)?( song| track| one)?|skip (this|it)( song| track)?|next", t):
+        return spotify.next_track()
+    if re.fullmatch(r"(previous|last|go back( a| one)?)( the)?( song| track| one)?|play the (previous|last) (song|track)", t):
+        return spotify.previous_track()
+    if re.search(r"what('s| is) (this song|playing|the song)|what song is (this|playing)|who (sings|is singing) this", t):
+        return spotify.now_playing()
+    m = re.search(r"(?:set )?(?:the )?volume (?:to )?(\d+)", t)
+    if m:
+        return spotify.set_volume(m.group(1))
+    if re.fullmatch(r"(turn (it|the music|the volume) up|volume up|louder)", t):
+        return spotify.change_volume(+15)
+    if re.fullmatch(r"(turn (it|the music|the volume) down|volume down|quieter|softer)", t):
+        return spotify.change_volume(-15)
+    m = re.fullmatch(r"(?:add|queue( up)?|put)\s+(.+?)(?:\s+(?:to|in|on|next in) (?:the |my )?queue)?(?: next)?", t)
+    if m and ("queue" in t or t.startswith("queue")):
+        return spotify.queue_query(m.group(2))
+    m = re.fullmatch(r"play (?:me )?(?:some )?(?:the )?(playlist|album|artist)\s+(.+)", t) \
+        or re.fullmatch(r"play (?:me )?(?:some )?(?:the )?(.+?)\s+(playlist|album)", t)
+    if m:
+        a, b = m.groups()
+        kind, query = (a, b) if a in ("playlist", "album", "artist") else (b, a)
+        return spotify.play_query(query.removesuffix(" on spotify"), kind)
+    m = re.fullmatch(r"play (?:me )?(?:some )?(.+?)(?: on spotify)?", t)
+    if m:
+        query = m.group(1)
+        if query.startswith("music by ") or query.startswith("songs by "):
+            return spotify.play_query(query.split(" by ", 1)[1], "artist")
+        return spotify.play_query(query, "track")
+    return None
+
+
+LAST_TEXT = {"text": ""}
+LAST_SELF_EDIT = {}   # the last change asked for, so "go ahead" still works if a confirmation got lost
+
+
+def original_case(phrase):
+    """Give back the phrase with the capitals the speech recogniser heard (names etc.)."""
+    if not phrase:
+        return phrase
+    m = re.search(re.escape(phrase).replace("\\ ", r"\s+"), LAST_TEXT["text"], re.IGNORECASE)
+    return m.group(0) if m else phrase
+
+
+def add_event_from(text):
+    """Pull a title and time out of what was said and add it to the calendar."""
+    when, rest = timeparse.parse_when(text)
+    title = EVENT_FILLER.sub(" ", rest)
+    title = re.sub(r"^(for|about|on|at|to)\s+|\s+(for|on|at|to)$", "", re.sub(r"\s+", " ", title).strip(" ,.")).strip()
+    title = re.sub(r"^(a|an|the)\s+", "", title)
+    title = original_case(title)
+    if not title and not when:
+        PENDING["kind"] = "event"
+        return "Of course. What's the event, and when is it?"
+    if not when:
+        PENDING.update(kind="event", title=title)
+        return f"When is {title}?"
+    if not title:
+        PENDING.update(kind="event", when=when, timed=bool(TIME_WORDS.search(text)))
+        return "And what should I call it?"
+    all_day = not TIME_WORDS.search(text)
+    reply = organizer.add_event(title, when, all_day=all_day)
+    briefing.refresh_display()
+    return reply
+
+
+SELF_EDIT = [
+    re.compile(r"(?:upgrade|update|edit|modify|improve|change|reprogram|rewrite|tweak|fix) "
+               r"(?:yourself|your (?:own )?code|your settings|your programming|your behaviou?r)"
+               r"(?:,| to| so that| so| and| by)?\s*(.+)"),
+    re.compile(r"(?:teach yourself|learn) (?:how )?to (.+)"),
+    re.compile(r"(?:add|create|build|make|give yourself) (?:a |an )?(?:new )?(?:feature|command|ability|skill|voice command)\s*"
+               r"(?:that|to|which|so|where|for|called)?\s*(.+)"),
+    re.compile(r"(?:from now on|in future|in the future),? (.+)"),
+    re.compile(r"(?:change|switch|set) your (voice .+|wake word .+|clap .+|name .+|personality .+|accent .+)"),
+]
+
+
+SELF_TARGET = re.compile(
+    r"\b(?:your|ur) (?:own )?(?:code|layout|display|look|looks|appearance|interface|design|ui|screen|hud|"
+    r"theme|colou?rs?|orb|voice|accent|personality|settings|programming|behaviou?r|skills?|features?|commands?|"
+    r"wake word|greeting|responses?|answers?)\b|\byourself\b")
+SELF_VERB = re.compile(r"\b(?:update|change|make|redesign|redo|edit|improve|modify|upgrade|tweak|give|add|"
+                       r"rewrite|restyle|customi[sz]e|reprogram|fix|teach|turn)\b")
+
+
+def self_edit_request(t):
+    # e.g. "now that you can update your own code, update your layout so you look more high-tech"
+    if SELF_TARGET.search(t) and SELF_VERB.search(t) and len(t.split()) >= 4 and \
+            not re.search(r"\b(remind|calendar|reminder|timer|alarm|note|spotify|play)\b", t):
+        return original_case(t)
+    for pattern in SELF_EDIT:
+        m = pattern.fullmatch(t)
+        if m and len(m.group(1).split()) >= 2:
+            return original_case(t)
+    return None
+
+
+def do_self_edit(request):
+    voice.say(personality.line("working"), interruptible=False)
+    display.update(status="thinking")
+    reply, restart = selfedit.apply(request)
+    if restart:
+        voice.say(reply + " Restarting now to load it.", interruptible=False)
+        selfedit.restart()
+    return reply
+
+
+def continue_pending(t):
+    """Handle the answer to a question Jarvis just asked."""
+    kind = PENDING.pop("kind", None)
+    if kind == "selfedit":
+        request = PENDING.pop("request")
+        asks = PENDING.pop("asks", 0)
+        LAST_SELF_EDIT.update(request=request, t=time.time())
+        yes = re.search(r"\b(yes|yeah|yep|yup|sure|go ahead|do it|go for it|go through|proceed|ok|okay|"
+                        r"please do|absolutely|correct|that's right|make it so|let's do it|send it)\b", t)
+        no = re.fullmatch(r"(no|nope|nah|cancel|don't|do not|stop|never mind|forget it|leave it)( (thanks|thank you|it|that))?", t)
+        if yes:
+            return do_self_edit(request)
+        if no:
+            return "Alright, I'll leave myself as I am."
+        if asks >= 2:
+            return "I'll hold off for now. Say go ahead if you want me to make that change."
+        if len(t.split()) < 3:
+            PENDING.update(kind="selfedit", request=request, asks=asks + 1)
+            return "Sorry, shall I go ahead with that change? Yes or no."
+        # Anything longer is probably an extra detail for the change.
+        PENDING.update(kind="selfedit", request=f"{request}. Also: {original_case(t)}", asks=asks + 1)
+        return "Got it, I'll include that. Shall I go ahead?"
+    if kind != "event":
+        return None
+    title, when = PENDING.pop("title", None), PENDING.pop("when", None)
+    timed = PENDING.pop("timed", False)
+    if title and not when:
+        return add_event_from(f"{title} {t}")
+    if when and not title:
+        title = EVENT_FILLER.sub(" ", t).strip(" ,.")
+        reply = organizer.add_event(title, when, all_day=not timed)
+        briefing.refresh_display()
+        return reply
+    return add_event_from(t)
+
+
+def organize(t):
+    """Memory, timers, alarms, reminders, calendar, notes, briefing."""
+    # memory
+    if re.search(r"what do you (know|remember)( about me)?|what have i (told|asked) you to remember", t):
+        return memory.recall_summary()
+    m = re.fullmatch(r"(?:please )?remember (?:that )?(.+)", t)
+    if m and not t.startswith("remember when"):
+        return memory.remember(original_case(m.group(1)))
+    m = re.fullmatch(r"forget (?:that |about )?(.+)", t)
+    if m:
+        return memory.forget(m.group(1))
+
+    # email (Mac Mail app)
+    if sys.platform != "win32" and \
+            re.search(r"\b(read|summari[sz]e|check|go through|any|new|what)\b.*\be-?mails?\b|\bmy (e-?mails?|inbox)\b", t):
+        voice.say("One moment, reading your email.")
+        return inbox.summary()
+
+    # timers and alarms
+    if re.search(r"(how (much time|long)( is)? left|time left|how's my timer|check (the|my) timer)", t):
+        return organizer.timers_status()
+    if re.search(r"(cancel|stop|delete|clear) (the |my |all )?(timers?|alarms?)", t):
+        return organizer.cancel_timers()
+    if re.search(r"\btimer\b", t):
+        secs = timeparse.parse_duration(t)
+        if not secs:
+            return "How long should the timer be?"
+        label = None
+        m = re.search(r"\bfor (?:the |my )?([a-z ]+?)$", t)
+        if m and not timeparse.parse_duration(m.group(1)):
+            label = f"{m.group(1)} timer"
+        return organizer.set_timer(secs, label)
+    m = re.search(r"(?:set (?:an |a |my )?alarm|wake me(?: up)?)(?: for| at)?\s*(.+)", t)
+    if m:
+        when, _ = timeparse.parse_when(m.group(1) if re.search(r"\d|noon|midnight|in ", m.group(1)) else "at " + m.group(1))
+        if not when:
+            when, _ = timeparse.parse_when("at " + m.group(1))
+        if not when:
+            return "What time should I set the alarm for?"
+        # Alarms without am/pm are usually for the morning.
+        if when.hour >= 12 and not re.search(r"\bp\.?\s?m\b|evening|tonight|afternoon|noon", t):
+            earlier = when - datetime.timedelta(hours=12)
+            if earlier > datetime.datetime.now():
+                when = earlier
+            elif when.hour - 12 < 12:
+                when = earlier + datetime.timedelta(days=1)
+        return organizer.set_alarm(when)
+
+    # reminders
+    # Obsidian: to-dos, notes and questions about notes (when a vault is set up)
+    if obsidian.enabled():
+        m = re.fullmatch(r"add (.+?) to my (?:obsidian )?to ?-?do(?:s| list)?", t) \
+            or re.fullmatch(r"(?:add (?:a )?to ?-?do|new to ?-?do|to ?-?do)[: ]+(.+)", t)
+        if m:
+            return obsidian.add_todo(original_case(m.group(1)))
+        if re.search(r"(read|list|check|what'?s on|what is on|what are) my (obsidian )?to ?-?dos?( list)?|my to ?-?do list|what do i (need|have) to do", t):
+            return obsidian.todos_summary()
+        m = re.fullmatch(r"(?:what did i (?:write|note|say)|what have i (?:written|noted)|what do my notes say|"
+                         r"search my (?:obsidian |notes? )*(?:for)?|check my notes (?:for|about)|"
+                         r"look (?:in|through) my notes (?:for|about)|in my notes,?)\s*(?:about|on|for|regarding)?\s*(.+)", t)
+        if m or re.search(r"\b(my|in) (obsidian|notes|vault)\b.*\?|^according to my notes", t):
+            return obsidian.ask(original_case(t))
+    if re.search(r"what are my reminders|(read|list|check) my reminders|what do i (need|have) to do|my to ?do list|any reminders", t):
+        return organizer.reminders_summary(1 if "tomorrow" in t else 0)
+    m = re.fullmatch(r"(?:please )?(?:remind me|set a reminder|add a reminder|make a reminder|create a reminder)\s*(?:to |about |that |for )?(.+)", t) \
+        or re.fullmatch(r"add (.+?) to my (?:reminders|to ?do list)", t)
+    if m:
+        when, task = timeparse.parse_when(m.group(1))
+        task = re.sub(r"^(to|about|that|i need to|i have to)\s+", "", task)
+        if not task:
+            return "What should I remind you about?"
+        reply = organizer.add_reminder(original_case(task), when)
+        briefing.refresh_display()
+        return reply
+
+    # calendar: adding events
+    if re.search(r"\b(add|put|schedule|create|make|book)\b.*\b(calendar|event|meeting|appointment)\b", t) or \
+            re.match(r"schedule\b", t):
+        return add_event_from(t)
+
+    # calendar: reading
+    if re.search(r"what('s| is)( on)? (my |the )?(calendar|schedule|agenda)|what do i have (on |going on )?(today|tomorrow)|"
+                 r"what('s| is) on (today|tomorrow)|(any|do i have any) (meetings|events|appointments)|my (calendar|schedule)", t):
+        offset = 1 if "tomorrow" in t else 0
+        reply = organizer.calendar_summary(offset)
+        rems = organizer.reminders_summary(offset)
+        if not rems.startswith("No reminders") and not rems.startswith("I don't"):
+            reply += " " + rems
+        return reply
+
+    # notes
+    m = re.fullmatch(r"(?:take|make|add|write|create) (?:a |me a )?note(?: that| saying| to say)?:?\s*(.+)", t) \
+        or re.fullmatch(r"(?:note (?:that|down)|write down|jot down)\s+(.+)", t)
+    if m:
+        text = original_case(m.group(1))
+        return (obsidian.add_note(text) if obsidian.enabled() else None) or organizer.add_note(text)
+    if re.fullmatch(r"(take|make) a note", t):
+        return "What should the note say? Start with 'take a note', then say it."
+
+    # briefing
+    if re.search(r"brief me|briefing|what does my day look like|what's my day look like|how does my day look|catch me up", t):
+        return briefing.full()
+    return None
+
+
+BROWSER_RE = r"(chrome|google chrome|safari|firefox|brave|arc|edge|opera)"
+
+
+def computer(t):
+    """Websites, search, apps, Shortcuts."""
+    m = re.fullmatch(r"(?:open )?(?:a )?new tab in " + BROWSER_RE + r"(?:,? and)? (?:go to|open|load|pull up) (.+)", t)
+    if m:
+        return mac.open_in_browser(m.group(2), m.group(1))
+    m = re.fullmatch(r"(?:open|go to|load|pull up|bring up) (.+?) (?:in|on|using|with) " + BROWSER_RE, t)
+    if m:
+        return mac.open_in_browser(m.group(1), m.group(2))
+    m = re.fullmatch(r"(?:open )?(?:a )?new tab(?: in " + BROWSER_RE + r")?", t)
+    if m:
+        return mac.new_tab(m.group(1) or "safari")
+    m = re.fullmatch(r"(?:play|search for|find|show me) (.+?) on youtube", t) or \
+        re.fullmatch(r"(?:search )?youtube (?:for )?(.+)", t)
+    if m:
+        return mac.youtube(m.group(1))
+    m = re.fullmatch(r"(?:google|search google for|open google (?:for|and search(?: for)?))\s+(.+)", t)
+    if m:
+        return mac.google(m.group(1))
+    m = re.fullmatch(r"(?:search (?:the web |the internet |online )?(?:for )?|look up|look online (?:for )?|"
+                     r"find out|check online (?:for )?)\s*(.+)", t)
+    if m:
+        return brain.think(f"Search the web and tell me: {original_case(m.group(1))}")
+    if re.search(r"(what|which) shortcuts|list (my )?shortcuts", t):
+        return mac.list_shortcuts()
+    m = re.fullmatch(r"run (?:the |my )?shortcut (.+)", t) or re.fullmatch(r"run (?:the |my )?(.+?)(?: shortcut)?", t)
+    if m:
+        return mac.run_shortcut(m.group(1))
+    m = re.fullmatch(r"(?:close|closed|quit|exit|shut down|kill)\s+(?:the )?(.+?)(?: app)?", t)
+    if m:
+        return mac.quit_app(m.group(1))
+    m = re.fullmatch(r"(?:switch to|go to|bring up|take me to)\s+(.+)", t)
+    if m:
+        return mac.switch_to(m.group(1))
+    return None
+
+
+COMMAND_START = (r"(?:open|close|quit|play|pause|go to|search|google|look up|set|remind|add|turn|switch|run|take|"
+                 r"start|launch|text|what|tell|skip|next|cancel|put|schedule|make)\b")
+
+
+def handle(text, _part=False):
+    """Returns False when Jarvis should go back to sleep."""
+    if not _part:
+        LAST_TEXT["text"] = text
+    t = text.lower().strip()
+    t = re.sub(r"\b(?:hey |ok |okay )?jarvis\b[,.]?", " ", t)
+    t = re.sub(r"^\s*(?:please\s+|can you\s+|could you\s+|would you\s+)*", "", t)
+    t = re.sub(r"\b(play|open|add|remind me)\s+(?:\1\s+)+", r"\1 ", re.sub(r"\s+", " ", t)).strip(" .?!,")
+    # "open Safari and open YouTube" -> two commands, done in order
+    if not _part and not PENDING and not re.search(r"new tab in", t):
+        parts = re.split(r",?\s+(?:and then|and|then)\s+(?=" + COMMAND_START + ")", t)
+        if len(parts) > 1 and all(re.match(COMMAND_START, p) for p in parts):
+            awake = True
+            for p in parts:
+                awake = handle(p, _part=True) and awake
+            return awake
+    if re.fullmatch(r"(stop talking|shut up|be quiet|quiet|hush|enough|that's enough|ok stop|okay stop|stop stop)", t):
+        return True                     # he's already stopped: just listen for what's next
+    if not t or SLEEP_RE.fullmatch(t):
+        PENDING.clear()
+        voice.say(personality.line("sleep"))
+        return False
+    try:
+        import discord_bot
+        said = discord_bot.voice_command(t)
+    except Exception as e:
+        print(f"(Discord command failed: {e})")
+        said = None
+    if said:
+        voice.say(said)
+        return True
+    if re.search(r"\b((?:stop|end|exit|leave|turn off|quit|kill)(?: the| my)? stream(?: mode)?|stream mode off|"
+                 r"(?:i'?m |i am )?done streaming|(?:i'?m |i am )?(?:ending|off) (?:the |my )?stream|stop reading (?:the )?chat)\b", t):
+        voice.say("Stream mode off. Good stream!" if twitch.stop() else "Stream mode wasn't on.")
+        return True
+    if re.search(r"\b(stream mode|(?:i'?m |i am |we'?re |going )live|start(?:ing)? (?:the |my )?stream|read (?:my |the )?(?:twitch )?chat)\b", t):
+        reply = twitch.start()
+        voice.say(reply or "I don't know your Twitch channel yet. Double-click Connect Twitch in my folder "
+                           "and type your channel name, then say stream mode again.")
+        return True
+    if re.search(r"\b(be (?:the|my|a) hype ?man|hype (?:man )?mode)\b", t):
+        personality.set_personality("hype")
+        voice.say("Ayy, hype mode activated! Let's gooo!")
+        return True
+    if re.search(r"\b(butler mode|be (?:a |the )?butler|calm down|be (?:more )?(?:calm|normal|proper))\b", t):
+        personality.set_personality("butler")
+        voice.say("Very well. Back to my usual self.")
+        return True
+    m = re.search(r"\b(?:different|new|another|next|change (?:the|your)?)\s*(blinker|cough|breath|inhale)\b", t)
+    if m:
+        import sfx
+        part = {"blinker": "both", "inhale": "breath"}.get(m.group(1), m.group(1))
+        b, c = sfx.change(part)
+        voice.say(f"Trying breath {b} of {len(sfx.BREATHS)} and cough {c} of {len(sfx.COUGHS)}.")
+        sfx.blinker()
+        voice.say("Say different cough or different breath to keep changing, or keep this one.")
+        return True
+    if re.search(r"\b(vitals?|oura|readiness|hrv|heart rate variability|(?:resting )?heart rate|sleep score|"
+                 r"how did i sleep|how('?d| did| was) my sleep|how recovered|recovery score|body battery)\b", t):
+        import oura
+        display.update(status="thinking")
+        voice.say(oura.analysis(original_case(text)))
+        return True
+    if re.search(r"\b(take|hit|rip) (a|the) blinker\b", t):
+        import sfx
+        voice.say(personality.line("blinker_start"))
+        sfx.blinker()
+        voice.say(personality.line("blinker_end"))
+        return True
+    if PENDING:
+        if re.fullmatch(r"(no|cancel|forget it|never mind)", t) and PENDING.get("kind") != "selfedit":
+            PENDING.clear()
+            voice.say(personality.line("no_problem"))
+            return True
+        reply = continue_pending(t)
+        if reply:
+            voice.say(reply)
+            return True
+    if re.fullmatch(r"undo (?:that|it|the|your|my)?\s*(?:last )?(?:change|edit|update|upgrade)?|"
+                    r"(?:undo|revert|roll back|reverse) (?:that|your last (?:change|edit|update)|the last (?:change|edit|update))", t):
+        reply, restart = selfedit.undo()
+        voice.say(reply + (" Restarting now." if restart else ""), interruptible=False)
+        if restart:
+            selfedit.restart()
+        return True
+    if re.search(r"what (did|have) you (just )?change|what was your last (change|update|edit)", t):
+        voice.say(selfedit.last_change())
+        return True
+    if LAST_SELF_EDIT and time.time() - LAST_SELF_EDIT.get("t", 0) < 300 and \
+            re.search(r"\b(go ahead|do it|go through with it|go for it|apply it|make the change|proceed)\b", t):
+        request = LAST_SELF_EDIT.pop("request")
+        LAST_SELF_EDIT.clear()
+        voice.say(do_self_edit(request))
+        return True
+    request = self_edit_request(t)
+    if request:
+        PENDING.update(kind="selfedit", request=request)
+        voice.say(f"Just to check, you'd like me to change my own code: {request}. Shall I go ahead?")
+        return True
+    if re.fullmatch(r"(?:check|look) for (?:any )?(?:new )?updates|(?:are there |is there |do you have )?any (?:new )?updates|"
+                    r"(?:install|get) (?:the |any )?(?:new )?updates?|update yourself( now)?|update", t):
+        display.update(status="thinking")
+        voice.say("Checking for updates.", interruptible=False)
+        reply, restart = updater.check(manual=True)
+        if restart:
+            voice.say(reply + " Restarting now to load it.", interruptible=False)
+            updater.pop_note()
+            restart_jarvis()
+        voice.say(reply)
+        return True
+    if re.search(r"what('s| is| did you get) new|what (did|have) you (just )?update|what was (in )?(the|your) (last )?update", t):
+        voice.say(updater.last_note())
+        return True
+    if re.search(r"what can you do|what are you able to do|help me out here|list your (skills|abilities)", t):
+        voice.say(CAPABILITIES)
+        return True
+    if "what can you open" in t or "which apps" in t:
+        apps = hands.allowed_apps()
+        voice.say("I can open " + (", ".join(apps) if apps else "nothing at the moment") + ", and most websites.")
+        return True
+    for skill in (organize, computer, music):
+        try:
+            reply = skill(t)
+        except Exception as e:
+            print(f"(skill error in {skill.__name__}: {e})")
+            reply = personality.line("error")
+        if reply:
+            voice.say(personality.flair(reply))
+            # Once music is playing, step back so it doesn't drown out the next command.
+            if skill is music and reply.startswith(("Playing", "Resuming")):
+                return False
+            return True
+    m = re.fullmatch(r"(?:open|launch|start|start up|pull up|turn on|fire up|bring up)\s+(?:up\s+)?(.+)", t)
+    if m:
+        voice.say(mac.open_thing(m.group(1)))
+        return True
+    if "weather" in t and len(t) < 40 and not re.search(r"\b(in|at|for) (?!here\b|today\b|tomorrow\b)[a-z]", t):
+        voice.say(weather.report())
+        return True
+    display.update(status="thinking")
+    voice.say(brain.think(text))
+    return True
+
+
+def conversation(get_input, how="clap"):
+    twitch.set_talking(True)
+    TALKING.set()
+    try:
+        _conversation(get_input, how)
+    finally:
+        TALKING.clear()
+        twitch.set_talking(False)
+
+
+def restart_jarvis():
+    """Start a fresh copy of Jarvis (to load new code)."""
+    selfedit.restart()
+
+
+def is_busy():
+    return TALKING.is_set() or TYPING.is_set() or twitch.busy() or voice.speaking()
+
+
+def typed_loop():
+    """Answers what's typed into the display's "Type to Jarvis" box, just like speech."""
+    while True:
+        text = display.TYPED.get()
+        TYPING.set()
+        try:
+            print(f"You (typed): {text}")
+            display.log("you", text)
+            with HANDLE_LOCK:
+                handle(text)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        finally:
+            TYPING.clear()
+            if not TALKING.is_set():
+                display.update(status="sleeping")
+
+
+def _conversation(get_input, how="clap"):
+    if how == "wake":
+        if sys.platform == "win32":
+            import win
+            win.system_sound("chime")
+        else:
+            subprocess.Popen(["afplay", "/System/Library/Sounds/Tink.aiff"])
+        display.update(status="listening")
+    elif memory.first_wake_today() and datetime.datetime.now().hour < 14:
+        voice.say(briefing.full())
+    else:
+        voice.say(greeting())
+    note = updater.pop_note()
+    if note:
+        voice.say(note)
+    misses = 0
+    while misses < 2:
+        print("(listening for a command)")
+        text = get_input()
+        if not text:
+            print("(heard nothing I understood)")
+            misses += 1
+            continue
+        misses = 0
+        print(f"You: {text}")
+        display.log("you", text)
+        with HANDLE_LOCK:
+            awake = handle(text)
+        if not awake:
+            display.update(status="sleeping")
+            return
+    if how != "wake":
+        voice.say(personality.line("idle_sleep"), interruptible=False)
+    display.update(status="sleeping")
+
+
+def run_loop():
+    import ears
+    ears.preload()
+    has_wake = ears.wake_model() is not None
+    print("Jarvis is listening. " + ("Say \"Hey Jarvis\" or clap twice." if has_wake else "Clap twice to wake him."))
+    while True:
+        if PAUSED.is_set():
+            display.update(status="paused")
+            time.sleep(0.5)
+            continue
+        if TYPING.is_set():             # answering something typed: wait until he's done
+            time.sleep(0.2)
+            continue
+        display.update(status="sleeping")
+        print("(waiting to be woken)")
+        if twitch.busy() or TYPING.is_set():   # reading chat or a typed reply: don't let his own voice wake him
+            time.sleep(0.2)
+            continue
+        how = ears.wait_for_wake(CONFIG.get("clap_threshold", 0.35),
+                                 paused=lambda: PAUSED.is_set() or twitch.busy() or TYPING.is_set())
+        if not how:
+            continue
+        print(f"(awake: {how})")
+        spotify.duck()
+        display.update(apps=hands.allowed_apps(), status="listening")
+        try:
+            conversation(lambda: ears.listen(CONFIG.get("listen_seconds", 8)), how)
+        finally:
+            spotify.unduck()
+
+
+def main():
+    if "--text" not in sys.argv:
+        keeper.claim_jarvis_lock()      # stops here if another Jarvis is already running
+    display.start(open_browser="--no-display" not in sys.argv)
+    display.update(apps=hands.allowed_apps(), status="sleeping")
+    briefing.keep_display_fresh()
+    try:
+        import discord_bot
+        discord_bot.start()
+    except Exception as e:
+        print(f"(Discord didn't start: {e})")
+    voice.preload()
+    if sys.platform == "win32":
+        organizer.start_reminder_watch()
+    if "--text" not in sys.argv:
+        updater.start(is_busy, restart_jarvis)
+        threading.Thread(target=typed_loop, daemon=True, name="typed").start()
+    if "--text" in sys.argv:
+        def typed():
+            try:
+                return input("You: ").strip()
+            except EOFError:
+                return "goodbye"
+        conversation(typed, "wake")
+        return
+    try:
+        if sys.platform == "win32":
+            import menubar_win as menubar      # icon in the Windows taskbar tray
+        else:
+            import menubar
+        threading.Thread(target=_guarded_loop, daemon=True).start()
+        menubar.run(PAUSED)          # blocks; owns the main thread for the menu bar icon
+    except ImportError:
+        run_loop()
+
+
+def _guarded_loop():
+    try:
+        run_loop()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        os._exit(1)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nGoodbye.")
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        raise

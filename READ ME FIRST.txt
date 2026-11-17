@@ -1,0 +1,14 @@
+JARVIS FOR WINDOWS - READ ME FIRST
+
+1. Make sure you have unzipped this folder (right-click the zip > Extract All).
+2. Double-click "Install Jarvis".
+   - If a blue "Windows protected your PC" box appears, click "More info", then "Run anyway".
+   - If Windows asks "Do you want to allow this app to make changes?", click Yes (that's Git installing).
+3. Leave the black window open. It takes 10 to 20 minutes and asks a few questions:
+   - Claude Code opens once so you can log in with your Claude account. Type /exit when you see the typing box.
+   - Press Enter to skip the ElevenLabs question unless you have a key.
+   - Say something when it checks your microphone.
+   - Answer y or n to "start Jarvis when you sign in".
+4. When it says "All done", double-click "Jarvis" on your Desktop and say "Hey Jarvis".
+
+Something went wrong? Take a photo of the window and send it to Claude in the jarvis chat.
