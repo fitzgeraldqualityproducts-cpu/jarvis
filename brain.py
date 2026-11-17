@@ -121,6 +121,49 @@ def run_claude(cmd, timeout, cwd=None):
                           stdin=subprocess.DEVNULL)
 
 
+_guest_chat = []        # what friends said this session (never saved, never mixed with Connor's memory)
+
+
+def guest_think(question, name=None, owner="Connor"):
+    """Answer a friend in the room (group chat mode): no memory, notes, calendar or files."""
+    claude = find_claude()
+    if not claude:
+        return "My brain's offline right now, sorry."
+    import datetime
+    import tempfile
+    import time
+    who = name or "a guest"
+    now = datetime.datetime.now().strftime("%A %B %d %Y, %I:%M %p")
+    past = "\n".join(f"{n}: {q}\nJarvis: {a}" for n, q, a in _guest_chat[-6:])
+    prompt = (f"{personality.persona()}\n\nYou are {owner}'s voice assistant, and right now you're talking out loud to "
+              f"{who}, a friend of {owner}'s who is in the room. Be fun and friendly and keep answers short and spoken "
+              f"(no lists, links or markdown). You can chat, joke, and answer general questions, and search the web. "
+              f"This is not {owner}: never share anything private about {owner} (their notes, memories, calendar, "
+              f"reminders, messages, files, accounts or personal details), and don't pretend to know it. If they ask "
+              f"for that or to change your settings or code, say kindly that only {owner} can do that.\n\n"
+              f"Current time: {now}\n\nRecent group chat:\n{past}\n\n{who}: {question}\nJarvis:")
+    tools = ["--disallowedTools", "Read Glob Grep Edit Write NotebookEdit Bash Task"]
+    try:
+        if json.loads(CONFIG.read_text()).get("web_search", True):
+            tools += ["--allowedTools", "WebSearch WebFetch"]
+    except Exception:
+        pass
+    print(f"(thinking for guest {who})")
+    start = time.time()
+    try:
+        with tempfile.TemporaryDirectory() as cwd:          # nothing of Connor's in reach
+            out = run_claude([claude, "-p", prompt] + tools, timeout=120, cwd=cwd)
+        answer = out.stdout.strip() or "Sorry, my brain didn't answer that one."
+    except subprocess.TimeoutExpired:
+        answer = "That one's taking me too long, sorry."
+    except OSError:
+        answer = "My brain won't start right now, sorry."
+    print(f"(guest brain took {time.time() - start:.1f}s)")
+    _guest_chat.append((who, question, answer))
+    del _guest_chat[:-12]
+    return answer
+
+
 def think(question, context=""):
     claude = find_claude()
     if not claude:

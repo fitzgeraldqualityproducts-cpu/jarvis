@@ -124,3 +124,13 @@ words (claps and "Hey Jarvis" still work).
 His display has a **Type to Jarvis** box under the conversation (press / to jump to it). Type
 anything you'd say and he answers as usual. The menu bar / tray icon has **Type to Jarvis…** too.
 Email summaries ("summarise my emails") are Mac-only (they read the Mail app).
+
+## Group chat mode (knows your voice)
+Double-click **Teach Jarvis My Voice** (Mac: .command, PC: .bat) and read the six sentences it shows
+(about two minutes, one time). After that Jarvis checks who's talking, on this computer, with no internet.
+- **You:** everything works as before.
+- **Friends:** music, timers, weather, YouTube and questions work, but your notes, memory, calendar,
+  reminders, emails, files, apps, Discord, stream mode and his settings are for you only.
+- At the end you can add friends by name so he greets them ("who am I?").
+- Say "group chat mode off" or "on" any time. Run the file again to re-teach your voice or remove a friend.
+- Your voiceprint is saved in voiceprints.json, and gets a little better each time he's sure it's you.

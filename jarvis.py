@@ -54,6 +54,7 @@ import personality  # noqa: E402
 import memory  # noqa: E402
 import organizer  # noqa: E402
 import selfedit  # noqa: E402
+import speaker  # noqa: E402
 import spotify_control as spotify  # noqa: E402
 import timeparse  # noqa: E402
 import twitch  # noqa: E402
@@ -386,6 +387,81 @@ COMMAND_START = (r"(?:open|close|quit|play|pause|go to|search|google|look up|set
                  r"start|launch|text|what|tell|skip|next|cancel|put|schedule|make)\b")
 
 
+# ---------- group chat mode: friends in the room are guests ----------
+
+WHO = {"owner": True, "name": None}      # who said the command being handled right now
+PRIVATE = re.compile(
+    r"\b(remember|forget|what do you (know|remember))\b"
+    r"|\b(my|connor'?s|his|her|their|your owner'?s) (calendar|schedule|agenda|appointments?|meetings?|events?|"
+    r"reminders?|to ?-?dos?|notes?|obsidian|vault|journal|day|week|files?|folders?|documents?|desktop|e-?mails?|"
+    r"inbox|messages?|texts?|passwords?|accounts?|settings|memory|vitals|sleep|discord|stream|computer|address|phone)\b"
+    r"|\b(remind me|reminders?|to ?-?do|take a note|make a note|note (that|down)|write down|jot down|brief me|"
+    r"briefing|catch me up|what do i have|what('?s| is) on (today|tomorrow)|add .* to (my |the )?calendar)\b"
+    r"|^(schedule|close|quit|exit|kill|shut down|switch to|open|launch|run|start|delete|send)\b"
+    r"|\b(upgrade|update|edit|modify|reprogram|rewrite|change|fix|tweak|teach|improve) (yourself|your)\b"
+    r"|\b(undo|revert|roll back|from now on|learn (how )?to)\b"
+    r"|\b(discord|stream mode|going live|twitch|hype ?man|hype mode|butler|personality|vitals?|oura|readiness|hrv|"
+    r"how did i sleep|shortcuts?|e-?mails?|inbox|group chat mode|party mode|guest mode|voice ?prints?|check for updates)\b")
+GUEST_OK = re.compile(r"\b(timer|alarm|time left|how long left|weather|youtube|google|blinker|cough|breath)\b")
+
+
+def guest_reply(t, text):
+    """What Jarvis does for a friend. Their music, timers, weather and questions are fine;
+    Connor's notes, memory, calendar, files, apps and settings are not."""
+    owner = speaker.owner_name()
+    name = WHO.get("name")
+    if re.search(r"\bwho (am i|is (this|talking|speaking))\b|do you know (me|who i am)|whose voice", t):
+        return f"You're {name}, right? Good to have you here." if name else \
+            f"I don't know your voice yet. {owner} can teach me it with the Teach Jarvis My Voice file."
+    timerish = GUEST_OK.search(t) and not re.search(r"\b(calendar|reminders?|notes?)\b", t)
+    if PRIVATE.search(t) and not timerish:
+        print(f"(group chat mode: blocked a private request from {name or 'a guest'})")
+        return (f"Sorry{', ' + name if name else ''}, that's {owner}'s private stuff, so only {owner} can ask for it. "
+                f"{owner}, if that was you, say it again a little closer to me.")
+    for skill in (music, organize, computer):
+        if skill is organize and not re.search(r"\b(timer|timers|alarm|time left|how long left|how much time)\b", t):
+            continue
+        if skill is computer and not re.search(r"\b(youtube|google)\b", t):
+            continue
+        try:
+            reply = skill(t)
+        except Exception as e:
+            print(f"(guest skill error in {skill.__name__}: {e})")
+            reply = None
+        if reply:
+            return personality.flair(reply)
+    if re.search(r"\b(take|hit|rip) (a|the) blinker\b", t):
+        import sfx
+        voice.say(personality.line("blinker_start"))
+        sfx.blinker()
+        return personality.line("blinker_end")
+    if "weather" in t and len(t) < 40 and not re.search(r"\b(in|at|for) (?!here\b|today\b|tomorrow\b)[a-z]", t):
+        return weather.report()
+    display.update(status="thinking")
+    return brain.guest_think(text, name, owner)
+
+
+def group_mode_command(t):
+    """Owner-only: 'group chat mode on/off', 'who am I'. Returns what to say, or None."""
+    if re.search(r"\b(group (chat )?mode|party mode|guest mode|voice lock)\b", t):
+        if not speaker.enrolled():
+            return ("I don't know your voice yet. Double-click Teach Jarvis My Voice in my folder, "
+                    "read a few sentences, and then I'll know you from your friends.")
+        on = not re.search(r"\b(off|stop|disable|end|deactivate|turn off)\b", t)
+        cfg = json.loads(Path(__file__).with_name("config.json").read_text())
+        cfg["group_mode"] = on
+        Path(__file__).with_name("config.json").write_text(json.dumps(cfg, indent=2))
+        friends = speaker.friends()
+        return (f"Group chat mode on. I'll keep your private stuff for you only"
+                + (f", and I know {', '.join(friends)} by voice." if friends else ".")) if on else \
+            "Group chat mode off. I'll do anything for anyone again."
+    if re.search(r"\bwho (am i|is (this|talking|speaking))\b|do you know (me|who i am)|whose voice", t):
+        if speaker.group_mode():
+            return f"That's you, {speaker.owner_name()}. I'd know that voice anywhere."
+        return "Group chat mode is off, so I'm not checking voices right now."
+    return None
+
+
 def handle(text, _part=False):
     """Returns False when Jarvis should go back to sleep."""
     if not _part:
@@ -408,6 +484,13 @@ def handle(text, _part=False):
         PENDING.clear()
         voice.say(personality.line("sleep"))
         return False
+    if not WHO.get("owner", True):              # group chat mode: a friend is talking
+        voice.say(guest_reply(t, text))
+        return True
+    said = group_mode_command(t)
+    if said:
+        voice.say(said)
+        return True
     try:
         import discord_bot
         said = discord_bot.voice_command(t)
@@ -530,11 +613,11 @@ def handle(text, _part=False):
     return True
 
 
-def conversation(get_input, how="clap"):
+def conversation(get_input, how="clap", spoken=False):
     twitch.set_talking(True)
     TALKING.set()
     try:
-        _conversation(get_input, how)
+        _conversation(get_input, how, spoken)
     finally:
         TALKING.clear()
         twitch.set_talking(False)
@@ -558,6 +641,7 @@ def typed_loop():
             print(f"You (typed): {text}")
             display.log("you", text)
             with HANDLE_LOCK:
+                WHO.update(owner=True, name=None)
                 handle(text)
         except Exception:
             import traceback
@@ -568,7 +652,7 @@ def typed_loop():
                 display.update(status="sleeping")
 
 
-def _conversation(get_input, how="clap"):
+def _conversation(get_input, how="clap", spoken=False):
     if how == "wake":
         if sys.platform == "win32":
             import win
@@ -592,9 +676,11 @@ def _conversation(get_input, how="clap"):
             misses += 1
             continue
         misses = 0
-        print(f"You: {text}")
+        who = dict(sys.modules["ears"].SPEAKER) if spoken and "ears" in sys.modules else {"owner": True, "name": None}
+        print(f"You: {text}" if who.get("owner", True) else f"{who.get('name') or 'Guest'}: {text}")
         display.log("you", text)
         with HANDLE_LOCK:
+            WHO.update(owner=who.get("owner", True), name=who.get("name"))
             awake = handle(text)
         if not awake:
             display.update(status="sleeping")
@@ -630,7 +716,7 @@ def run_loop():
         spotify.duck()
         display.update(apps=hands.allowed_apps(), status="listening")
         try:
-            conversation(lambda: ears.listen(CONFIG.get("listen_seconds", 8)), how)
+            conversation(lambda: ears.listen(CONFIG.get("listen_seconds", 8)), how, spoken=True)
         finally:
             spotify.unduck()
 

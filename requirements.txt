@@ -6,6 +6,7 @@ spotipy
 openwakeword
 faster-whisper
 kokoro-onnx
+sherpa-onnx
 certifi
 discord.py[voice]>=2.7
 av
