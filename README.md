@@ -185,6 +185,19 @@ you when they're done (not between 11pm and 8am, "quiet_hours").
   report under "Needs your OK", and a change to Jarvis himself is only made if you say yes.
 - Each project uses your Claude plan like several questions do. "team": false turns it off.
 
+### StoreForge (your Shopify store builder)
+If StoreForge is on this Mac (~/storeforge), the team gets a **store builder** agent that uses it:
+"get the team on building a store for <product link>". It can start a store project, run "generate
+everything", follow progress, read the listing and checklist, redo a section, build the export ZIP
+and dry-run a Shopify push. It talks to StoreForge on this computer only (storeforge_mcp.py), and
+starts StoreForge itself if it isn't running.
+- Two things always wait for you: confirming you have the right to use a product's photos and text,
+  and pushing to your real Shopify store (as a draft). Jarvis asks "Should I go ahead?" when the
+  team's done, or say **"what needs my OK"** any time.
+- Setup once: double-click **Connect StoreForge.command**. It asks for an Anthropic API key
+  (StoreForge's AI uses the Claude API, separate from your Claude plan) and, for pushes, your
+  store's myshopify.com address and Admin API token. They're saved in StoreForge's own .env.local.
+
 ## Type to him
 His display has a **Type to Jarvis** box under the conversation (press / to jump to it). Type
 anything you'd say and he answers as usual. The menu bar / tray icon has **Type to Jarvis…** too.

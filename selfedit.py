@@ -33,6 +33,9 @@ habits.tmp
 team.json
 team.tmp
 team/
+storeforge_actions.json
+storeforge_actions.tmp
+storeforge.log
 """
 PROMPT = """You are editing the source code of Jarvis, a Python voice assistant that lives in this folder.
 It runs on macOS and on Windows (Windows-only parts are in win.py and behind sys.platform == "win32"
