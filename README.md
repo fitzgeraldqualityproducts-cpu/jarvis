@@ -173,6 +173,7 @@ teammates' work passed along. A critic scores the result and sends weak parts ba
 then the lead writes a report. It all happens in the background, so keep talking to him; he tells
 you when they're done (not between 11pm and 8am, "quiet_hours").
 - **"How's the team doing?"**, **"read me the report"**, **"who's on your team?"**, **"call off the team"**.
+- If I restart while the team is working (an update, a crash), I now wait for them first. If a project still gets cut off, I say so, and **"restart the team project"** starts it again.
 - **"Show me the team"** (or the AGENT NET link at the bottom of the display) opens the live agent
   network at http://localhost:8765/team: JARVIS in the middle, the team lead, critic and all 16
   specialists around him, glowing lines for who handed what to whom, dashed lines for which task needs

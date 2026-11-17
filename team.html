@@ -409,7 +409,7 @@ function render() {
   $("pbar").style.width = (pr.total ? (100 * pr.done / pr.total) : 0) + "%";
   $("pstage").textContent = ({ idle:"STANDING BY", planning:"TEAM LEAD IS PLANNING", working:"SPECIALISTS AT WORK", reviewing:"CRITIC IS REVIEWING",
     redoing:"REDOING WHAT THE CRITIC SENT BACK", reporting:"WRITING THE REPORT", done:"MISSION COMPLETE", failed:"MISSION FAILED",
-    cancelled:"MISSION CALLED OFF", cancelling:"CALLING THE TEAM OFF" })[m.phase] || m.phase.toUpperCase();
+    cancelled:"MISSION CALLED OFF", cancelling:"CALLING THE TEAM OFF", interrupted:"CUT OFF BY A RESTART · SAY RESTART THE TEAM PROJECT" })[m.phase] || m.phase.toUpperCase();
   $("pcount").textContent = pr.total ? `${pr.done} / ${pr.total} STAGES · ${Math.round(100 * pr.done / pr.total)}%` : "";
   const ap = $("approve");
   if (m.approvals && (m.approvals.length || m.change)) {

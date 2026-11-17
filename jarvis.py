@@ -208,8 +208,8 @@ def do_self_edit(request):
     reply, restart = selfedit.apply(request)
     learn.record_result("upgrade", request[:150], restart, detail=reply)
     if restart:
-        voice.say(reply + " Restarting now to load it.", interruptible=False)
-        selfedit.restart()
+        voice.say(reply + restart_words(), interruptible=False)
+        restart_jarvis()
     return reply
 
 
@@ -589,9 +589,9 @@ def handle(text, _part=False):
     if re.fullmatch(r"undo (?:that|it|the|your|my)?\s*(?:last )?(?:change|edit|update|upgrade)?|"
                     r"(?:undo|revert|roll back|reverse) (?:that|your last (?:change|edit|update)|the last (?:change|edit|update))", t):
         reply, restart = selfedit.undo()
-        voice.say(reply + (" Restarting now." if restart else ""), interruptible=False)
+        voice.say(reply + (restart_words() if restart else ""), interruptible=False)
         if restart:
-            selfedit.restart()
+            restart_jarvis()
         return True
     if re.search(r"what (did|have) you (just )?change|what was your last (change|update|edit)", t):
         voice.say(selfedit.last_change())
@@ -615,9 +615,10 @@ def handle(text, _part=False):
         voice.say("Checking for updates.", interruptible=False)
         reply, restart = updater.check(manual=True)
         if restart:
-            voice.say(reply + " Restarting now to load it.", interruptible=False)
+            voice.say(reply + restart_words(), interruptible=False)
             updater.pop_note()
             restart_jarvis()
+            return True
         voice.say(reply)
         return True
     if re.search(r"\b(run|do|start)( a| an| your)? (self[- ]?(check|test)|systems? check|diagnostics?)|"
@@ -779,6 +780,9 @@ TEAM_CANCEL = re.compile(r"\b(?:cancel|stop|call off|abort|kill) (?:the |my |you
 TEAM_VIEW = re.compile(r"\b(?:show|open|pull up|bring up|display|let me see|i want to see) (?:me )?(?:the |your |my )?(?:ai )?"
                        r"(?:team|agents?|agent network|neural network|network|workforce|crew|command cent(?:er|re))"
                        r"(?: view| network| map| screen| at work| working)?\b|\bwatch (?:the |my |your )?(?:team|agents)\b")
+TEAM_RESUME = re.compile(r"\b(?:restart|resume|continue|redo|retry|try again|pick up|finish|start again)\b.*"
+                         r"\b(?:team|agents|crew|team'?s? project|mission|store build)\b|"
+                         r"\b(?:team|agents|crew)\b.*\b(?:try again|start again|pick (?:it )?(?:back )?up|carry on)\b")
 TEAM_ROSTER = re.compile(r"who(?:'?s| is| are)? (?:on |in )?(?:your|the) (?:ai )?(?:team|agents|crew)|who are your agents|"
                          r"what agents do you have")
 
@@ -787,6 +791,9 @@ def team_command(t):
     """The AI team (workforce.py). Returns True if handled."""
     if TEAM_CANCEL.search(t):
         voice.say(workforce.cancel())
+        return True
+    if TEAM_RESUME.search(t) and not TEAM_STATUS.search(t) and not STORE_START.fullmatch(t) and not any(p.fullmatch(t) for p in TEAM_START):
+        voice.say(workforce.resume())
         return True
     if TEAM_VIEW.search(t):
         display.open_page("/team")
@@ -965,8 +972,24 @@ def speak_up(text):
 
 
 def restart_jarvis():
-    """Start a fresh copy of Jarvis (to load new code)."""
-    selfedit.restart()
+    """Start a fresh copy of Jarvis (to load new code). If the team is in the middle of a project, wait
+    for it: restarting would kill their agents and cut the project off."""
+    if not workforce.busy():
+        selfedit.restart()
+        return
+
+    def wait():
+        while workforce.busy() or is_busy():
+            time.sleep(5)
+        selfedit.restart()
+    print("(restart waits for the team to finish)")
+    threading.Thread(target=wait, daemon=True, name="restart-later").start()
+
+
+def restart_words():
+    if workforce.busy():
+        return " I'll restart to load it once the team finishes what they're on."
+    return " Restarting now to load it."
 
 
 def is_busy():
@@ -1089,7 +1112,8 @@ def main():
     if sys.platform == "win32":
         organizer.start_reminder_watch()
     if "--text" not in sys.argv:
-        updater.start(is_busy, restart_jarvis)
+        workforce.recover()                                   # a project cut off by the last restart
+        updater.start(lambda: is_busy() or workforce.busy(), restart_jarvis)
         updater.verify_on_start(restart_jarvis, is_busy)      # after an update: check the new version works
         learn.start(is_busy)
         predict.start(is_busy)

@@ -693,6 +693,43 @@ def report():
     return f"On {p.get('title')}: {text} The full report is in my team folder."
 
 
+def recover():
+    """At start-up: a project that was still going when Jarvis stopped (an update restart, a crash)
+    can't carry on, because its agents went with him. Mark it interrupted so it doesn't look stuck."""
+    if _current:
+        return
+    with _lock:
+        data = _load()
+        hit = [p for p in data["projects"] if p.get("status") in ("planning", "working")]
+        for p in hit:
+            p.update(status="interrupted", told=False)
+        if hit:
+            _save(data)
+    for p in hit:
+        print(f"(team: {p.get('title')} was cut off when I restarted)")
+        f = Path(p.get("folder", "")) / "events.jsonl"
+        try:
+            if f.is_file():
+                n = len(f.read_text(encoding="utf-8", errors="replace").splitlines())
+                with open(f, "a", encoding="utf-8") as out:
+                    out.write(json.dumps({"type": "phase", "phase": "interrupted",
+                                          "error": "Jarvis restarted while the team was working",
+                                          "seq": n + 1, "t": time.time()}) + "\n")
+        except OSError:
+            pass
+
+
+def resume():
+    """Start the last cut-off (or failed) project again, from the top."""
+    for p in reversed(_load()["projects"]):
+        if p.get("status") in ("interrupted", "failed", "cancelled"):
+            _update(p["id"], status="restarted", told=True)
+            return start(p["goal"])
+        if p.get("status") in ("planning", "working", "done"):
+            break
+    return "There's nothing of the team's to restart. Say get the team on, then what you want."
+
+
 def cancel():
     if not _current:
         return "The team isn't working on anything."
@@ -723,6 +760,9 @@ def news():
                     words += (f" There are {n} things that need your OK." if n > 1 else
                               " There's one thing that needs your OK.") + " Say read me the report."
                 return p["id"], words, p
+            if p.get("status") == "interrupted":
+                return p["id"], (f"Heads up, my restart cut off the team's work on {p.get('title')}. "
+                                 "Say restart the team project and they'll start it again."), p
             return p["id"], f"Sorry, my team couldn't finish {p.get('title')}. Something went wrong on their end.", p
     return None
 
@@ -773,17 +813,21 @@ def _reduce(events):
             node("jarvis").update(status="supervising", activity="handing the mission to the team lead")
         elif k == "phase":
             mission["phase"] = e["phase"]
-            if e["phase"] in ("done", "failed", "cancelled"):
+            if e["phase"] in ("done", "failed", "cancelled", "interrupted"):
                 mission["finished"] = e["t"]
                 mission.update({x: e[x] for x in ("score", "minutes", "spoken", "error") if x in e})
                 node("jarvis").update(status="approval" if mission["approvals"] or mission["change"] else
                                       "completed" if e["phase"] == "done" else "failed",
                                       activity={"done": "mission complete", "failed": "mission failed",
-                                                "cancelled": "mission called off"}[e["phase"]])
+                                                "cancelled": "mission called off",
+                                                "interrupted": "cut off by a restart"}[e["phase"]])
                 for t in tasks.values():
                     if t["status"] in ("working", "analyzing", "waiting"):
                         t["status"] = "failed" if e["phase"] == "failed" else "idle"
-                        t["activity"] = "stopped"
+                        t["activity"] = "cut off by a restart" if e["phase"] == "interrupted" else "stopped"
+                for n, x in nodes.items():
+                    if n != "jarvis" and x["status"] in ("working", "analyzing", "waiting"):
+                        x.update(status="idle", activity="stopped")
             elif e["phase"] != "cancelling":
                 node("jarvis").update(status="supervising", activity="the team is on it")
         elif k == "plan":
