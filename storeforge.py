@@ -106,6 +106,13 @@ def _start(f):
     env = {k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")}
     env["PATH"] = env.get("PATH", "") + os.pathsep + os.pathsep.join(
         ["/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/.npm-global/bin")])
+    try:                                   # StoreForge's AI uses the same claude as Jarvis's brain
+        import brain
+        cli = brain.find_claude()
+        if cli:
+            env["CLAUDE_CLI_PATH"] = cli
+    except Exception:
+        pass
     log = open(HERE / "storeforge.log", "a")
     return subprocess.Popen([npm, "run", "dev"], cwd=str(f), stdout=log, stderr=log, stdin=subprocess.DEVNULL,
                             env=env, start_new_session=sys.platform != "win32"), env
