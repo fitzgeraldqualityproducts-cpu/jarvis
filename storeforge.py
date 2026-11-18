@@ -254,6 +254,58 @@ def regenerate(pid, section, instruction=""):
     return _call("POST", f"/api/projects/{pid}/regenerate", body)
 
 
+# ---------- showing Connor his stores ----------
+
+def remember(pid, name="", mission=None):
+    """Note a store project the team made, so Jarvis can open it for Connor."""
+    with _lock:
+        data = _load()
+        data.setdefault("projects", [])
+        data["projects"] = [p for p in data["projects"] if p.get("pid") != pid][-19:]
+        data["projects"].append({"pid": pid, "name": name, "mission": mission, "t": time.time()})
+        _save(data)
+
+
+def projects_for(mission):
+    return [p for p in _load().get("projects", []) if p.get("mission") == str(mission)]
+
+
+def last_project():
+    ps = _load().get("projects") or []
+    return ps[-1] if ps else None
+
+
+def _open_url(url):
+    if sys.platform == "darwin":
+        subprocess.run(["open", url])
+    else:
+        import webbrowser
+        webbrowser.open(url)
+
+
+def open_app(pid=None):
+    """Opens StoreForge in the browser, on a store project (the latest one the team made, unless
+    told which). Starts StoreForge first if it isn't running. Returns what to say."""
+    problem = ensure_running()
+    if problem:
+        return problem
+    p = None
+    if pid is None:
+        p = last_project()
+        if not p:
+            try:
+                ps = list_projects()
+                if ps:
+                    p = {"pid": ps[0].get("id"), "name": ps[0].get("name")}
+            except Exception:
+                pass
+        pid = p and p.get("pid")
+    _open_url(f"{base_url()}/projects/{pid}" if pid else base_url())
+    if pid:
+        return f"Opening {(p or {}).get('name') or 'your store'} in StoreForge."
+    return "Opening StoreForge."
+
+
 # ---------- things only Connor can OK ----------
 
 KINDS = {
@@ -264,13 +316,15 @@ KINDS = {
 
 def _load():
     try:
-        return json.loads(ACTIONS.read_text())
+        data = json.loads(ACTIONS.read_text())
+        data.setdefault("actions", [])
+        return data
     except Exception:
         return {"actions": []}
 
 
 def _save(data):
-    data["actions"] = data["actions"][-50:]
+    data["actions"] = data.get("actions", [])[-50:]
     tmp = ACTIONS.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=1))
     tmp.replace(ACTIONS)
@@ -321,7 +375,11 @@ def answer(action_id, yes):
         if a["kind"] == "confirm_rights":
             _call("PATCH", f"/api/projects/{a['pid']}", {"rightsAccepted": True})
             generate(a["pid"])
-            return f"Done. I've confirmed it and StoreForge is generating {a['name']} now."
+            try:
+                _open_url(f"{base_url()}/projects/{a['pid']}")      # so he can watch it being built
+            except Exception:
+                pass
+            return f"Done. I've confirmed it and StoreForge is generating {a['name']} now. I've opened it so you can watch."
         if a["kind"] == "push_to_shopify":
             r = _call("POST", f"/api/projects/{a['pid']}/export/shopify", {"dryRun": False, "confirm": True})
             return (f"Pushing {a['name']} to {r.get('storeDomain', 'your store')} now. It goes in as a draft, so "

@@ -175,8 +175,11 @@ you when they're done (not between 11pm and 8am, "quiet_hours").
 - **"How's the team doing?"**, **"read me the report"**, **"who's on your team?"**, **"call off the team"**.
 - If I restart while the team is working (an update, a crash), I now wait for them first. If a project still gets cut off, I say so, and **"restart the team project"** starts it again.
 - **"Show me the team"** (or the AGENT NET link at the bottom of the display) opens the live agent
-  network at http://localhost:8765/team: JARVIS in the middle, the team lead, critic and all 16
-  specialists around him, glowing lines for who handed what to whom, dashed lines for which task needs
+  network at http://localhost:8765/team: a little pixel office with JARVIS (a pixel AI core) in the
+  middle and the team lead, critic and all 16 specialists as pixel people at their desks. They type
+  while really working, walk the work over when they hand it on, walk to the web terminal, file
+  cabinet, toolbox or StoreForge kiosk when they really use those tools, and the critic walks round
+  the finished desks while it reviews. Also glowing lines for who handed what to whom, dashed lines for which task needs
   which, a live activity feed, the mission's progress, and a task pipeline. Click any agent to see its
   task, tool calls, output and past missions. It's drawn only from the team's real events (saved as
   events.jsonl in each project folder); nothing on it is simulated.
@@ -195,6 +198,8 @@ starts StoreForge itself if it isn't running.
 - Two things always wait for you: confirming you have the right to use a product's photos and text,
   and pushing to your real Shopify store (as a draft). Jarvis asks "Should I go ahead?" when the
   team's done, or say **"what needs my OK"** any time.
+- Say **"open StoreForge"** or **"show me the store"** to see the latest store project in StoreForge.
+  Jarvis also opens it himself when you say yes to the rights question, and when the team finishes a store.
 - StoreForge's AI runs on your Claude plan through Claude Code, so no API key and nothing extra to pay.
 - Pushing to Shopify needs setup once: double-click **Connect StoreForge.command** and give it
   your store's myshopify.com address and Admin API token. That part is optional and free.
