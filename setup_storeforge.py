@@ -2,8 +2,7 @@
 
 Asks for what StoreForge needs and saves it in StoreForge's own .env.local file (that file is
 git-ignored and stays on this computer):
-  - an Anthropic API key (StoreForge's AI steps use the Claude API, which is separate from your
-    Claude plan: get one at https://console.anthropic.com > API keys)
+  (No API key: StoreForge's AI runs on your Claude plan through the Claude Code login.)
   - your store's myshopify.com address and its Admin API access token (shpat_...), so pushes can
     go to your store. Pushes still always wait for your yes."""
 import getpass
@@ -69,14 +68,8 @@ def main():
     env = _env(envf)
     updates = {}
 
-    if env.get("ANTHROPIC_API_KEY"):
-        print("\nAnthropic API key: already set (press Enter to keep it).")
-    else:
-        print("\nStoreForge's AI uses your Claude plan through Claude Code, so you don't need an API key.")
-        print("Just press Enter. (Only if you'd rather pay per use: paste an Anthropic API key, sk-ant-...)")
-    key = getpass.getpass("Anthropic API key (optional, hidden; press Enter to use your Claude plan): ").strip()
-    if key:
-        updates["ANTHROPIC_API_KEY"] = key
+    print("\nStoreForge's AI runs on your Claude plan through Claude Code (the same login as Jarvis's")
+    print("brain), so there's no API key and nothing extra to pay.")
 
     print("\nShopify (optional, only needed to push to your store). In Shopify admin: Settings > Apps and")
     print("sales channels > Develop apps > your app > API credentials > Admin API access token (shpat_...).")
