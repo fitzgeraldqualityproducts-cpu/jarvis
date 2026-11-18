@@ -18,6 +18,7 @@ the store's myshopify.com address and Admin API token: double-click "Connect Sto
 (default ~/storeforge), "storeforge_url" (default http://localhost:3000)."""
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -254,6 +255,256 @@ def regenerate(pid, section, instruction=""):
     return _call("POST", f"/api/projects/{pid}/regenerate", body)
 
 
+# ---------- product photos (real ones from the web, or placeholders) ----------
+
+UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) "
+      "Chrome/126.0 Safari/537.36")
+
+
+def _get(url, timeout=20, limit=15 * 1024 * 1024):
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read(limit + 1)[:limit + 1], r.headers.get("Content-Type", "")
+
+
+def _is_image(b):
+    return (b[:3] == b"\xff\xd8\xff" or b[:8] == b"\x89PNG\r\n\x1a\n" or (b[:4] == b"RIFF" and b[8:12] == b"WEBP")
+            or b[:6] in (b"GIF87a", b"GIF89a"))
+
+
+def _ext(b):
+    return "jpg" if b[:3] == b"\xff\xd8\xff" else "png" if b[:4] == b"\x89PNG" else "webp" if b[:4] == b"RIFF" else "gif"
+
+
+def images_on_page(page_url, limit=8):
+    """Product photo URLs from a product page: Shopify's product JSON, then og:image, JSON-LD and
+    big <img> tags."""
+    import html as _html
+    import re
+    from urllib.parse import urljoin, urlsplit
+    found = []
+
+    def add(u):
+        u = _html.unescape(u or "").strip()
+        if u.startswith("//"):
+            u = "https:" + u
+        u = urljoin(page_url, u)
+        if u.startswith("http") and u not in found and not re.search(r"(logo|icon|sprite|badge|payment|flag)", u, re.I):
+            found.append(u)
+    parts = urlsplit(page_url)
+    if "/products/" in parts.path:                       # Shopify stores publish the product as JSON
+        try:
+            raw, _ = _get(f"{parts.scheme}://{parts.netloc}{parts.path.rstrip('/')}.json", limit=3_000_000)
+            for im in (json.loads(raw).get("product") or {}).get("images") or []:
+                add(im.get("src"))
+        except Exception:
+            pass
+    if len(found) < limit:
+        try:
+            raw, _ = _get(page_url, limit=4_000_000)
+            page = raw.decode("utf-8", "replace")
+            for m in re.finditer(r'<meta[^>]+(?:property|name)=["\'](?:og:image|twitter:image)(?::src)?["\'][^>]*>', page, re.I):
+                c = re.search(r'content=["\']([^"\']+)', m.group(0))
+                if c:
+                    add(c.group(1))
+            for m in re.finditer(r'"image"\s*:\s*(\[[^\]]*\]|"[^"]+")', page):
+                try:
+                    v = json.loads(m.group(1))
+                except ValueError:
+                    continue
+                for u in (v if isinstance(v, list) else [v]):
+                    if isinstance(u, str):
+                        add(u)
+            for m in re.finditer(r'<img[^>]+(?:data-src|src)=["\']([^"\']+\.(?:jpe?g|png|webp)[^"\']*)', page, re.I):
+                add(m.group(1))
+        except Exception:
+            pass
+    return found[:limit]
+
+
+def upload_photos(pid, files):
+    """Adds photos to a store project. files: [(name, bytes)]. Returns StoreForge's answer."""
+    import uuid
+    boundary = "----jarvis" + uuid.uuid4().hex
+    body = bytearray()
+    for name, data in files:
+        body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{name}\"\r\n"
+                 f"Content-Type: image/{'jpeg' if name.endswith('jpg') else name.rsplit('.', 1)[-1]}\r\n\r\n").encode()
+        body += data + b"\r\n"
+    body += f"--{boundary}--\r\n".encode()
+    req = urllib.request.Request(f"{base_url()}/api/projects/{pid}/upload", data=bytes(body), method="POST",
+                                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read())
+        except Exception:
+            raise RuntimeError(f"StoreForge said ({e.code}): {e.reason}")
+
+
+def add_photos(pid, image_urls=(), page_url=None):
+    """Downloads product photos (from image links, or found on a product page) and adds them to
+    the store project. Returns {"added": n, "problems": [...]}."""
+    urls = list(image_urls or [])
+    if page_url:
+        urls += images_on_page(page_url)
+    files, problems = [], []
+    for u in urls[:12]:
+        try:
+            b, _ = _get(u)
+            if len(b) > 15 * 1024 * 1024:
+                problems.append(f"{u}: too big")
+            elif not _is_image(b):
+                problems.append(f"{u}: not an image")
+            elif len(b) < 8000:
+                problems.append(f"{u}: too small to use")
+            else:
+                files.append((f"photo-{len(files) + 1}.{_ext(b)}", b))
+        except Exception as e:
+            problems.append(f"{u}: {e}"[:200])
+        if len(files) >= 8:
+            break
+    if not urls:
+        problems.append("no photo links found" + (" on that page" if page_url else ""))
+    added = 0
+    if files:
+        r = upload_photos(pid, files)
+        added = len(r.get("assets") or [])
+        problems += [f"{x.get('file')}: {x.get('error')}" for x in r.get("errors") or []]
+    return {"added": added, "problems": problems[:10]}
+
+
+FONT = {   # 5x7 capitals and digits for placeholder labels
+    "A": "01110100011000111111100011000110001", "B": "11110100011000111110100011000111110",
+    "C": "01110100011000010000100001000101110", "D": "11110100011000110001100011000111110",
+    "E": "11111100001000011110100001000011111", "F": "11111100001000011110100001000010000",
+    "G": "01110100011000010111100011000101111", "H": "10001100011000111111100011000110001",
+    "I": "01110001000010000100001000010001110", "J": "00111000100001000010000101001001100",
+    "K": "10001100101010011000101001001010001", "L": "10000100001000010000100001000011111",
+    "M": "10001110111010110101100011000110001", "N": "10001110011010110011100011000110001",
+    "O": "01110100011000110001100011000101110", "P": "11110100011000111110100001000010000",
+    "Q": "01110100011000110001101011001001101", "R": "11110100011000111110101001001010001",
+    "S": "01111100001000001110000010000111110", "T": "11111001000010000100001000010000100",
+    "U": "10001100011000110001100011000101110", "V": "10001100011000110001100010101000100",
+    "W": "10001100011000110101101011010101010", "X": "10001100010101000100010101000110001",
+    "Y": "10001100010101000100001000010000100", "Z": "11111000010001000100010001000011111",
+    "0": "01110100011001110101110011000101110", "1": "00100011000010000100001000010001110",
+    "2": "01110100010000100010001000100011111", "3": "11110000010000101110000010000111110",
+    "4": "00010001100101010010111110001000010", "5": "11111100001111000001000011000101110",
+    "6": "00110010001000011110100011000101110", "7": "11111000010001000100010000100001000",
+    "8": "01110100011000101110100011000101110", "9": "01110100011000101111000010001001100",
+    "&": "01100100101010001000101011001001101", "-": "00000000000000011111000000000000000",
+    "'": "00100001000100000000000000000000000", ".": "00000000000000000000000000110001100",
+    " ": "0" * 35,
+}
+
+
+def placeholder_png(title, hue=200, size=800, note="PRODUCT PHOTO COMING SOON"):
+    """A plain, clearly-a-placeholder product image (PNG, no extra libraries)."""
+    import colorsys
+    import struct
+    import zlib
+    W = H = size
+
+    def rgb(h, s, v):
+        return bytes(int(c * 255) for c in colorsys.hsv_to_rgb(h / 360 % 1, s, v))
+    rows = [bytearray(rgb(hue, 0.18 + 0.10 * y / H, 0.96 - 0.10 * y / H) * W) for y in range(H)]
+
+    def rect(x, y, w, h, col):
+        x, y = max(0, int(x)), max(0, int(y))
+        w, h = min(W - x, int(w)), min(H - y, int(h))
+        if w <= 0:
+            return
+        for yy in range(y, min(H, y + h)):
+            rows[yy][x * 3:(x + w) * 3] = col * w
+    # a simple product box in the middle
+    box, lid = rgb(hue, 0.45, 0.82), rgb(hue, 0.55, 0.70)
+    rect(W * .30, H * .26, W * .40, H * .36, box)
+    rect(W * .27, H * .22, W * .46, H * .07, lid)
+    rect(W * .47, H * .22, W * .06, H * .40, rgb(hue, 0.25, 0.95))
+
+    def text(s, cy, scale, col):
+        s = "".join(ch if ch in FONT else " " for ch in s.upper())
+        while len(s) * 6 * scale > W * .9 and scale > 2:
+            scale -= 1
+        s = s[:int(W * .9 // (6 * scale))]
+        x0 = (W - len(s) * 6 * scale) // 2
+        for i, ch in enumerate(s):
+            g = FONT[ch]
+            for j in range(35):
+                if g[j] == "1":
+                    rect(x0 + i * 6 * scale + (j % 5) * scale, cy + (j // 5) * scale, scale, scale, col)
+    dark = rgb(hue, 0.6, 0.30)
+    text(title or "Your product", int(H * .70), 6, dark)
+    text(note, int(H * .82), 3, rgb(hue, 0.35, 0.50))
+    raw = b"".join(b"\x00" + bytes(r) for r in rows)
+
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+
+
+def add_placeholders(pid, title, count=3):
+    """Adds clearly-marked placeholder photos, for when no real product photos can be found."""
+    hue = (sum(map(ord, title or "x")) * 37) % 360
+    notes = ["PRODUCT PHOTO COMING SOON", "PLACEHOLDER - ADD REAL PHOTO", "PLACEHOLDER - ADD REAL PHOTO",
+             "PLACEHOLDER - ADD REAL PHOTO"]
+    files = [(f"placeholder-{i + 1}.png", placeholder_png(title, (hue + i * 28) % 360, note=notes[i % 4]))
+             for i in range(max(1, min(4, count)))]
+    r = upload_photos(pid, files)
+    return {"added": len(r.get("assets") or []), "placeholders": True,
+            "problems": [f"{x.get('file')}: {x.get('error')}" for x in r.get("errors") or []]}
+
+
+def photo_count(pid):
+    return sum(1 for a in (view(pid).get("assets") or []) if not a.get("discarded"))
+
+
+def _job_done(pid, job_id, wait=1500):
+    """Waits for a StoreForge job; returns (status, error)."""
+    end = time.time() + wait
+    while time.time() < end:
+        time.sleep(8)
+        try:
+            j = next((x for x in view(pid).get("jobs") or [] if x.get("id") == job_id), None)
+        except Exception:
+            continue
+        if j and j.get("status") not in ("queued", "running"):
+            return j.get("status"), j.get("error") or ""
+    return "timeout", ""
+
+
+def prepare_and_generate(pid, name=""):
+    """Adds placeholder photos if the project has none, then starts 'Generate everything'."""
+    if photo_count(pid) == 0:
+        add_placeholders(pid, name or (view(pid).get("project") or {}).get("name") or "Product")
+    return generate(pid)
+
+
+def build_everything(pid, name=""):
+    """Every StoreForge step except exporting: makes sure there are photos (placeholders if
+    needed), runs 'Generate everything', and if it stops on missing photos, adds placeholders and
+    runs it again once. Runs in the background; returns at once."""
+    def run():
+        try:
+            for attempt in range(2):
+                job = prepare_and_generate(pid, name) if attempt == 0 else generate(pid)
+                status, err = _job_done(pid, job.get("id"))
+                print(f"(StoreForge: generate {status} {err[:120]})")
+                if status != "failed" or attempt:
+                    break
+                if re.search(r"photo|image|product page", err, re.I):
+                    add_placeholders(pid, name or "Product")
+                else:
+                    break
+        except Exception as e:
+            print(f"(StoreForge: building {pid} failed: {e})")
+    threading.Thread(target=run, daemon=True, name="storeforge-build").start()
+
+
 # ---------- showing Connor his stores ----------
 
 def remember(pid, name="", mission=None):
@@ -374,7 +625,7 @@ def answer(action_id, yes):
     try:
         if a["kind"] == "confirm_rights":
             _call("PATCH", f"/api/projects/{a['pid']}", {"rightsAccepted": True})
-            generate(a["pid"])
+            build_everything(a["pid"], a.get("name", ""))            # every step except exporting
             try:
                 _open_url(f"{base_url()}/projects/{a['pid']}")      # so he can watch it being built
             except Exception:
