@@ -94,6 +94,7 @@ def call(name, a):
             "brandName": a.get("brand_name"), "targetPrice": a.get("target_price"), "unitCost": a.get("unit_cost"),
             "targetMarginPct": a.get("target_margin_pct"), "notes": a.get("notes")}.items() if v not in (None, "")}
         pid = storeforge.create_project(a["name"], a.get("product_urls") or [], ctx)
+        storeforge.remember(pid, a["name"], MISSION)
         return {"project_id": pid, "next": "Ask for the rights confirmation (request_rights_confirmation); "
                                           "StoreForge can't generate until the owner confirms."}
     if name == "store_details":

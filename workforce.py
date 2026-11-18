@@ -561,8 +561,9 @@ def _project(pid, goal):
         try:
             import storeforge
             store_asks = storeforge.waiting(str(pid))
+            stores = storeforge.projects_for(pid)
         except Exception:
-            store_asks = []
+            store_asks, stores = [], []
         needs_ok += [f"StoreForge: {a['text']}" for a in store_asks]
         full = (f"# {plan.get('title') or goal}\n\n_Asked: {goal}_  \n_Team: "
                 + ", ".join(t["role"] for t in plan["tasks"])
@@ -576,6 +577,7 @@ def _project(pid, goal):
             _emit("approval", items=needs_ok, change=str(plan.get("jarvis_change") or ""))
         _to_obsidian(plan.get("title") or goal, full)
         _update(pid, status="done", spoken=spoken, score=score, needs_ok=needs_ok,
+                stores=[{"pid": x["pid"], "name": x.get("name")} for x in stores],
                 jarvis_change=str(plan.get("jarvis_change") or "").strip(), told=False,
                 minutes=round((time.time() - started) / 60, 1), finished=time.time(),
                 tasks=[{"id": t["id"], "role": t["role"], "task": t["task"], "ok": bool(t["result"])}

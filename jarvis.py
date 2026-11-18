@@ -783,6 +783,9 @@ TEAM_VIEW = re.compile(r"\b(?:show|open|pull up|bring up|display|let me see|i wa
 TEAM_RESUME = re.compile(r"\b(?:restart|resume|continue|redo|retry|try again|pick up|finish|start again)\b.*"
                          r"\b(?:team|agents|crew|team'?s? project|mission|store build)\b|"
                          r"\b(?:team|agents|crew)\b.*\b(?:try again|start again|pick (?:it )?(?:back )?up|carry on)\b")
+STORE_OPEN = re.compile(r"\b(?:open|show|pull up|bring up|launch|start|let me see|i want to see|can i see)\b(?: me)?(?: up)?"
+                        r" (?:the |my |your )?(?:store ?forge|store forage|(?:new |latest |last )?(?:shopify )?store"
+                        r"(?: project| preview| they made| the team made| you made)?|(?:store )?preview)\s*(?:app)?[.!?]?$")
 TEAM_ROSTER = re.compile(r"who(?:'?s| is| are)? (?:on |in )?(?:your|the) (?:ai )?(?:team|agents|crew)|who are your agents|"
                          r"what agents do you have")
 
@@ -798,6 +801,14 @@ def team_command(t):
     if TEAM_VIEW.search(t):
         display.open_page("/team")
         voice.say("Here's my agent network. Every node and line on it is the team's real work, live.")
+        return True
+    if STORE_OPEN.search(t):
+        import storeforge
+        if not storeforge.available():
+            voice.say("I can't find StoreForge on this computer.")
+            return True
+        voice.say("One sec, opening StoreForge.", interruptible=False)
+        voice.say(storeforge.open_app())
         return True
     if re.search(r"\b(?:store|storeforge|shopify) (?:requests?|approvals?)\b|what needs my (?:ok|okay|approval)", t):
         if not offer_store_action():
@@ -856,12 +867,34 @@ def offer_store_action():
     return True
 
 
+def _team_store(n):
+    stores = n[2].get("stores") or []
+    return stores[-1]["pid"] if stores and n[2].get("status") == "done" and CONFIG.get("open_stores", True) else None
+
+
+def team_news_words(n):
+    """What to say about finished team work (mentions the store they built, if any)."""
+    return n[1] + (" I'm opening the store they built in StoreForge for you." if _team_store(n) else "")
+
+
+def open_team_store(n):
+    """If the team built a store, opens it in StoreForge so he can see it."""
+    pid = _team_store(n)
+    if pid:
+        try:
+            import storeforge
+            threading.Thread(target=storeforge.open_app, args=(pid,), daemon=True).start()
+        except Exception as e:
+            print(f"(couldn't open StoreForge: {e})")
+
+
 def tell_team_news():
     """In a conversation: say if the team has finished something."""
     n = workforce.news()
     if n:
         workforce.told(n[0])
-        voice.say(n[1])
+        open_team_store(n)
+        voice.say(team_news_words(n))
         offer_team_change()
 
 
@@ -946,8 +979,9 @@ def speak_up_loop():
                 if h and speak_up(h[1]):
                     predict.warned(h[0])
                 n = None if late else workforce.news()
-                if n and speak_up(n[1]):
+                if n and speak_up(team_news_words(n)):
                     workforce.told(n[0])
+                    open_team_store(n)
         except Exception as e:
             print(f"(speak-up failed: {e})")
         time.sleep(30)

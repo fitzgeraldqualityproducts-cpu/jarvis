@@ -102,7 +102,7 @@ ABILITIES = (
     "works on bigger jobs in the background ('get the team on ...', 'how's the team doing', 'read me the report'), "
     "predictions from their routines and calendar ('what do you think I need', 'what have you noticed about me'), "
     "and reviewing yourself to improve ('review yourself', 'any upgrade ideas'). The team can also build Shopify stores with the "
-    "owner's StoreForge app ('get the team on building a store for <product link>'). For a big research, planning, "
+    "owner's StoreForge app ('get the team on building a store for <product link>'; 'open StoreForge' shows him the latest store project in it). For a big research, planning, "
     "business, store or coding job, suggest they say 'get the team on' it. If the user asks for something like "
     "that in a way that reached you, tell them the phrase to use, e.g. 'remind me to ...', "
     "'add dentist to my calendar tomorrow at 3', 'play Dead Fresh by Lil Baby', 'open Spotify'. "

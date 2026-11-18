@@ -10,7 +10,8 @@
   Live view of Jarvis's AI team. Everything here comes from /team/state, which is built from the real
   events workforce.py records while the agents run (delegations, handoffs, tool calls, writing, results,
   the critic's review, approvals). Nothing is simulated: if no mission is running, nothing moves except
-  the background. The spinning rings on a node only appear while that agent is really running.
+  the background. Each agent is a pixel person at a desk: they type only while really working, and walk
+  only for real events (delivering work, fetching from a tool's station, the critic reviewing).
 -->
 <style>
   :root {
@@ -144,7 +145,7 @@ const k = n => n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
 
 let S = { pid:null, seq:0, events:[], snap:null, roster:[], history:{}, running:false, now:Date.now() / 1000 };
 let clockSkew = 0, selected = "jarvis", page = null, firstLoad = true, linkOk = false;
-const pulses = [], sparks = [], flashes = {};
+const sparks = [], flashes = {};
 
 // ---------- live data ----------
 async function poll() {
@@ -205,8 +206,13 @@ function addFeed(e) {
 }
 
 // ---------- layout ----------
+// The agent network as a little pixel office: every agent is a pixel person at their own desk. They only
+// move when something really happens: a delegation or handoff is someone walking over with the work, a
+// tool call is a walk to that tool's station (web terminal, files, StoreForge kiosk) and back, and the
+// critic walks round the finished desks while it really is reviewing. Nobody wanders about for show.
 const cv = $("net"), cx2 = cv.getContext("2d");
-let W, H, DPR, area, pos = {};
+let W, H, DPR, area, pos = {}, stations = {};
+const PX = 4;                                   // one art pixel = 3 screen pixels
 function layout() {
   DPR = Math.min(window.devicePixelRatio || 1, 2);
   W = innerWidth; H = innerHeight;
@@ -216,33 +222,173 @@ function layout() {
   const cx = area.x + area.w / 2, cy = area.y + area.h / 2;
   const R = Math.min(area.w, area.h) * 0.44, r = R * 0.42;
   pos = { jarvis:{ x:cx, y:cy, r:Math.max(26, R * 0.16) } };
-  pos.lead = { x:cx - r * 0.95, y:cy - r * 0.55, r:15 };
-  pos.critic = { x:cx + r * 0.95, y:cy - r * 0.55, r:15 };
+  pos.lead = { x:cx - r * 1.05, y:cy - r * 0.35, r:18 };
+  pos.critic = { x:cx + r * 1.05, y:cy - r * 0.35, r:18 };
   const roles = S.roster.map(x => x.id);
   roles.forEach((id, i) => {
     const a = -Math.PI / 2 + (i / roles.length) * Math.PI * 2;
-    pos[id] = { x:cx + Math.cos(a) * R * 1.12, y:cy + Math.sin(a) * R * 0.9, r:11, a };
+    pos[id] = { x:cx + Math.cos(a) * R * 1.12, y:cy + Math.sin(a) * R * 0.9, r:18, a };
   });
+  const ix = 46, top = area.y + 34, bot = area.y + area.h - 18;
+  stations = { web:{ x:area.x + ix, y:top, name:"WEB" }, files:{ x:area.x + area.w - ix, y:top, name:"FILES" },
+               tools:{ x:area.x + area.w - ix, y:bot, name:"TOOLS" } };
+  if (roles.includes("store builder")) stations.store = { x:area.x + ix, y:bot, name:"STOREFORGE" };
+  for (const id in actors) { const a = actors[id]; if (!a.trips.length && !(a.wait > 0)) { const h = seat(id); if (h) { a.x = h.x; a.y = h.y; } } }
 }
 addEventListener("resize", () => { layout(); render(); });
 
-// ---------- animations from real events ----------
+// ---------- the people ----------
+const actors = {};
+function seat(id) { const h = pos[id]; return h && { x:h.x, y:h.y }; }
+function spotBy(id) {                       // where a visitor stands at someone's desk
+  if (id === "jarvis") { const J = pos.jarvis; return { x:J.x + J.r + 16, y:J.y + 12 }; }
+  const h = pos[id]; return h && { x:h.x + 30, y:h.y + 4 };
+}
+function actor(id) {
+  if (id === "jarvis" || !pos[id]) return null;
+  if (!actors[id]) { const h = seat(id); actors[id] = { x:h.x, y:h.y, trips:[], wait:0, step:0, carry:null, moving:false }; }
+  return actors[id];
+}
+function stationFor(tool) {
+  if (/storeforge/i.test(tool || "") && stations.store) return "store";
+  if (/^Web(Search|Fetch)$/.test(tool)) return "web";
+  if (/^(Read|Edit|Write|Glob|Grep|NotebookEdit)$/.test(tool)) return "files";
+  return "tools";
+}
+function deliver(from, to, color) {           // someone walks the work over (or comes to fetch it from JARVIS)
+  const walker = actor(from) ? from : actor(to) ? to : null; if (!walker) return;
+  const a = actor(walker), other = walker === from ? to : from, spot = spotBy(other); if (!spot) return;
+  if (walker === from) a.trips.push({ x:spot.x, y:spot.y, carry:color, wait:.45, arrive:() => { flashes[to] = performance.now(); } });
+  else a.trips.push({ x:spot.x, y:spot.y, wait:.45, after:color, arrive:() => { flashes[from] = performance.now(); } });
+}
+let critTour = false;
 function animate(e) {
-  const from = e.from, to = e.to;
-  if ((e.type === "delegate" || e.type === "handoff") && pos[from] && pos[to])
-    pulses.push({ from, to, t0:performance.now(), dur:1300, color:e.type === "delegate" ? "#a8f0ff" : "#4fd8ff", big:e.type === "delegate" });
-  if (e.type === "tool" && pos[e.node]) for (let i = 0; i < 10; i++)
-    sparks.push({ n:e.node, a:Math.random() * 6.28, v:20 + Math.random() * 30, t0:performance.now(), color:"#9d8cff" });
+  if ((e.type === "delegate" || e.type === "handoff") && pos[e.from] && pos[e.to])
+    deliver(e.from, e.to, e.type === "delegate" ? (e.from === "critic" ? "#9d8cff" : "#ffffff") : "#4fd8ff");
+  if ((e.type === "tool" || e.type === "blocked") && actor(e.node)) {
+    const a = actor(e.node), key = stationFor(e.tool), st = stations[key];
+    if (st && a.trips.length < 3) a.trips.push({ x:st.x + (st.x < pos.jarvis.x ? 50 : -50), y:st.y + 4 + (Math.random() * 10 - 5), wait:.7, after:"#9d8cff",
+      arrive:() => { flashes["st:" + key] = { t:performance.now(), bad:e.type === "blocked" };
+        for (let i = 0; i < 10; i++) sparks.push({ x:st.x, y:st.y - 10, a:Math.random() * 6.28, v:16 + Math.random() * 24, t0:performance.now(),
+          color:e.type === "blocked" ? "#ff6b7a" : "#9d8cff" }); } });
+  }
+  if (e.type === "agent" && e.node === "critic" && /working|analyzing/.test(e.status) && !critTour && S.snap) {
+    critTour = true;
+    const a = actor("critic");
+    for (const t of Object.values(S.snap.tasks)) if (pos[t.role] && /completed|approval|failed/.test(t.status)) {
+      const sp = spotBy(t.role); a.trips.push({ x:sp.x, y:sp.y, wait:.8, arrive:() => { flashes[t.role] = performance.now(); } });
+    }
+  }
   if ((e.type === "finished" || e.type === "result" || e.type === "review") && (pos[e.node] || e.type === "review"))
     flashes[e.node || "critic"] = performance.now();
   if (e.type === "approval") flashes.jarvis = performance.now();
+}
+function stepActors(dt) {
+  if (critTour && !/working|analyzing/.test(nodeOf("critic").status)) critTour = false;
+  for (const id in actors) {
+    const a = actors[id];
+    if (a.wait > 0) { a.wait = Math.max(0, a.wait - dt); a.moving = false; continue; }
+    const tr = a.trips[0], tgt = tr || seat(id); if (!tgt) continue;
+    const dx = tgt.x - a.x, dy = tgt.y - a.y, d = Math.hypot(dx, dy), sp = 180 * dt;
+    a.carry = tr ? tr.carry || null : a.back || null;
+    if (d <= sp) {
+      a.x = tgt.x; a.y = tgt.y; a.moving = false;
+      if (tr) { a.trips.shift(); a.wait = tr.wait || 0; a.back = tr.after || null; if (tr.arrive) tr.arrive(); }
+      else a.back = null;
+    } else { a.x += dx / d * sp; a.y += dy / d * sp; a.moving = true; a.face = dx < 0 ? -1 : 1; a.step += dt * 9; }
+  }
+}
+
+// ---------- pixel art ----------
+const SPR = {
+  head:["..HHH..", ".HHHHH.", ".SESES.", "..SSS.."],
+  body:[".BBBBB.", "SBBBBBS", "SBBBBBS", ".BBBBB."],
+  stand:[".LL.LL.", ".LL.LL.", ".FF.FF."],
+  w1:[".LL.LL.", "LL...LL", "F.....F"],
+  w2:["..LLL..", "..LLL..", "..FFF.."],
+};
+const SKIN = ["#f1c7a1", "#d9a37c", "#a8714f", "#7a4b31", "#f5d4b8"], HAIR = ["#2b1d14", "#6b3e1f", "#d8b25a", "#111418", "#8a8f99", "#a33b2b"];
+function hashOf(s) { let h = 7; for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; }
+function palOf(id) {
+  const h = hashOf(id);
+  const shirt = id === "lead" ? "#f2b84b" : id === "critic" ? "#9d8cff" : `hsl(${h % 360},65%,58%)`;
+  return { H:HAIR[h % HAIR.length], S:SKIN[(h >> 3) % SKIN.length], E:"#0b0f18", B:shirt, L:"#1b2a44", F:"#0b0f18" };
+}
+function blit(g, rows, x0, y0, pal) {
+  for (let j = 0; j < rows.length; j++) for (let i = 0; i < rows[j].length; i++) {
+    const c = rows[j][i]; if (c === ".") continue;
+    g.fillStyle = pal[c]; g.fillRect(x0 + i * PX, y0 + j * PX, PX, PX);
+  }
+}
+function person(g, id, x, y, o) {              // feet at (x, y)
+  const pal = palOf(id), x0 = Math.round(x - 3.5 * PX), bob = o.moving ? (Math.floor(o.step) % 2) * PX : 0;
+  const y0 = Math.round(y - 11 * PX) - bob;
+  blit(g, SPR.head, x0, y0, pal);
+  blit(g, SPR.body, x0, y0 + 4 * PX, pal);
+  if (!o.sit) blit(g, o.moving ? (Math.floor(o.step) % 2 ? SPR.w1 : SPR.w2) : SPR.stand, x0, y0 + 8 * PX, pal);
+  if (o.raise) { g.fillStyle = pal.S; g.fillRect(x0 + 7 * PX, y0 + 2 * PX, PX, PX * 3); }
+  if (id === "lead") { g.fillStyle = "#e8eef2"; g.fillRect(x0 - 2 * PX, y0 + 5 * PX, 2 * PX, 3 * PX); }      // clipboard
+  if (id === "critic") { g.strokeStyle = "#cfe6ff"; g.lineWidth = 2; g.strokeRect(x0 + 7 * PX, y0 + 4 * PX, 2 * PX, 2 * PX); }  // magnifier
+  if (o.carry) { g.fillStyle = o.carry; g.shadowColor = o.carry; g.shadowBlur = 8;
+    g.fillRect(x0 + 2 * PX, y0 + 5 * PX - bob, 3 * PX, 2 * PX); g.shadowBlur = 0; }
+  return { top:y0 };
+}
+function desk(g, id, x, y, col, live, T) {      // desk drawn in front of the seated person
+  const w = 18 * PX, top = Math.round(y - 4 * PX), x0 = Math.round(x - w / 2);
+  g.fillStyle = "#16303f"; g.fillRect(x0, top, w, PX * 2);
+  g.fillStyle = "#2f6a85"; g.fillRect(x0, top, w, PX * .7);
+  g.fillStyle = "#0c1c27"; g.fillRect(x0 + PX, top + 2 * PX, w - 2 * PX, 3 * PX);
+  // monitor at the side, its screen shows the agent's real status colour
+  const mx = x0 - 1 * PX, my = top - 5 * PX;
+  g.fillStyle = "#0a1620"; g.fillRect(mx, my, 6 * PX, 5 * PX); g.fillRect(mx + 2 * PX, my + 5 * PX, 2 * PX, PX);
+  g.fillStyle = col; g.globalAlpha = live ? .95 : .35;
+  if (live) { g.shadowColor = col; g.shadowBlur = 12; }
+  g.fillRect(mx + PX, my + PX, 4 * PX, 3 * PX); g.shadowBlur = 0;
+  if (live) { g.fillStyle = "#ffffff"; g.globalAlpha = .55; g.fillRect(mx + PX, my + PX + ((Math.floor(T * 6) % 3) * PX), 4 * PX, 1); }
+  g.globalAlpha = 1;
+}
+function bubble(g, x, y, text, col, T) {
+  g.save(); g.font = "700 10px Orbitron, sans-serif"; g.textAlign = "center";
+  const w = Math.max(18, g.measureText(text).width + 10);
+  g.fillStyle = "rgba(2,10,18,.9)"; g.strokeStyle = col; g.lineWidth = 1.5;
+  g.fillRect(x - w / 2, y - 16, w, 14); g.strokeRect(x - w / 2, y - 16, w, 14);
+  g.fillRect(x - 2, y - 2, 4, 3);
+  g.fillStyle = col; g.fillText(text, x, y - 5.5); g.restore();
+}
+function station(g, key, T) {
+  const st = stations[key], x0 = Math.round(st.x - 9 * PX), y0 = Math.round(st.y - 12 * PX);
+  const fl = flashes["st:" + key], hot = fl && performance.now() - fl.t < 900, glow = hot ? (fl.bad ? "#ff6b7a" : "#9d8cff") : null;
+  g.save();
+  if (glow) { g.shadowColor = glow; g.shadowBlur = 22; }
+  if (key === "web") {             // a terminal with a globe on screen
+    g.fillStyle = "#0b1b26"; g.fillRect(x0, y0, 18 * PX, 12 * PX);
+    g.fillStyle = "#123f5a"; g.fillRect(x0 + PX, y0 + PX, 16 * PX, 8 * PX);
+    g.strokeStyle = glow || "#4fd8ff"; g.lineWidth = 2; g.beginPath(); g.arc(st.x, y0 + 5 * PX, 3.2 * PX, 0, 7); g.stroke();
+    g.beginPath(); g.ellipse(st.x, y0 + 5 * PX, 1.4 * PX, 3.2 * PX, 0, 0, 7); g.moveTo(st.x - 3.2 * PX, y0 + 5 * PX); g.lineTo(st.x + 3.2 * PX, y0 + 5 * PX); g.stroke();
+    g.fillStyle = "#1d3a4c"; g.fillRect(x0 + 4 * PX, y0 + 10 * PX, 10 * PX, PX);
+  } else if (key === "files") {   // a filing cabinet
+    g.fillStyle = "#33495a"; g.fillRect(x0 + 3 * PX, y0, 12 * PX, 12 * PX);
+    for (let i = 0; i < 3; i++) { g.fillStyle = "#4b6a80"; g.fillRect(x0 + 4 * PX, y0 + (1 + i * 4) * PX, 10 * PX, 3 * PX);
+      g.fillStyle = glow || "#a8f0ff"; g.fillRect(x0 + 8 * PX, y0 + (2 + i * 4) * PX, 2 * PX, PX); }
+  } else if (key === "store") {   // StoreForge's shop kiosk with an awning
+    g.fillStyle = "#0e2a1f"; g.fillRect(x0 + PX, y0 + 4 * PX, 16 * PX, 8 * PX);
+    for (let i = 0; i < 6; i++) { g.fillStyle = i % 2 ? "#e8f7ef" : (glow || "#4dffc3"); g.fillRect(x0 + i * 3 * PX, y0, 3 * PX, 3 * PX); }
+    g.fillStyle = "#4dffc3"; g.globalAlpha = .75; g.fillRect(x0 + 4 * PX, y0 + 6 * PX, 10 * PX, 4 * PX); g.globalAlpha = 1;
+  } else {                         // a toolbox
+    g.fillStyle = "#5a2e24"; g.fillRect(x0 + 3 * PX, y0 + 5 * PX, 12 * PX, 7 * PX);
+    g.fillStyle = glow || "#ffb347"; g.fillRect(x0 + 3 * PX, y0 + 5 * PX, 12 * PX, 2 * PX);
+    g.fillStyle = "#2a1712"; g.fillRect(x0 + 7 * PX, y0 + 3 * PX, 4 * PX, PX); g.fillRect(x0 + 6 * PX, y0 + 3 * PX, PX, 2 * PX); g.fillRect(x0 + 11 * PX, y0 + 3 * PX, PX, 2 * PX);
+  }
+  g.restore();
+  g.font = "500 8px Orbitron, sans-serif"; g.textAlign = "center"; g.fillStyle = glow || "#5f8797";
+  g.fillText(st.name, st.x, st.y + 10);
 }
 
 // ---------- drawing ----------
 function nodeOf(id) { return (S.snap && S.snap.nodes[id]) || { status:"idle", activity:"", tools:0, chars:0, tasks:[] }; }
 function glowLine(x1, y1, x2, y2, color, w, alpha, dash, curve) {
   const g = cx2;
-  g.save(); g.globalAlpha = alpha; g.strokeStyle = color; g.lineWidth = w; g.shadowColor = color; g.shadowBlur = 10;
+  g.save(); g.globalAlpha = alpha * .55; g.strokeStyle = color; g.lineWidth = w; g.shadowColor = color; g.shadowBlur = 8;
   if (dash) g.setLineDash(dash);
   g.beginPath(); g.moveTo(x1, y1);
   if (curve) { const c = curvePt(x1, y1, x2, y2, curve); g.quadraticCurveTo(c.x, c.y, x2, y2); } else g.lineTo(x2, y2);
@@ -258,84 +404,91 @@ function along(a, b, t, curve) {
   return { x:u * u * a.x + 2 * u * t * c.x + t * t * b.x, y:u * u * a.y + 2 * u * t * c.y + t * t * b.y };
 }
 function arrow(a, b, color, curve) {
-  const p = along(a, b, 0.88, curve), q = along(a, b, 0.84, curve), ang = Math.atan2(p.y - q.y, p.x - q.x), g = cx2;
-  g.save(); g.fillStyle = color; g.shadowColor = color; g.shadowBlur = 8; g.globalAlpha = .9;
+  const p = along(a, b, 0.8, curve), q = along(a, b, 0.76, curve), ang = Math.atan2(p.y - q.y, p.x - q.x), g = cx2;
+  g.save(); g.fillStyle = color; g.globalAlpha = .6;
   g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(p.x - 8 * Math.cos(ang - .45), p.y - 8 * Math.sin(ang - .45));
   g.lineTo(p.x - 8 * Math.cos(ang + .45), p.y - 8 * Math.sin(ang + .45)); g.closePath(); g.fill(); g.restore();
 }
-function edges() {
+function edges() {                 // floor markings: who delegated what to whom, and which task needs which
   const snap = S.snap, tasks = snap ? Object.values(snap.tasks) : [], J = pos.jarvis;
   const active = st => st === "working" || st === "analyzing";
-  // the command structure, faint
-  for (const id of ["lead", "critic"]) glowLine(J.x, J.y, pos[id].x, pos[id].y, "#4fd8ff", 1, .25);
-  for (const r of S.roster) glowLine(pos.lead.x, pos.lead.y, pos[r.id].x, pos[r.id].y, "#2f7bff", .5, .07);
+  for (const id of ["lead", "critic"]) glowLine(J.x, J.y, pos[id].x, pos[id].y, "#4fd8ff", 1, .3, [2, 6]);
   if (!snap) return;
-  const lst = nodeOf("lead").status, cst = nodeOf("critic").status;
-  if (S.snap.mission.goal) glowLine(J.x, J.y, pos.lead.x, pos.lead.y, "#a8f0ff", active(lst) ? 2.4 : 1.4, active(lst) ? .9 : .5);
-  // delegation: who handed each task to whom
   for (const t of tasks) {
     const p = pos[t.role]; if (!p) continue;
-    const from = t.delegated_by === "critic" ? pos.critic : pos.lead;
-    glowLine(from.x, from.y, p.x, p.y, t.delegated_by === "critic" ? "#9d8cff" : "#4fd8ff", active(t.status) ? 2 : 1.1,
-             active(t.status) ? .85 : t.status === "waiting" ? .35 : .5);
-    arrow(from, p, t.delegated_by === "critic" ? "#9d8cff" : "#4fd8ff");
+    const from = t.delegated_by === "critic" ? pos.critic : pos.lead, c = t.delegated_by === "critic" ? "#9d8cff" : "#4fd8ff";
+    glowLine(from.x, from.y, p.x, p.y, c, active(t.status) ? 2 : 1.1, active(t.status) ? .8 : .45, [2, 6]);
+    arrow(from, p, c);
   }
-  // dependencies: this task needs that one's result
   for (const t of tasks) for (const n of t.needs || []) {
     const dep = snap.tasks[n]; if (!dep || !pos[dep.role] || !pos[t.role] || dep.role === t.role) continue;
     const done = dep.status === "completed" || dep.status === "approval";
-    glowLine(pos[dep.role].x, pos[dep.role].y, pos[t.role].x, pos[t.role].y, done ? "#4dffc3" : "#ffb347", 1.4, .75, [5, 6], .45);
+    glowLine(pos[dep.role].x, pos[dep.role].y, pos[t.role].x, pos[t.role].y, done ? "#4dffc3" : "#ffb347", 1.4, .8, [5, 6], .45);
     arrow(pos[dep.role], pos[t.role], done ? "#4dffc3" : "#ffb347", .45);
   }
-  // the critic reviewing finished work
-  if (active(cst)) for (const t of tasks) if (pos[t.role]) glowLine(pos[t.role].x, pos[t.role].y, pos.critic.x, pos.critic.y, "#9d8cff", 1, .45, [2, 5]);
 }
-function drawNode(id, label, T) {
+function drawJarvis(T) {          // the central intelligence: a pixel AI core
+  const J = pos.jarvis, n = nodeOf("jarvis"), col = COLORS[n.status] || COLORS.supervising, g = cx2, P = 4;
+  const halo = g.createRadialGradient(J.x, J.y, 4, J.x, J.y, J.r * 2.6);
+  halo.addColorStop(0, col + "44"); halo.addColorStop(1, col + "00");
+  g.fillStyle = halo; g.beginPath(); g.arc(J.x, J.y, J.r * 2.6, 0, 7); g.fill();
+  const rr = 7;
+  for (let j = -rr; j <= rr; j++) for (let i = -rr; i <= rr; i++) {
+    const d = Math.hypot(i, j);
+    if (d > rr + .3) continue;
+    g.fillStyle = d > rr - 1.2 ? col : d < 2.4 ? "#e9fbff" : d < 3.6 ? col : "#06202e";
+    g.globalAlpha = d < 3.6 && d >= 2.4 ? .6 + .4 * Math.sin(T * 3) : 1;
+    g.fillRect(Math.round(J.x + i * P - P / 2), Math.round(J.y + j * P - P / 2), P, P);
+  }
+  g.globalAlpha = 1;
+  for (let k2 = 0; k2 < 16; k2++) {           // the ring turns only while JARVIS is really supervising a mission
+    const ang = k2 / 16 * 6.28 + (S.running ? T * .8 : 0);
+    g.fillStyle = col; g.globalAlpha = .55;
+    g.fillRect(Math.round(J.x + Math.cos(ang) * (rr + 5) * P), Math.round(J.y + Math.sin(ang) * (rr + 3) * P * .7 + 6), P, P);
+  }
+  g.globalAlpha = 1;
+  const fl = flashes.jarvis;
+  if (fl) { const k3 = (performance.now() - fl) / 900; if (k3 < 1) { g.globalAlpha = 1 - k3; g.strokeStyle = "#ffffff"; g.lineWidth = 2;
+    g.strokeRect(J.x - (rr + 2 + k3 * 8) * P, J.y - (rr + 2 + k3 * 8) * P, (rr + 2 + k3 * 8) * 2 * P, (rr + 2 + k3 * 8) * 2 * P); g.globalAlpha = 1; } }
+  if (n.status === "approval") bubble(g, J.x, J.y - rr * P - 8, "!", COLORS.approval, T);
+  if (selected === "jarvis") { g.strokeStyle = "#a8f0ff"; g.lineWidth = 1; g.setLineDash([4, 3]); g.strokeRect(J.x - (rr + 6) * P, J.y - (rr + 6) * P, (rr + 6) * 2 * P, (rr + 6) * 2 * P); g.setLineDash([]); }
+  g.textAlign = "center"; g.font = "700 13px Orbitron, sans-serif"; g.fillStyle = "#dff6ff";
+  g.fillText("JARVIS", J.x, J.y + rr * P + 26);
+  g.font = "500 8px Orbitron, sans-serif"; g.fillStyle = col; g.fillText(LABEL[n.status] || n.status, J.x, J.y + rr * P + 38);
+}
+function drawDesk(id, label, T) { // desk, label and real progress, at the agent's home
   const p = pos[id]; if (!p) return;
   const n = nodeOf(id), col = COLORS[n.status] || COLORS.idle, g = cx2, live = n.status === "working" || n.status === "analyzing";
-  const isJ = id === "jarvis", r = p.r;
+  const a = actor(id), home = a && !a.moving && !a.trips.length && !(a.wait > 0) && Math.hypot(a.x - p.x, a.y - p.y) < 1;
   g.save();
-  // halo
-  const halo = g.createRadialGradient(p.x, p.y, r * .3, p.x, p.y, r * (isJ ? 3.2 : 2.6));
-  halo.addColorStop(0, col + (n.status === "idle" ? "22" : "55")); halo.addColorStop(1, col + "00");
-  g.fillStyle = halo; g.beginPath(); g.arc(p.x, p.y, r * (isJ ? 3.2 : 2.6), 0, 7); g.fill();
-  // core
-  g.shadowColor = col; g.shadowBlur = n.status === "idle" ? 4 : 18;
-  g.fillStyle = "rgba(3,16,26,.92)"; g.strokeStyle = col; g.lineWidth = isJ ? 2.5 : 1.6;
-  g.beginPath(); g.arc(p.x, p.y, r, 0, 7); g.fill(); g.stroke();
-  g.fillStyle = col; g.globalAlpha = n.status === "idle" ? .35 : .9;
-  g.beginPath(); g.arc(p.x, p.y, r * (isJ ? .42 : .38), 0, 7); g.fill(); g.globalAlpha = 1;
-  // only a really running agent gets the spinning activity rings
-  if (live || isJ) {
-    const sp = live ? 1 : .25;
-    g.lineWidth = 1.6; g.strokeStyle = col;
-    g.beginPath(); g.arc(p.x, p.y, r + 6, T * 2.2 * sp, T * 2.2 * sp + 1.6); g.stroke();
-    g.beginPath(); g.arc(p.x, p.y, r + 6, T * 2.2 * sp + 3.14, T * 2.2 * sp + 4.4); g.stroke();
-    if (isJ) { g.globalAlpha = .5; g.setLineDash([2, 6]); g.beginPath(); g.arc(p.x, p.y, r + 16, -T * .4, -T * .4 + 6.28); g.stroke(); g.setLineDash([]); }
+  if (n.status !== "idle") { const halo = g.createRadialGradient(p.x, p.y - 10, 4, p.x, p.y - 10, 46);
+    halo.addColorStop(0, col + "33"); halo.addColorStop(1, col + "00"); g.fillStyle = halo; g.beginPath(); g.arc(p.x, p.y - 10, 46, 0, 7); g.fill(); }
+  g.globalAlpha = n.status === "idle" ? .6 : 1;
+  if (home) {                     // sitting at the desk
+    person(g, id, p.x, p.y + 2, { sit:true, raise:n.status === "approval" });
+    if (live) {                   // typing, only while really working
+      const pal = palOf(id), up = Math.floor(T * (/writ/.test(n.activity) ? 12 : 6)) % 2;
+      g.fillStyle = pal.S; g.fillRect(Math.round(p.x - 3 * PX), Math.round(p.y - 5 * PX - up * PX), PX, PX); g.fillRect(Math.round(p.x + 2 * PX), Math.round(p.y - 5 * PX - (1 - up) * PX), PX, PX);
+    }
   }
-  if (n.status === "approval") { g.globalAlpha = .5 + .5 * Math.sin(T * 4); g.strokeStyle = COLORS.approval; g.lineWidth = 2;
-    g.beginPath(); g.arc(p.x, p.y, r + 10, 0, 7); g.stroke(); g.globalAlpha = 1; }
-  if (n.status === "waiting") { g.globalAlpha = .6; g.setLineDash([3, 4]); g.strokeStyle = col; g.beginPath(); g.arc(p.x, p.y, r + 6, 0, 7); g.stroke(); g.setLineDash([]); g.globalAlpha = 1; }
+  desk(g, id, p.x, p.y, col, live, T);
+  g.globalAlpha = 1;
   const fl = flashes[id];
   if (fl) { const k2 = (performance.now() - fl) / 900; if (k2 < 1) { g.globalAlpha = 1 - k2; g.strokeStyle = "#ffffff"; g.lineWidth = 2;
-    g.beginPath(); g.arc(p.x, p.y, r + 4 + k2 * 30, 0, 7); g.stroke(); g.globalAlpha = 1; } }
-  if (id === selected) { g.strokeStyle = "#a8f0ff"; g.lineWidth = 1; g.setLineDash([4, 3]); g.beginPath(); g.arc(p.x, p.y, r + 22, 0, 7); g.stroke(); g.setLineDash([]); }
-  g.shadowBlur = 0;
-  // label + real status
+    g.strokeRect(p.x - 30 - k2 * 12, p.y - 40 - k2 * 12, 60 + k2 * 24, 46 + k2 * 24); g.globalAlpha = 1; } }
+  if (id === selected) { g.strokeStyle = "#a8f0ff"; g.lineWidth = 1; g.setLineDash([4, 3]); g.strokeRect(p.x - 34, p.y - 46, 68, 58); g.setLineDash([]); }
+  if (home) statusBubble(g, id, n, p.x, p.y - 13 * PX + 2, T);
   g.textAlign = "center";
-  if (n.status !== "idle" && !isJ) {          // a plate so live labels stay readable over neighbours
-    const hasT = n.task && S.snap && S.snap.tasks[n.task];
-    g.fillStyle = "rgba(2,10,18,.82)"; g.fillRect(p.x - 74, p.y + r + 5, 148, hasT ? 42 : 24);
-  }
-  g.font = `${isJ ? 700 : 500} ${isJ ? 13 : 9.5}px Orbitron, sans-serif`;
-  g.fillStyle = n.status === "idle" ? "#5f8797" : "#dff6ff";
-  const ly = isJ ? p.y + r + 28 : p.y + r + 16;
+  const hasT = n.task && S.snap && S.snap.tasks[n.task];
+  if (n.status !== "idle") { g.fillStyle = "rgba(2,10,18,.82)"; g.fillRect(p.x - 74, p.y + 6, 148, hasT ? 42 : 24); }
+  g.font = "500 9.5px Orbitron, sans-serif"; g.fillStyle = n.status === "idle" ? "#5f8797" : "#dff6ff";
+  const ly = p.y + 17;
   g.fillText(label.toUpperCase(), p.x, ly);
-  if (n.status !== "idle" || isJ) {
+  if (n.status !== "idle") {
     g.font = "500 8px Orbitron, sans-serif"; g.fillStyle = col;
     g.fillText(LABEL[n.status] || n.status, p.x, ly + 12);
-    const t = n.task && S.snap && S.snap.tasks[n.task];
-    if (t) {         // real per-agent progress: its stage, tool calls and how much it has written
+    const t = hasT ? S.snap.tasks[n.task] : null;
+    if (t) {
       const stg = stageOf(t);
       g.fillStyle = "#7fb3c4"; g.font = "500 12px Rajdhani, sans-serif";
       g.fillText(`${stg.name} · ${t.tools.length} tool${t.tools.length === 1 ? "" : "s"} · ${k(t.chars)} chars`, p.x, ly + 25);
@@ -343,6 +496,25 @@ function drawNode(id, label, T) {
     }
   }
   g.restore();
+}
+function statusBubble(g, id, n, x, y, T) {
+  if (n.status === "analyzing") bubble(g, x, y, ".".repeat(1 + Math.floor(T * 3) % 3), COLORS.analyzing, T);
+  else if (n.status === "waiting") bubble(g, x, y, "…", COLORS.waiting, T);
+  else if (n.status === "approval") bubble(g, x, y, "!", COLORS.approval, T);
+  else if (n.status === "completed") bubble(g, x, y, "✓", COLORS.completed, T);
+  else if (n.status === "failed") bubble(g, x, y, "×", COLORS.failed, T);
+}
+function drawWalkers(T) {         // people away from their desks, nearest last so they overlap properly
+  const list = Object.entries(actors).filter(([id, a]) => { const p = pos[id]; return p && (a.moving || a.trips.length || a.wait > 0 || Math.hypot(a.x - p.x, a.y - p.y) >= 1); });
+  list.sort((u, v) => u[1].y - v[1].y);
+  for (const [id, a] of list) {
+    const g = cx2, n = nodeOf(id);
+    g.save(); g.fillStyle = "rgba(0,0,0,.35)"; g.beginPath(); g.ellipse(a.x, a.y + 1, 9, 3, 0, 0, 7); g.fill();
+    const r = person(g, id, a.x, a.y, { moving:a.moving, step:a.step, carry:a.carry, raise:n.status === "approval" });
+    g.font = "500 8px Orbitron, sans-serif"; g.textAlign = "center"; g.fillStyle = "#a8f0ff";
+    g.fillText(nm(id).toUpperCase(), a.x, r.top - 4);
+    g.restore();
+  }
 }
 function stageOf(t) {
   if (t.status === "completed" || t.status === "approval") return { n:4, name:"DONE" };
@@ -352,37 +524,33 @@ function stageOf(t) {
   if (t.tools.length) return { n:2, name:"USING TOOLS" };
   return { n:1, name:"THINKING" };
 }
+let lastT = null;
 function frame(ts) {
-  const T = ts / 1000, g = cx2;
+  const T = ts / 1000, g = cx2, dt = lastT == null ? 0 : Math.min(.1, T - lastT); lastT = T;
   g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  g.imageSmoothingEnabled = false;
   g.clearRect(0, 0, W, H);
   if (!pos.jarvis || !S.roster.length) { requestAnimationFrame(frame); return; }
-  // backdrop rings around JARVIS
-  const J = pos.jarvis;
-  g.save(); g.strokeStyle = "rgba(79,216,255,.08)"; g.lineWidth = 1;
-  for (const m of [2.2, 4.4, 6.6]) { g.beginPath(); g.ellipse(J.x, J.y, J.r * m * 1.25, J.r * m, 0, 0, 7); g.stroke(); }
+  // the office floor
+  g.save(); g.strokeStyle = "rgba(79,216,255,.05)"; g.lineWidth = 1;
+  for (let x = area.x - (area.x % 24); x < area.x + area.w; x += 24) { g.beginPath(); g.moveTo(x, area.y); g.lineTo(x, area.y + area.h); g.stroke(); }
+  for (let y = area.y - (area.y % 24); y < area.y + area.h; y += 24) { g.beginPath(); g.moveTo(area.x, y); g.lineTo(area.x + area.w, y); g.stroke(); }
   g.restore();
   edges();
-  // pulses travelling along connections (each one is a real delegation or handoff)
-  for (let i = pulses.length - 1; i >= 0; i--) {
-    const p = pulses[i], u = (performance.now() - p.t0) / p.dur;
-    if (u >= 1) { flashes[p.to] = performance.now(); pulses.splice(i, 1); continue; }
-    const a = pos[p.from], b = pos[p.to];
-    for (let j = 0; j < 6; j++) {
-      const q = along(a, b, Math.max(0, u - j * .03));
-      g.save(); g.globalAlpha = 1 - j / 6; g.fillStyle = p.color; g.shadowColor = p.color; g.shadowBlur = 16;
-      g.beginPath(); g.arc(q.x, q.y, (p.big ? 4.5 : 3.5) * (1 - j / 8), 0, 7); g.fill(); g.restore();
-    }
-  }
+  for (const key in stations) station(g, key, T);
+  stepActors(dt);
+  for (const r of S.roster) actor(r.id);
+  actor("lead"); actor("critic");
+  drawJarvis(T);
+  const ids = [...S.roster.map(r => r.id), "lead", "critic"].sort((u, v) => pos[u].y - pos[v].y);
+  for (const id of ids) drawDesk(id, id === "lead" ? "Team lead" : id === "critic" ? "Critic" : id, T);
   for (let i = sparks.length - 1; i >= 0; i--) {
-    const s = sparks[i], u = (performance.now() - s.t0) / 700, p = pos[s.n];
-    if (u >= 1 || !p) { sparks.splice(i, 1); continue; }
-    g.save(); g.globalAlpha = 1 - u; g.fillStyle = s.color; g.shadowColor = s.color; g.shadowBlur = 8;
-    g.beginPath(); g.arc(p.x + Math.cos(s.a) * (p.r + u * s.v), p.y + Math.sin(s.a) * (p.r + u * s.v), 1.8, 0, 7); g.fill(); g.restore();
+    const s = sparks[i], u = (performance.now() - s.t0) / 700;
+    if (u >= 1) { sparks.splice(i, 1); continue; }
+    g.globalAlpha = 1 - u; g.fillStyle = s.color;
+    g.fillRect(Math.round(s.x + Math.cos(s.a) * u * s.v), Math.round(s.y + Math.sin(s.a) * u * s.v), PX, PX); g.globalAlpha = 1;
   }
-  const idleFirst = S.roster.slice().sort((a, b) => (nodeOf(a.id).status === "idle" ? 0 : 1) - (nodeOf(b.id).status === "idle" ? 0 : 1));
-  for (const r of idleFirst) drawNode(r.id, r.id, T);
-  drawNode("lead", "Team lead", T); drawNode("critic", "Critic", T); drawNode("jarvis", "JARVIS", T);
+  drawWalkers(T);
   requestAnimationFrame(frame);
 }
 
@@ -450,7 +618,7 @@ function renderInspector() {
     : selected === "lead" ? "Splits the mission into tasks, assigns specialists, and writes the final report."
     : selected === "critic" ? "Scores the team's work against what you asked and sends weak parts back to be redone."
     : info ? info.about + ` (tools: ${info.tools})` : "";
-  let h = `<h2>INSPECTOR <b>// CLICK ANY NODE</b></h2><div class="name">${esc(title)}</div><div class="about">${esc(about)}</div>
+  let h = `<h2>INSPECTOR <b>// CLICK ANYONE</b></h2><div class="name">${esc(title)}</div><div class="about">${esc(about)}</div>
     <span class="st" style="color:${col}">${esc(LABEL[n.status] || n.status)}</span>
     ${n.activity ? `<span class="muted" style="margin-left:8px">${esc(n.activity)}</span>` : ""}`;
   const m = snap ? snap.mission : {};
@@ -493,15 +661,14 @@ function runs(node, task) {
 }
 function sec(t, body) { return `<div class="sec"><h3>${t}</h3>${body}</div>`; }
 
-cv.addEventListener("click", ev => {
+function hitTest(x, y) {
   let best = null, bd = 1e9;
-  for (const id in pos) { const p = pos[id], d = Math.hypot(ev.clientX - p.x, ev.clientY - p.y); if (d < p.r + 18 && d < bd) { bd = d; best = id; } }
-  if (best) { selected = best; render(); }
-});
-cv.addEventListener("mousemove", ev => {
-  let hit = false; for (const id in pos) { const p = pos[id]; if (Math.hypot(ev.clientX - p.x, ev.clientY - p.y) < p.r + 18) hit = true; }
-  cv.style.cursor = hit ? "pointer" : "default";
-});
+  for (const id in actors) { const a = actors[id], d = Math.hypot(x - a.x, y - (a.y - 16)); if (d < 26 && d < bd) { bd = d; best = id; } }
+  for (const id in pos) { const p = pos[id], d = Math.hypot(x - p.x, y - (id === "jarvis" ? p.y : p.y - 12)); if (d < (id === "jarvis" ? 40 : 34) && d < bd) { bd = d; best = id; } }
+  return best;
+}
+cv.addEventListener("click", ev => { const id = hitTest(ev.clientX, ev.clientY); if (id) { selected = id; render(); } });
+cv.addEventListener("mousemove", ev => { cv.style.cursor = hitTest(ev.clientX, ev.clientY) ? "pointer" : "default"; });
 setInterval(() => { if (S.running) render(); }, 1000);     // the elapsed clock
 poll();
 requestAnimationFrame(frame);
