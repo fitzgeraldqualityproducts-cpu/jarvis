@@ -66,9 +66,10 @@ ROLES = {
     "editor": ("Editor: tightens and corrects writing, and makes it sound like the owner.", THINK),
     "coach": ("Coach: habits, health, training and personal routines, practical and encouraging.", THINK),
     "devil's advocate": ("Devil's advocate: finds the weak spots, risks and better alternatives.", THINK),
-    "store builder": ("Store builder: uses the owner's own StoreForge app to turn product links into a "
-                      "ready-to-launch Shopify store (analysis, brand, listing, content, export ZIP). Pushing "
-                      "to the real store waits for the owner's OK.", "STORE"),
+    "store builder": ("Store builder: uses the owner's own StoreForge app to build a complete Shopify store "
+                      "from a product (photos, analysis, brand, listing, images, store content), ready for the "
+                      "owner to review in StoreForge. Exporting or pushing to the real store waits for the owner.",
+                      "STORE"),
 }
 
 
@@ -441,7 +442,14 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
                  "StoreForge reads the product from the link, so give create_store direct product pages (one " \
                  "product each), never search or category pages. Amazon, AliExpress and Temu block it: prefer " \
                  "a small independent online store's product page (Shopify stores work best), found with web " \
-                 "search. Check the page loads with WebFetch first.\n"
+                 "search. Check the page loads with WebFetch first.\n" \
+                 "The store must end up fully built in StoreForge (every step except exporting), so the owner " \
+                 "can open it and decide about Shopify himself. In order: 1) create_store. 2) add_product_photos " \
+                 "with the product page (and any direct image links you found); if it adds none, try another " \
+                 "page, then add_placeholder_photos. 3) request_rights_confirmation (Jarvis asks him; when he " \
+                 "says yes, Jarvis runs every step). 4) If the rights are already confirmed, generate_store and " \
+                 "follow it with store_details (wait_seconds 150) until the steps are ready. Never export, " \
+                 "build the ZIP or push to Shopify unless the mission asks for it.\n"
     if t["role"] in ("coder", "code reviewer"):
         notes += "\nWrite any code or files in the current folder (the project's own folder). Keep it working " \
                  "and explain how to run it.\n"

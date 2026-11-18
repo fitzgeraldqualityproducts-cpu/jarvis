@@ -37,6 +37,20 @@ TOOLS = [
                     "running jobs and exports. wait_seconds (up to 150) waits for running jobs to move on first.",
      "inputSchema": {"type": "object", "required": ["project_id"], "properties": {
          "project_id": {"type": "string"}, "wait_seconds": {"type": "number"}}}},
+    {"name": "add_product_photos",
+     "description": "Add real product photos to a store project. Give the product page link (page_url: it finds the "
+                    "photos on the page itself, best for Shopify stores) and/or direct image links (image_urls). "
+                    "Says how many were added. Do this right after create_store.",
+     "inputSchema": {"type": "object", "required": ["project_id"], "properties": {
+         "project_id": {"type": "string"}, "page_url": {"type": "string"},
+         "image_urls": {"type": "array", "items": {"type": "string"}, "maxItems": 12}}}},
+    {"name": "add_placeholder_photos",
+     "description": "Only if no real product photos could be added: adds clearly-marked placeholder photos "
+                    "(the product name on a plain box picture) so StoreForge can still build the whole store. "
+                    "The owner swaps in real photos later.",
+     "inputSchema": {"type": "object", "required": ["project_id", "product_name"], "properties": {
+         "project_id": {"type": "string"}, "product_name": {"type": "string"},
+         "count": {"type": "integer", "minimum": 1, "maximum": 4}}}},
     {"name": "request_rights_confirmation",
      "description": "StoreForge needs the owner to confirm he has the right to use the product's photos and "
                     "text before it can generate. You can't confirm it yourself: this asks him, and StoreForge "
@@ -44,9 +58,10 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["project_id"], "properties": {
          "project_id": {"type": "string"}, "why": {"type": "string"}}}},
     {"name": "generate_store",
-     "description": "Run StoreForge's 'Generate everything' (analysis, brand kit, listing, images, store "
-                    "content). Needs the rights confirmed first. Runs in the background: follow it with "
-                    "store_details and wait_seconds.",
+     "description": "Run every StoreForge step except exporting (analysis, brand kit, listing, images, store "
+                    "content), adding placeholder photos first if the project has none. Needs the rights "
+                    "confirmed first (once the owner says yes, Jarvis runs this for you). Runs in the "
+                    "background: follow it with store_details and wait_seconds.",
      "inputSchema": {"type": "object", "required": ["project_id"], "properties": {"project_id": {"type": "string"}}}},
     {"name": "regenerate_section",
      "description": "Redo one part of a store with an instruction, e.g. section=listing, instruction='shorter, "
@@ -99,6 +114,16 @@ def call(name, a):
                                           "StoreForge can't generate until the owner confirms."}
     if name == "store_details":
         return _wait(a["project_id"], a.get("wait_seconds"))
+    if name == "add_product_photos":
+        r = storeforge.add_photos(a["project_id"], a.get("image_urls") or [], a.get("page_url"))
+        r["photos_in_project"] = storeforge.photo_count(a["project_id"])
+        if not r["photos_in_project"]:
+            r["next"] = "No photos yet. Try another product page, or use add_placeholder_photos."
+        return r
+    if name == "add_placeholder_photos":
+        r = storeforge.add_placeholders(a["project_id"], a["product_name"], int(a.get("count") or 3))
+        r["photos_in_project"] = storeforge.photo_count(a["project_id"])
+        return r
     if name == "request_rights_confirmation":
         act = storeforge.request("confirm_rights", a["project_id"], a.get("why", ""), MISSION)
         return {"queued_for_owner": act["text"], "note": "Jarvis will ask him. Nothing happens until he says yes."}
@@ -107,7 +132,9 @@ def call(name, a):
         if not s["rights_confirmed"]:
             return {"error": "The owner hasn't confirmed the rights yet. Use request_rights_confirmation; once he "
                              "says yes, Jarvis starts generation for you."}
-        return {"job": storeforge.generate(a["project_id"])}
+        job = storeforge.prepare_and_generate(a["project_id"], s.get("name") or "")
+        return {"job": job, "note": "Generating every step (not exporting). Follow it with store_details and "
+                                    "wait_seconds. If it fails on photos, add photos or placeholders and run it again."}
     if name == "regenerate_section":
         return storeforge.regenerate(a["project_id"], a["section"], a.get("instruction", ""))
     if name == "build_export_zip":
