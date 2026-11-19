@@ -151,6 +151,13 @@ Rules need no code change: after you say yes, they go into every answer and ever
 Say **"review yourself"** for his report card and an idea, **"what rules have you learned"**, or
 **"forget your rules"**.
 
+**Night school:** between 1 and 5 AM, if he's idle, he picks one thing he struggled with that day
+(from his log and his missed requests) and builds the fix on a separate copy of himself, checks
+it, and leaves your real Jarvis untouched. In the morning he asks: "Overnight I taught myself to
+... Want to keep it?" Say yes and he adds it and restarts ("undo that" still works); say no and he
+throws it away. Nothing is kept without your yes. Ask **"what did you learn last night?"** any
+time, or say **"night school off"** / **"night school on"**.
+
 ## Predicts what you need
 - **Routines:** he notes what you ask him and when (habits.json, on this computer only). When you've
   done the same thing around the same time on 3+ different days, he offers it around then: "You
