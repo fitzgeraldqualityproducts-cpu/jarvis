@@ -254,6 +254,14 @@ you when they're done (not between 11pm and 8am, "quiet_hours").
   report under "Needs your OK", and a change to Jarvis himself is only made if you say yes.
 - Each project uses your Claude plan like several questions do. "team": false turns it off.
 
+**Fixes his team's errors:** when an agent hits an error (a StoreForge step fails, StoreForge won't
+start, an agent comes back empty, or a whole mission crashes), Jarvis tells you, has Claude Code find
+the cause and fix it, then tries that step again. Fixes to his own code are checked like a voice edit
+and rolled back if they break anything, so "undo that" works. In the StoreForge folder he can only run
+npm install/rebuild/build and prisma generate. Things only you can do, like confirming photo rights,
+aren't retried over and over: he just asks you. At most 2 repairs per mission. Say **"what did you
+fix?"**, or **"self-repair off"** / **"self-repair on"**.
+
 ### StoreForge (your Shopify store builder)
 If StoreForge is on this Mac (~/storeforge), the team gets a **store builder** agent that uses it:
 "get the team on building a store for <product link>". It can start a store project, run "generate

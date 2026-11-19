@@ -52,6 +52,7 @@ import hearing  # noqa: E402
 import keeper  # noqa: E402
 import learn  # noqa: E402
 import nightschool  # noqa: E402
+import repair  # noqa: E402
 import mac  # noqa: E402
 import obsidian  # noqa: E402
 import personality  # noqa: E402
@@ -786,9 +787,24 @@ NIGHT_WHAT = re.compile(r"what (?:did|have) you (?:learn|learned|teach yourself|
 NIGHT_TOGGLE = re.compile(r"(?:turn )?night school (on|off)|(?:turn )?(on|off) night school|(stop|start) (?:learning|"
                           r"teaching yourself) (?:at night|overnight)")
 
+REPAIR_WHAT = re.compile(r"what (?:did you|have you) (?:fix|fixed|repair|repaired)(?: on the team| for the team)?|"
+                         r"(?:last|latest) (?:repair|fix)|what broke(?: on the team)?")
+REPAIR_TOGGLE = re.compile(r"(?:turn )?self[- ]?repair (on|off)|(?:turn )?(on|off) self[- ]?repair|"
+                           r"(stop|start) (?:fixing|repairing) (?:the team|team errors|errors)")
+
 
 def ideas_command(t):
     """Owner asks about self-improvement. Returns True if handled."""
+    if REPAIR_WHAT.fullmatch(t):
+        voice.say(repair.last())
+        return True
+    m = REPAIR_TOGGLE.fullmatch(t)
+    if m:
+        on = (m.group(1) or m.group(2) or m.group(3)) in ("on", "start")
+        repair.set_enabled(on)
+        voice.say("Self-repair's on. When my team hits an error I'll fix it and tell you." if on else
+                  "Self-repair's off. I'll just tell you when my team hits an error.")
+        return True
     if NIGHT_WHAT.fullmatch(t):
         lesson = nightschool.pending()
         if lesson and not PENDING:
@@ -1170,10 +1186,19 @@ def speak_up_loop():
                 h = predict.heads_up()
                 if h and speak_up(h[1]):
                     predict.warned(h[0])
+                fix_news = repair.pop_say()
+                if fix_news and not speak_up(fix_news):
+                    repair.say(fix_news, first=True)  # busy: say it in a moment
                 n = None if late else workforce.news()
                 if n and speak_up(team_news_words(n)):
                     workforce.told(n[0])
                     open_team_store(n)
+                if repair.needs_restart() and not workforce.busy():
+                    repair.restarted()
+                    if speak_up("I'm restarting to load the fix I made for my team."):
+                        restart_jarvis()
+                    else:
+                        repair._restart.set()
         except Exception as e:
             print(f"(speak-up failed: {e})")
         time.sleep(30)
