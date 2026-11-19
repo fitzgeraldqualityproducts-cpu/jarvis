@@ -4,7 +4,8 @@ New versions of Jarvis are published to a GitHub repository (set "update_repo" i
 "auto_update": false turns this off). A few minutes after he starts, and then every few hours,
 Jarvis checks it with git. When there's something new he:
   1. saves a snapshot of his folder (so your voice edits are kept),
-  2. merges the new version in with your own changes (git merge),
+  2. merges the new version in with your own changes (git merge; where they clash, the new
+     version wins),
   3. installs any new Python parts it needs,
   4. runs a self-check (selftest.py: code, modules, voice, brain, microphone, speaker) before
      and after, and if anything that worked before is now broken, tries to fix it
@@ -169,7 +170,19 @@ def _check(manual):
     before = _selftest(None)                     # how well everything works now, to compare with
     news = _summary(old, new)
     print(f"(update: installing {new[:8]}: {'; '.join(news)})")
-    r = _git("merge", "--no-edit", "-m", "Update: " + ("; ".join(news) or new[:8]), REMOTE_REF)
+    msg = "Update: " + ("; ".join(news) or new[:8])
+    r = _git("merge", "--no-edit", "-m", msg, REMOTE_REF)
+    clashed = False
+    if r.returncode != 0:
+        # A voice edit touched the same lines as the update. Keep the rest of the voice edits and
+        # take the published version of the lines that clash (the old version stays in git, and a
+        # failed self-check below puts it back).
+        _git("merge", "--abort")
+        _git("reset", "-q", "--hard", old)
+        print(f"(update clashed with local changes, taking the new version of those lines: "
+              f"{(r.stdout + r.stderr).strip()[-300:]})")
+        r = _git("merge", "--no-edit", "-X", "theirs", "-m", msg, REMOTE_REF)
+        clashed = r.returncode == 0
     if r.returncode != 0:
         _git("merge", "--abort")
         _git("reset", "-q", "--hard", old)
@@ -196,7 +209,9 @@ def _check(manual):
         return ("There's an update, but it didn't work on this computer, so I've put myself back." if manual else None), False
     state.update(pre=old, applied=new, applied_at=time.time(), verified=False,
                  baseline=before or state.get("baseline"), selftest=after,
-                 note=("I've updated myself. What's new: " + ". ".join(news) + ".") if news else "I've updated myself.")
+                 note=(("I've updated myself. What's new: " + ". ".join(news) + ".") if news else "I've updated myself.") +
+                      (" It overlapped a change you'd asked me to make, so I used the new version of those parts."
+                       if clashed else ""))
     state["skip"] = [s for s in state.get("skip", []) if s != new][-20:]
     _save(state)
     _ready.set()
