@@ -701,17 +701,17 @@ def handle(text, _part=False):
 
 
 HEARD_UNSURE = threading.Event()     # set while handling something he wasn't sure he heard right
-HEARING_RE = re.compile(r"(?:your|the) (?:hearing|ears|speech (?:model|recognition))")
+HEARING_RE = re.compile(r"\b(?:your|the)(?: (?:old|original|usual|new|better))? (?:hearing|ears|speech (?:model|recognition))\b")
 
 
 def hearing_command(t):
     """ "how's your hearing", "upgrade your hearing", "use your old hearing". True if handled."""
     if not HEARING_RE.search(t):
         return False
-    if re.search(r"(old|original|usual|previous|small|faster|quicker).*hearing|"
-                 r"(downgrade|undo|revert|go back)", t):
+    if re.search(r"\b(old|original|usual|previous|small|faster|quicker)\b.*\bhearing\b|"
+                 r"\b(downgrade|undo|revert|go back)\b", t):
         voice.say(hearing.downgrade())
-    elif re.search(r"(upgrade|improve|better|boost|update|try)", t):
+    elif re.search(r"\b(upgrade|improve|better|boost|update|try)\b", t):
         voice.say("On it. I'll download a bigger speech model and test it on your voice. "
                   "It can take a few minutes, so I'll tell you how it went.", interruptible=False)
 
