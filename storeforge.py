@@ -331,6 +331,22 @@ def summary(pid):
     }
 
 
+def review_picture(pid):
+    """What's really in the store now, for the critic: the copy, price, look, photos and any
+    claims StoreForge flagged to confirm."""
+    v = view(pid)
+    p = v.get("project") or {}
+    f = _fields(pid)
+    f["description"] = _strip((p.get("listing") or {}).get("descriptionHtml", ""))[:1500]
+    assets = [x for x in v.get("assets") or [] if not x.get("discarded")]
+    return {"name": p.get("name"), "steps": {k: s.get("status") for k, s in (p.get("steps") or {}).items()},
+            **f, "photos": len(assets),
+            "placeholder photos": sum(1 for x in assets if "placeholder" in json.dumps(x).lower()),
+            "claims to confirm": ((p.get("listingMeta") or {}).get("confirmMarkers") or [])[:10],
+            "pricing notes": ((p.get("listingMeta") or {}).get("pricing") or {}).get("warnings", [])[:5],
+            "preflight": v.get("preflight")}
+
+
 def generate(pid):
     return _call("POST", f"/api/projects/{pid}/pipeline", {"forceScrape": False})["job"]
 
@@ -583,6 +599,8 @@ def build_everything(pid, name=""):
     """Every StoreForge step except exporting: makes sure there are photos (placeholders if
     needed), runs 'Generate everything', and if it stops on missing photos, adds placeholders and
     runs it again once. Runs in the background; returns at once."""
+    team_changed(pid)
+
     def run():
         try:
             for attempt in range(2):
@@ -597,6 +615,7 @@ def build_everything(pid, name=""):
                     break
         except Exception as e:
             print(f"(StoreForge: building {pid} failed: {e})")
+        team_changed(pid)                        # what it generated isn't Connor's editing
     threading.Thread(target=run, daemon=True, name="storeforge-build").start()
 
 
@@ -610,6 +629,7 @@ def remember(pid, name="", mission=None):
         data["projects"] = [p for p in data["projects"] if p.get("pid") != pid][-19:]
         data["projects"].append({"pid": pid, "name": name, "mission": mission, "t": time.time()})
         _save(data)
+    watch_store(pid, name)
 
 
 def projects_for(mission):
@@ -650,6 +670,212 @@ def open_app(pid=None):
     if pid:
         return f"Opening {(p or {}).get('name') or 'your store'} in StoreForge."
     return "Opening StoreForge."
+
+
+# ---------- real product facts ----------
+
+FACT_WORDS = ("material", "materials", "fabric", "dimensions", "size", "sizes", "weight", "capacity", "volume",
+              "colour", "color", "colors", "colours", "includes", "in the box", "power", "battery", "voltage",
+              "wattage", "care", "made in", "origin", "warranty", "compatible", "length", "width", "height",
+              "diameter", "finish", "certification")
+
+
+def _strip(h):
+    import html as _html
+    h = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", h or "")
+    h = re.sub(r"(?i)<br\s*/?>|</(p|li|div|tr|h\d)>", "\n", h)
+    return re.sub(r"[ \t]+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", h))).strip()
+
+
+def _spec_lines(text, limit=25):
+    """Lines like "Material: stoneware" or "Capacity - 600 ml" from a product page's text."""
+    out, seen = {}, set()
+    for line in text.splitlines():
+        line = line.strip(" -•*\t")
+        m = re.match(r"(?i)^(%s)\s*[:\-–]\s*(.{1,160})$" % "|".join(re.escape(w) for w in FACT_WORDS), line)
+        if m:
+            k = m.group(1).strip().lower()
+            if k not in seen:
+                seen.add(k)
+                out[k] = m.group(2).strip()
+        if len(out) >= limit:
+            break
+    return out
+
+
+def product_facts(page_url):
+    """What a product page actually says about the product (Shopify's product JSON, the page's
+    structured data, and spec lines like "Material: ..."), so a listing only states real facts.
+    Returns {"facts": {...}, "description": "...", "source": url}, or an "error"."""
+    from urllib.parse import urlsplit
+    facts, description = {}, ""
+    parts = urlsplit(page_url)
+    if "/products/" in parts.path:
+        try:
+            raw, _ = _get(f"{parts.scheme}://{parts.netloc}{parts.path.rstrip('/')}.json", limit=3_000_000)
+            pr = json.loads(raw).get("product") or {}
+            for k in ("title", "vendor", "product_type"):
+                if pr.get(k):
+                    facts[k.replace("_", " ")] = pr[k]
+            for o in pr.get("options") or []:
+                vals = [v for v in o.get("values") or [] if v and v != "Default Title"]
+                if vals:
+                    facts["options: " + o.get("name", "option").lower()] = ", ".join(vals[:15])
+            vs = pr.get("variants") or []
+            prices = sorted({float(v["price"]) for v in vs if v.get("price")})
+            if prices:
+                facts["price on that page"] = (f"{prices[0]:.2f}" if len(prices) == 1
+                                               else f"{prices[0]:.2f} to {prices[-1]:.2f}")
+            grams = [v.get("grams") for v in vs if v.get("grams")]
+            if grams:
+                facts["shipping weight"] = f"{grams[0]} g"
+            description = _strip(pr.get("body_html", ""))
+        except Exception:
+            pass
+    try:
+        raw, _ = _get(page_url, limit=4_000_000)
+        page = raw.decode("utf-8", "replace")
+    except Exception as e:
+        if not facts:
+            return {"error": f"Couldn't read {page_url}: {e}", "source": page_url}
+        page = ""
+    for m in re.finditer(r'(?is)<script[^>]+application/ld\+json[^>]*>(.*?)</script>', page):
+        try:
+            data = json.loads(m.group(1).strip())
+        except ValueError:
+            continue
+        items = data if isinstance(data, list) else data.get("@graph", [data]) if isinstance(data, dict) else []
+        for it in items:
+            if not isinstance(it, dict) or "Product" not in str(it.get("@type")):
+                continue
+            for k in ("name", "material", "color", "size", "sku", "gtin13", "gtin12", "mpn", "category", "pattern"):
+                v = it.get(k)
+                if isinstance(v, (str, int, float)) and str(v).strip():
+                    facts.setdefault(k, str(v).strip())
+            b = it.get("brand")
+            if isinstance(b, dict):
+                b = b.get("name")
+            if isinstance(b, str) and b.strip():
+                facts.setdefault("brand", b.strip())
+            for k in ("weight", "width", "height", "depth"):
+                v = it.get(k)
+                if isinstance(v, dict) and v.get("value"):
+                    facts.setdefault(k, f"{v.get('value')} {v.get('unitText') or v.get('unitCode') or ''}".strip())
+            for ap in it.get("additionalProperty") or []:
+                if isinstance(ap, dict) and ap.get("name") and ap.get("value"):
+                    facts.setdefault(str(ap["name"]).lower(), str(ap["value"]))
+            if not description and it.get("description"):
+                description = _strip(str(it["description"]))
+    if page and not description:
+        m = re.search(r'<meta[^>]+(?:name|property)=["\'](?:og:)?description["\'][^>]+content=["\']([^"\']+)', page, re.I)
+        description = _strip(m.group(1)) if m else ""
+    for k, v in _spec_lines(description + "\n" + _strip(page)[:60000]).items():
+        facts.setdefault(k, v)
+    return {"facts": facts, "description": description[:1500], "source": page_url,
+            "note": "Only these are confirmed by the product page. Treat any other spec as unconfirmed: leave it "
+                    "out of the listing or mark it [confirm]."}
+
+
+# ---------- learning from Connor's own edits in StoreForge ----------
+
+def _fields(pid):
+    """The parts of a store Connor might change by hand, as short text."""
+    p = (view(pid).get("project") or {})
+    li, bk = p.get("listing") or {}, p.get("brandKit") or {}
+    v0 = (li.get("variants") or [{}])[0]
+    pal = bk.get("palette") or {}
+    hero = None
+
+    def find(x):
+        nonlocal hero
+        if hero is None and isinstance(x, dict):
+            if x.get("type") == "hero":
+                hero = x
+                return
+            for y in x.values():
+                find(y)
+        elif hero is None and isinstance(x, list):
+            for y in x:
+                find(y)
+    find(p.get("content"))
+    f = {
+        "product title": li.get("title"), "price": v0.get("price"), "compare-at price": v0.get("compareAtPrice"),
+        "product type": li.get("productType"), "tags": ", ".join(li.get("tags") or []),
+        "description": _strip(li.get("descriptionHtml", ""))[:500], "SEO title": li.get("seoTitle"),
+        "brand name": bk.get("selectedName"), "tagline": bk.get("tagline"),
+        "colours": ", ".join(f"{k} {v}" for k, v in pal.items()) if pal else None,
+        "homepage headline": (hero or {}).get("headline"), "homepage subheadline": (hero or {}).get("subheadline"),
+    }
+    return {k: (str(v) if v is not None else "") for k, v in f.items()}
+
+
+def _busy(pid):
+    try:
+        return any(j.get("status") in ("queued", "running") for j in view(pid).get("jobs") or [])
+    except Exception:
+        return True
+
+
+def team_changed(pid):
+    """The team (or StoreForge) is about to change this store, so those changes aren't Connor's."""
+    with _lock:
+        data = _load()
+        data.setdefault("snapshots", {}).setdefault(str(pid), {}).update(dirty=True, quiet_until=time.time() + 300)
+        _save(data)
+
+
+def learn_edits():
+    """Compares each team-built store with how the team left it. What changed since was Connor's
+    own editing, so it's kept as a preference for next time. Returns the new edits."""
+    with _lock:
+        data = _load()
+    snaps = data.get("snapshots") or {}
+    new = []
+    for pid, snap in list(snaps.items()):
+        try:
+            if time.time() < snap.get("quiet_until", 0) or _busy(pid):
+                continue
+            now = _fields(pid)
+            if not now.get("product title"):         # not generated yet
+                continue
+        except Exception:
+            continue
+        old = snap.get("fields")
+        if old and not snap.get("dirty"):
+            for k, v in now.items():
+                if old.get(k, "") != v and (old.get(k) or v):
+                    new.append({"pid": pid, "field": k, "before": old.get(k, "")[:200], "after": v[:200],
+                                "store": snap.get("name", ""), "t": time.time()})
+        snap.update(fields=now, dirty=False)
+    with _lock:
+        data = _load()
+        data["snapshots"] = {**(data.get("snapshots") or {}), **snaps}
+        data["edits"] = ((data.get("edits") or []) + new)[-40:]
+        _save(data)
+    if new:
+        print(f"(StoreForge: learned {len(new)} of your own edits)")
+    return new
+
+
+def watch_store(pid, name=""):
+    """Start comparing this store against later edits (once the team's work on it has settled)."""
+    with _lock:
+        data = _load()
+        data.setdefault("snapshots", {}).setdefault(str(pid), {}).update(name=name, dirty=True,
+                                                                         quiet_until=time.time() + 300)
+        data["snapshots"] = dict(list(data["snapshots"].items())[-15:])
+        _save(data)
+
+
+def edit_notes(limit=15):
+    """Connor's past edits, for the store builder's prompt."""
+    edits = (_load().get("edits") or [])[-limit:]
+    if not edits:
+        return ""
+    lines = [f'- {e["field"]}: the team wrote "{e["before"][:90]}", he changed it to "{e["after"][:90]}"'
+             for e in edits]
+    return ("\nThe owner edited earlier stores himself after the team finished. Do things the way he does "
+            "(his prices, wording, style and colours):\n" + "\n".join(lines) + "\n")
 
 
 # ---------- things only Connor can OK ----------
