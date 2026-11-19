@@ -108,7 +108,7 @@ def main():
     setup_extras.wake_word()
 
     step("Start at sign-in")
-    answer = input("Start Jarvis automatically when you sign in to Windows? (y/n) ").strip().lower()
+    answer = input("Start Jarvis automatically when you sign in to Windows? (y/N) ").strip().lower()
     win.set_login_item(answer.startswith("y"))
     print("  Done. He'll start quietly with an icon by the clock." if answer.startswith("y")
           else "  Jarvis won't start automatically.")

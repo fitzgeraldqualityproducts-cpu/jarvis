@@ -1149,6 +1149,11 @@ def main():
     voice.preload()
     if sys.platform == "win32":
         organizer.start_reminder_watch()
+        try:
+            import win
+            win.clean_login_item()          # no auto-start unless "start_at_login" is true
+        except Exception as e:
+            print(f"(start-up check failed: {e})")
     if "--text" not in sys.argv:
         workforce.recover()                                   # a project cut off by the last restart
         updater.start(lambda: is_busy() or workforce.busy(), restart_jarvis)
