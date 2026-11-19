@@ -135,6 +135,22 @@ words (claps and "Hey Jarvis" still work).
   listens to what you're saying. "barge_in": false turns that off (stop/Jarvis still work).
   Group chat mode still checks who's talking.
 
+## Hears you better
+A while after he's started (when he's idle and has heard you once), he tries a bigger free speech
+model, Whisper large-v3-turbo, that runs on this computer. On an Apple Silicon Mac it runs on the
+graphics chip (MLX); on Windows it runs on the processor. He times it on something you actually said
+and keeps it only if it's still quick (about 1.6 seconds or less); otherwise he stays on small.en and
+deletes the download. It needs about 6 GB free on a Mac (5 GB on a PC) before it downloads anything.
+Say **"how's your hearing"**, **"upgrade your hearing"** (try again, e.g. after freeing space) or
+**"use your old hearing"**. "hearing_upgrade": false in config.json turns this off.
+
+## "Did you mean?"
+If he isn't confident he heard a command right, he checks first: "Sorry, did you say close Discord?"
+If two apps fit what you said, he asks "Open Discord or Spotify?"; a weak match gets "Did you mean
+Safari?". Answer yes, no, the name, or "the second one", or just say something else. Questions go to
+his brain, which asks a quick question back when it can't tell what you meant. "did_you_mean": false
+turns it off; "unsure_below" (default -0.8) sets how unsure he must be (lower = asks less).
+
 ## Learns from what he can't do
 When a command fails or he has to say he can't do something, he notes it (lessons.json). While
 idle he has Claude Code look over his code (read-only) for a fix, and later offers it: "Earlier you

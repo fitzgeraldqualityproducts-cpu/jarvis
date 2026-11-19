@@ -72,6 +72,13 @@ def open_thing(name):
     """Open an allowed app, otherwise a known website or a typed web address."""
     spoken = name.lower().strip(" .?!")
     spoken = spoken.removeprefix("the ").removesuffix(" website").removesuffix(" app").strip()
+    domain = spoken.replace(" dot ", ".").replace(" ", "")
+    if spoken not in SITES and "." not in domain and \
+            not difflib.get_close_matches(spoken, list(SITES), n=1, cutoff=0.8):
+        import clarify
+        options = clarify.choices(spoken, hands.allowed_apps())
+        if options:                                  # "Open Discord or Spotify?"
+            return clarify.ask_choice("open", options)
     if hands.find_app(spoken):
         return hands.open_app(spoken)[1]
     if spoken in SITES:
@@ -126,6 +133,10 @@ def _match_running(spoken):
 def quit_app(spoken):
     if WINDOWS:
         return win.quit_app(spoken)
+    import clarify
+    options = clarify.choices(spoken.lower().removeprefix("the ").removesuffix(" app"), running_apps())
+    if options:                                      # "Close Discord or Spotify?"
+        return clarify.ask_choice("close", options)
     app = _match_running(spoken)
     if not app:
         return f"{spoken.strip().capitalize()} doesn't seem to be open."

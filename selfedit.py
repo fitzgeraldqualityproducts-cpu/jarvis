@@ -19,6 +19,7 @@ jarvis.log
 memory.json
 .spotify_token
 .update-*
+.hearing.json
 *.part
 oura_tokens.json
 sounds/
