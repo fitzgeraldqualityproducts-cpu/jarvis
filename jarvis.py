@@ -480,6 +480,27 @@ def group_mode_command(t):
     return None
 
 
+SHUTDOWN_RE = re.compile(r"(?:(?:shut|power|turn) (?:yourself |it |him )?(?:down|off)|shutdown|quit|exit|"
+                         r"close (?:yourself|down)|stop running|log off|go offline|kill (?:yourself|the app))"
+                         r"(?: now| for (?:now|tonight|today))?(?: please)?")
+
+
+def shut_down():
+    """Typed or said "shut down" / "quit": Jarvis says bye and closes completely (exit code 0 tells
+    the keeper not to restart him). Start him again from the Desktop / Start Jarvis file."""
+    print("(shutting down: asked to)")
+    try:
+        spotify.unduck()
+    except Exception:
+        pass
+    try:
+        voice.say("Shutting down. Holler when you need me.", interruptible=False)
+    except Exception:
+        pass
+    sys.stdout.flush()
+    os._exit(0)
+
+
 def handle(text, _part=False):
     """Returns False when Jarvis should go back to sleep."""
     if not _part:
@@ -496,6 +517,8 @@ def handle(text, _part=False):
             for p in parts:
                 awake = handle(p, _part=True) and awake
             return awake
+    if SHUTDOWN_RE.fullmatch(t) and WHO.get("owner", True):     # only Connor can switch him off
+        shut_down()
     if re.fullmatch(r"(stop talking|shut up|be quiet|quiet|hush|enough|that's enough|ok stop|okay stop|stop stop)", t):
         return True                     # he's already stopped: just listen for what's next
     if not t or SLEEP_RE.fullmatch(t):
