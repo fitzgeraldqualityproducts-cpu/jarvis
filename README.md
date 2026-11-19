@@ -171,7 +171,13 @@ business strategist, finance analyst, marketer, designer, coder, code reviewer, 
 devil's advocate). Ones that don't need each other work at the same time; the rest get their
 teammates' work passed along. A critic scores each part on its own (for a store: photos, writing,
 price, look and facts; otherwise accuracy, completeness, specificity and usefulness) and sends only
-the parts under 8 back, up to 3 rounds, then the lead writes a report. It all happens in the background, so keep talking to him; he tells
+the parts under 8 back, up to 3 rounds. For a store, a picky shopper first reads it like a real buyer
+and the store builder fixes whatever would stop them buying. Before you see anything, the fact
+checker double-checks the facts, numbers and prices (on the web) and the team fixes what's wrong.
+If a job needs know-how nobody has, the lead hires up to 2 new specialists just for that mission
+(they get a NEW HIRE desk in the pixel office). After every mission each worker writes one thing to
+do differently next time (team_lessons.json) and reads it before its next job. Then the lead writes
+a report. It all happens in the background, so keep talking to him; he tells
 you when they're done (not between 11pm and 8am, "quiet_hours").
 - **"How's the team doing?"**, **"read me the report"**, **"who's on your team?"**, **"call off the team"**.
 - If I restart while the team is working (an update, a crash), I now wait for them first. If a project still gets cut off, I say so, and **"restart the team project"** starts it again.

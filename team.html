@@ -188,6 +188,10 @@ function describe(e) {
     case "finished": return [nm(e.node), `${e.ok ? "finished" : "came back empty"} in ${e.seconds}s · ${k(e.chars)} chars${T}`];
     case "result": return [nm(e.node), `delivered result${e.needs_ok ? " (needs your OK)" : ""}${T}`];
     case "review": return ["Critic", `${e.round > 1 ? `Round ${e.round} · ` : ""}Score ${e.score ?? "?"}/10${e.parts && Object.keys(e.parts).length ? " (" + Object.entries(e.parts).map(([k2, p]) => `${esc(k2)} <span style="color:${p.score >= 8 ? "var(--green, #4dffc3)" : "var(--amber, #ffb347)"}">${p.score}</span>`).join(" · ") + ")" : ""}: ${esc(e.verdict)}${e.redo && e.redo.length ? " · sent back " + e.redo.join(", ") : ""}`];
+    case "shopper": return ["Picky shopper", e.would_buy && !(e.blockers || []).length ? `Would buy ${esc(e.store || "it")}`
+      : `Wouldn't buy ${esc(e.store || "it")} yet: ${(e.blockers || []).map(b => esc(b.issue)).join(" · ")}`];
+    case "doublecheck": return ["Fact checker", (e.issues || []).length ? `Flagged: ${e.issues.map(i => esc(i.claim) + " (" + esc(i.problem) + ")").join(" · ")}` : "Double-checked everything: it all checks out"];
+    case "lesson": return [nm(e.node), `Note to self for next time: ${esc(e.text)}`];
     case "approval": return ["JARVIS", `Waiting for your OK: ${esc((e.items || []).join("; ") || e.change)}`];
     case "writing": return null;          // too chatty for the feed; shown on the node instead
   }
@@ -532,6 +536,11 @@ function drawDesk(id, label, T) { // desk, label and real progress, at the agent
   g.font = "500 9.5px Orbitron, sans-serif"; g.fillStyle = n.status === "idle" ? "#5f8797" : "#dff6ff";
   const ly = p.y + 17;
   g.fillText(label.toUpperCase(), p.x, ly);
+  const rr = S.roster.find(x => x.id === id);
+  if (rr && rr.hire) {             // hired for this mission
+    g.font = "700 7.5px Orbitron, sans-serif"; g.fillStyle = "#ffd166";
+    g.fillText("★ NEW HIRE", p.x, p.y - 17 * PX);
+  }
   if (n.status !== "idle") {
     g.font = "500 8px Orbitron, sans-serif"; g.fillStyle = col;
     g.fillText(LABEL[n.status] || n.status, p.x, ly + 12);
@@ -617,14 +626,15 @@ function render() {
     $("mmeta").innerHTML = `ELAPSED <span>${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}</span> · AGENTS ACTIVE <span>${busy}</span> · TASKS <span>${tasks.length}</span> · TOOL CALLS <span>${tasks.reduce((a, t) => a + t.tools.length, 0)}</span>`
       + (m.score != null ? ` · CRITIC <span>${m.score}/10</span>` : "") + ` · STARTED <span>${clock(m.started)}</span>`;
   }
-  const order = PHASES.map(p => p[0]), cur = m.phase === "redoing" ? "reviewing" : m.phase;
+  const order = PHASES.map(p => p[0]), cur = /redoing|customer test|double-checking/.test(m.phase) ? "reviewing" : m.phase;
   const ci = order.indexOf(cur);
   $("phases").innerHTML = PHASES.map(([id, name], i) =>
     `<div class="ph ${cur === id && id !== "done" ? "on" : ""} ${ci > i || m.phase === "done" ? "done" : ""}">${name}</div>`).join("");
   const pr = (m.progress || { done:0, total:0 });
   $("pbar").style.width = (pr.total ? (100 * pr.done / pr.total) : 0) + "%";
   $("pstage").textContent = ({ idle:"STANDING BY", planning:"TEAM LEAD IS PLANNING", working:"SPECIALISTS AT WORK", reviewing:"CRITIC IS REVIEWING",
-    redoing:"REDOING WHAT THE CRITIC SENT BACK", reporting:"WRITING THE REPORT", done:"MISSION COMPLETE", failed:"MISSION FAILED",
+    redoing:"REDOING WHAT THE CRITIC SENT BACK", "customer test":"A PICKY SHOPPER IS TESTING THE STORE",
+    "double-checking":"FACT CHECKER IS DOUBLE-CHECKING EVERYTHING", reporting:"WRITING THE REPORT", done:"MISSION COMPLETE", failed:"MISSION FAILED",
     cancelled:"MISSION CALLED OFF", cancelling:"CALLING THE TEAM OFF", interrupted:"CUT OFF BY A RESTART · SAY RESTART THE TEAM PROJECT" })[m.phase] || m.phase.toUpperCase();
   $("pcount").textContent = pr.total ? `${pr.done} / ${pr.total} STAGES · ${Math.round(100 * pr.done / pr.total)}%` : "";
   const ap = $("approve");

@@ -39,6 +39,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 FOLDER = HERE / "team"
 FILE = HERE / "team.json"
+LESSONS = HERE / "team_lessons.json"     # each worker's notes to self from past missions
 CONFIG = HERE / "config.json"
 _lock = threading.RLock()
 _stop = threading.Event()
@@ -97,8 +98,10 @@ def _store_tools(folder, pid):
 LEAD_PROMPT = """You are the team lead of Jarvis's AI team, working for {owner}. {owner} asked out loud:
 "{goal}"
 
-Your specialists (use only these names):
+Your specialists:
 {roster}
+If the job needs know-how none of them has (say, a pet product expert or a sneaker reseller), you may hire
+up to 2 new specialists for this mission under "hires" and give them tasks by that name.
 
 Break the job into 2 to 6 tasks for specialists. Tasks that need another task's result list it in "needs";
 tasks that don't will be done at the same time. Use web specialists for anything current or factual, and
@@ -112,8 +115,10 @@ step in "needs_ok". If {owner} wants Jarvis himself changed, put the precise cha
 Reply with ONLY one line of JSON, no markdown:
 {{"title": "short project name (3-6 words)",
   "tasks": [{{"id": "t1", "role": "researcher", "task": "exactly what to do and deliver", "needs": []}}],
+  "hires": [{{"role": "short job title", "about": "what they know and do", "web": true}}],
   "needs_ok": ["real-world steps only {owner} can approve"],
-  "jarvis_change": ""}}"""
+  "jarvis_change": ""}}
+Leave "hires" empty unless a task really needs a new specialist."""
 
 WORKER_PROMPT = """You are the {role} on Jarvis's AI team, working for {owner}. {about}
 
@@ -149,6 +154,73 @@ GENERAL_PARTS = """- accuracy: correct, nothing made up
 - usefulness: ready to act on"""
 
 MAX_REDO_ROUNDS = 3
+
+SHOPPER_PROMPT = """You are a picky online shopper who has never heard of this brand. You've landed on this store:
+{store}
+Read it like a real buyer deciding whether to spend money. List what would stop you from buying: missing or
+fake-looking photos, an unclear or unbelievable description, a price that feels wrong, missing details
+(size, materials, shipping, returns), anything that feels untrustworthy. Only real problems, worst first.
+Reply with ONLY one line of JSON, no markdown:
+{{"would_buy": true or false, "blockers": [{{"issue": "what puts you off", "fix": "what the store should change"}}]}}"""
+
+CHECKER_PROMPT = """You are the fact checker on Jarvis's AI team, doing the final double-check before {owner}
+sees the work. {owner} asked: "{goal}"
+
+The team's work:
+{work}
+{store}
+Check the facts, numbers, prices, dates, names and links that matter, using the web where you can. Flag
+only things that are wrong or can't be true, not style. Reply with ONLY one line of JSON, no markdown:
+{{"issues": [{{"task": "task id", "claim": "what it says", "problem": "what's wrong", "fix": "what it should say"}}]}}"""
+
+LESSONS_PROMPT = """The AI team just finished a mission for {owner}: "{goal}". Score: {score}/10.
+How it went (the critic's part scores, the shopper's and fact checker's findings, and each worker's task):
+{how}
+
+For each worker below, write ONE short, concrete thing that worker should do differently next time, based on
+what actually went wrong or could have been better in this mission (not generic advice). Reply with ONLY one
+line of JSON, no markdown: {{"worker name": "one thing to do differently"}}
+Workers: {workers}"""
+
+
+def _lessons():
+    try:
+        return json.loads(LESSONS.read_text())
+    except Exception:
+        return {}
+
+
+def lessons_for(role, limit=4):
+    """A worker's notes to self from its last missions, for its prompt."""
+    got = (_lessons().get(role) or [])[-limit:]
+    return ("\nYour notes to self from earlier missions (do these):\n" + "\n".join(f"- {x['lesson']}" for x in got) + "\n"
+            ) if got else ""
+
+
+def _write_lessons(plan, goal, owner, folder, score, parts, shopper, flags):
+    """After a mission each worker writes one thing to do differently, kept for its next job."""
+    workers = sorted({t["role"] for t in plan["tasks"] if t["role"] in ROLES})
+    if not workers:
+        return
+    how = json.dumps({"parts": parts, "shopper": shopper, "fact checker": flags,
+                      "tasks": [{"worker": t["role"], "task": t["task"][:200], "result_start": (t["result"] or "")[:600]}
+                                for t in plan["tasks"]]}, default=str)[:9000]
+    r = _json(_run(LESSONS_PROMPT.format(owner=owner, goal=goal, score=score or "?", how=how,
+                                         workers=", ".join(workers)), THINK, folder, 150, "lessons log",
+                   node="lead")) or {}
+    with _lock:
+        data = _lessons()
+        for w in workers:
+            lesson = str(r.get(w) or "").strip()
+            if lesson:
+                data.setdefault(w, []).append({"lesson": lesson[:240], "mission": plan.get("title") or goal[:40],
+                                               "t": time.time()})
+                data[w] = data[w][-8:]
+                _emit("lesson", node=w, text=lesson[:240])
+        LESSONS.write_text(json.dumps(data, indent=1))
+
+SHOPPER = ("Picky shopper: reads each finished store like a real buyer and lists what would stop them buying.",
+           THINK)
 
 REPORT_PROMPT = """You are the team lead of Jarvis's AI team. {owner} asked: "{goal}"
 
@@ -406,10 +478,20 @@ def _plan(goal, owner, folder):
         plan = {"title": goal[:40], "tasks": [{"id": "t1", "role": "researcher", "task": goal, "needs": []},
                                              {"id": "t2", "role": "planner", "task": f"Turn the research into a "
                                               f"practical plan for: {goal}", "needs": ["t1"]}]}
+    hires = {}
+    for h in (plan.get("hires") or [])[:2]:
+        if not isinstance(h, dict):
+            continue
+        name = re.sub(r"[^a-z0-9 '&-]", "", str(h.get("role", "")).lower()).strip()[:30]
+        if name and name not in _roles() and name not in ("lead", "critic", "jarvis", "shopper"):
+            about = str(h.get("about") or "specialist").strip()[:200]
+            hires[name] = (f"{name.title()} (new hire): {about}", WEB if h.get("web", True) else THINK)
+    plan["hires"] = hires
+    known = {**_roles(), **hires}
     tasks = []
     for i, t in enumerate(plan["tasks"][:6]):
         role = str(t.get("role", "")).lower()
-        if role not in _roles():
+        if role not in known:
             role = "researcher" if re.search(r"research|find|search|look", str(t.get("task", "")), re.I) else "planner"
         tasks.append({"id": str(t.get("id") or f"t{i + 1}"), "role": role, "task": str(t.get("task") or goal),
                       "needs": [str(n) for n in (t.get("needs") or [])], "result": "", "status": "waiting"})
@@ -417,7 +499,12 @@ def _plan(goal, owner, folder):
     for t in tasks:
         t["needs"] = [n for n in t["needs"] if n in ids and n != t["id"]]
     plan["tasks"] = tasks
+    used = {t["role"] for t in tasks}
+    plan["hires"] = hires = {k: v for k, v in hires.items() if k in used}
+    for name, (about, tools) in hires.items():
+        print(f"(team: hired a {name})")
     _emit("plan", title=plan.get("title") or goal[:40],
+          hires=[{"id": k, "about": a.split(":", 1)[-1].strip(), "web": t is WEB} for k, (a, t) in hires.items()],
           tasks=[{k: t[k] for k in ("id", "role", "task", "needs")} for t in tasks],
           needs_ok=[str(x) for x in (plan.get("needs_ok") or [])], jarvis_change=str(plan.get("jarvis_change") or ""))
     for t in tasks:
@@ -428,7 +515,7 @@ def _plan(goal, owner, folder):
 
 
 def _do_task(t, plan, goal, owner, folder, notes=""):
-    about, tools = ROLES[t["role"]]
+    about, tools = ROLES.get(t["role"]) or (plan.get("hires") or {}).get(t["role"]) or ROLES["researcher"]
     if tools == "STORE":
         tools = _store_tools(folder, LIVE.get("pid"))
     inputs = ""
@@ -485,6 +572,7 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
                  "compare it with the product facts; for any spec the page didn't confirm, use regenerate_section " \
                  "to take it out or mark it [confirm], and list those under a heading \"Facts I couldn't " \
                  "confirm\" in your result.\n"
+    notes += lessons_for(t["role"])
     if t["role"] in ("coder", "code reviewer"):
         notes += "\nWrite any code or files in the current folder (the project's own folder). Keep it working " \
                  "and explain how to run it.\n"
@@ -577,6 +665,86 @@ def _review(plan, goal, owner, folder, pid, rnd):
     return score, parts, verdict, redo
 
 
+def _customer_test(plan, goal, owner, folder, pid):
+    """A picky shopper reads each store the team built; what would stop them buying goes back to the
+    store builder to fix, once. Returns the shopper's verdicts."""
+    import storeforge
+    builder = next((t for t in plan["tasks"] if t["role"] == "store builder"), None)
+    out = []
+    for st in storeforge.projects_for(pid)[-2:]:
+        try:
+            pic = storeforge.review_picture(st["pid"])
+        except Exception as e:
+            print(f"(team: shopper couldn't read the store: {e})")
+            continue
+        if not pic.get("product title"):
+            continue                                 # nothing generated to shop yet
+        _emit("handoff", **{"from": "store builder", "to": "shopper", "from_task": builder and builder["id"],
+                            "task": None, "chars": 0})
+        _emit("agent", node="shopper", status="working", activity=f"shopping {pic.get('name') or 'the store'}")
+        r = _json(_run(SHOPPER_PROMPT.format(store=json.dumps(pic, indent=1, default=str)[:7000]), THINK, folder,
+                       240, "picky shopper", node="shopper")) or {}
+        blockers = [b for b in (r.get("blockers") or []) if isinstance(b, dict) and b.get("issue")][:6]
+        _emit("shopper", store=pic.get("name"), would_buy=bool(r.get("would_buy")),
+              blockers=[{"issue": str(b["issue"])[:200], "fix": str(b.get("fix", ""))[:200]} for b in blockers])
+        _emit("agent", node="shopper", status="completed",
+              activity="would buy it" if r.get("would_buy") and not blockers else
+              f"{len(blockers)} thing{'s' if len(blockers) != 1 else ''} would stop me buying")
+        out.append({"store": pic.get("name"), "would_buy": bool(r.get("would_buy")), "blockers": blockers})
+        if blockers and builder and not _stop.is_set():
+            fix = "A picky shopper read the store and wouldn't buy because: " + "; ".join(
+                f"{b['issue']} (fix: {b.get('fix', '')})" for b in blockers) + \
+                ". Fix these in the store itself with the StoreForge tools, then check it with store_details."
+            _emit("delegate", **{"from": "shopper", "to": "store builder", "task": builder["id"], "text": fix[:200]})
+            _run_wave([builder], plan, goal, owner, folder, {builder["id"]: fix})
+    return out
+
+
+def _double_check(plan, goal, owner, folder, pid):
+    """The fact checker reads everything before it reaches the owner and flags what's wrong; those
+    tasks fix it once. Returns the flags (the report mentions any that are left)."""
+    store = ""
+    if _is_store(plan):
+        try:
+            import storeforge
+            pics = [storeforge.review_picture(x["pid"]) for x in storeforge.projects_for(pid)[-2:]]
+            if pics:
+                store = "\nThe store as it is in StoreForge:\n" + json.dumps(pics, indent=1, default=str)[:6000] + "\n"
+        except Exception:
+            pass
+    for t in plan["tasks"]:
+        _emit("handoff", **{"from": t["role"], "to": "fact checker", "from_task": t["id"], "task": None,
+                            "chars": len(t["result"][:5000])})
+    _emit("agent", node="fact checker", status="working", activity="double-checking before you see it")
+    r = _json(_run(CHECKER_PROMPT.format(owner=owner, goal=goal, work=_work_text(plan), store=store), WEB, folder,
+                   420, "fact checker (double-check)", node="fact checker")) or {}
+    ids = {t["id"]: t for t in plan["tasks"]}
+    builder = next((t["id"] for t in plan["tasks"] if t["role"] == "store builder"), None)
+    issues = []
+    for i in (r.get("issues") or [])[:8]:
+        if not isinstance(i, dict) or not i.get("problem"):
+            continue
+        tid = str(i.get("task") or "")
+        if tid not in ids:
+            tid = builder or ""
+        issues.append({"task": tid, "claim": str(i.get("claim", ""))[:200], "problem": str(i["problem"])[:200],
+                       "fix": str(i.get("fix", ""))[:200]})
+    _emit("doublecheck", issues=issues)
+    _emit("agent", node="fact checker", status="completed",
+          activity="all checks out" if not issues else f"flagged {len(issues)} thing{'s' if len(issues) != 1 else ''}")
+    fixes = {}
+    for i in issues:
+        if i["task"]:
+            fixes.setdefault(i["task"], []).append(f'"{i["claim"]}" is wrong: {i["problem"]}. Should be: {i["fix"]}')
+    if fixes and not _stop.is_set():
+        for tid in fixes:
+            _emit("delegate", **{"from": "fact checker", "to": ids[tid]["role"], "task": tid,
+                                 "text": "Fix: " + fixes[tid][0][:180]})
+        _run_wave([ids[k] for k in fixes], plan, goal, owner, folder,
+                  {k: "The fact checker found mistakes: " + "; ".join(v) for k, v in fixes.items()})
+    return issues
+
+
 def _run_wave(wave, plan, goal, owner, folder, notes=None):
     threads = []
     for t in wave:
@@ -614,6 +782,14 @@ def _project(pid, goal):
             _update(pid, status="cancelled")
             _emit("phase", phase="cancelled")
             return
+        shopper = []
+        if _is_store(plan) and not _stop.is_set():
+            _current["step"] = "customer test"
+            _emit("phase", phase="customer test")
+            try:
+                shopper = _customer_test(plan, goal, owner, folder, pid)
+            except Exception as e:
+                print(f"(team: customer test failed: {e})")
         _current["step"] = "critic"
         _emit("phase", phase="reviewing")
         for t in plan["tasks"]:
@@ -633,11 +809,27 @@ def _project(pid, goal):
                 break
             score, parts, verdict, redo = score2, parts2, verdict2, redo2
         review = {"verdict": verdict, "score": score, "parts": parts}
+        flags = []
+        if not _stop.is_set():
+            _current["step"] = "double-checking"
+            _emit("phase", phase="double-checking")
+            try:
+                flags = _double_check(plan, goal, owner, folder, pid)
+            except Exception as e:
+                print(f"(team: double-check failed: {e})")
+        checks = ""
+        if flags:
+            checks += "\nThe fact checker flagged these (and the team was asked to fix them): " + "; ".join(
+                f"{f['claim']}: {f['problem']}" for f in flags)
+        for sh in shopper:
+            checks += (f"\nA picky shopper read {sh['store']}: " + ("would buy it." if sh["would_buy"] else
+                       "wouldn't buy yet because " + "; ".join(b["issue"] for b in sh["blockers"]) +
+                       " (the store builder was asked to fix these)."))
         _current["step"] = "writing the report"
         _emit("phase", phase="reporting")
         _emit("handoff", **{"from": "critic", "to": "lead", "from_task": None, "task": None, "chars": 0})
         report = _run(REPORT_PROMPT.format(owner=owner, goal=goal, work=_work_text(plan, 8000),
-                                           verdict=review.get("verdict", "no verdict")),
+                                           verdict=(review.get("verdict") or "no verdict") + checks),
                       THINK, folder, 300, "team lead (report)", node="lead")
         spoken = ""
         m = re.search(r"\n\s*SPOKEN:\s*(.+)\s*$", report, re.S)
@@ -681,6 +873,10 @@ def _project(pid, goal):
         except Exception:
             pass
         print(f"(team: finished {plan.get('title')!r} in {(time.time() - started) / 60:.1f} min, score {score})")
+        try:
+            _write_lessons(plan, goal, owner, folder, score, parts, shopper, flags)
+        except Exception as e:
+            print(f"(team: couldn't write the lessons log: {e})")
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -896,6 +1092,26 @@ def _load_last_live():
     LIVE["pid"] = 0
 
 
+def _live_roster(events):
+    """Everyone with a desk in the pixel office: the specialists, the picky shopper (where there's
+    StoreForge) and this mission's new hires."""
+    roles = dict(_roles())
+    if "store builder" in roles:
+        roles["shopper"] = SHOPPER
+    plan = None
+    for e in events:
+        if e.get("type") == "mission":
+            plan = None
+        elif e.get("type") == "plan":
+            plan = e
+    for h in (plan or {}).get("hires") or []:
+        if h.get("id"):
+            roles[h["id"]] = (h["id"].title() + " (new hire): " + h.get("about", ""), WEB if h.get("web") else THINK)
+    return [{"id": n, "about": a.split(":", 1)[-1].strip(), "hire": "(new hire)" in a,
+             "tools": "web" if t is WEB else "files" if t is BUILD else "StoreForge + web" if t == "STORE" else "thinking"}
+            for n, (a, t) in roles.items()]
+
+
 def _reduce(events):
     """Works out the current picture (mission, agents, tasks, progress) from the events alone."""
     mission = {"phase": "idle", "approvals": [], "change": ""}
@@ -982,6 +1198,12 @@ def _reduce(events):
                     tasks[tid].update(status="waiting", activity="sent back by the critic")
         elif k == "approval":
             mission.update(approvals=e.get("items") or [], change=e.get("change") or "")
+        elif k == "shopper":
+            mission.setdefault("shopper", []).append({x: e.get(x) for x in ("store", "would_buy", "blockers")})
+        elif k == "doublecheck":
+            mission["flags"] = e.get("issues") or []
+        elif k == "lesson":
+            mission.setdefault("lessons", {})[e.get("node")] = e.get("text")
     for n in nodes.values():
         mine = [tasks[i] for i in n["tasks"] if i in tasks]
         if mine:
@@ -1011,8 +1233,5 @@ def live_state(since=0):
     since = since if 0 <= since <= len(events) else 0
     return {"pid": pid, "seq": len(events), "since": since, "events": events[since:], "running": busy(),
             "snapshot": _reduce(events), "now": time.time(),
-            "roster": [{"id": n, "about": a.split(":", 1)[-1].strip(),
-                        "tools": "web" if t is WEB else "files" if t is BUILD else "StoreForge + web"
-                        if t == "STORE" else "thinking"}
-                       for n, (a, t) in _roles().items()],
+            "roster": _live_roster(events),
             "history": {k: v[-8:] for k, v in history.items()}}
