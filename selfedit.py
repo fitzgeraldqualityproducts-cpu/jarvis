@@ -36,6 +36,9 @@ team/
 storeforge_actions.json
 storeforge_actions.tmp
 storeforge.log
+.night/
+nightschool.json
+team_lessons.json
 """
 PROMPT = """You are editing the source code of Jarvis, a Python voice assistant that lives in this folder.
 It runs on macOS and on Windows (Windows-only parts are in win.py and behind sys.platform == "win32"
@@ -79,18 +82,20 @@ def _changed_files():
     return [line[3:].strip().strip('"') for line in out if line.strip()]
 
 
-def _check():
-    """Returns None if the code still looks healthy, otherwise what's wrong."""
-    for f in HERE.glob("*.py"):
+def _check(folder=None):
+    """Returns None if the code still looks healthy, otherwise what's wrong. folder: a copy of
+    Jarvis to check instead of this one (night school builds its fixes in a copy)."""
+    folder = Path(folder or HERE)
+    for f in folder.glob("*.py"):
         r = subprocess.run([sys.executable, "-m", "py_compile", str(f)], capture_output=True, text=True)
         if r.returncode != 0:
             return f"{f.name}: {r.stderr.strip()[-300:]}"
     try:
-        json.loads((HERE / "config.json").read_text())
+        json.loads((folder / "config.json").read_text()) if (folder / "config.json").exists() else None
     except Exception as e:
         return f"config.json: {e}"
     import os
-    r = subprocess.run([sys.executable, "-c", "import jarvis"], cwd=HERE, capture_output=True, text=True,
+    r = subprocess.run([sys.executable, "-c", "import jarvis"], cwd=folder, capture_output=True, text=True,
                        env=dict(os.environ, JARVIS_CHECK="1"))
     if r.returncode != 0:
         return r.stderr.strip()[-300:]
