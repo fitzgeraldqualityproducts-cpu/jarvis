@@ -444,8 +444,40 @@ STARTUP = Path(os.environ.get("APPDATA", str(Path.home()))) / "Microsoft/Windows
 LOGIN_VBS = STARTUP / "Jarvis.vbs"
 
 
+def _save_login_choice(enable):
+    cfg_path = HERE / "config.json"
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    cfg["start_at_login"] = bool(enable)
+    cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+
+def login_item_allowed():
+    """Jarvis only starts at sign-in if you've said yes ("start_at_login": true in config.json)."""
+    try:
+        return json.loads((HERE / "config.json").read_text(encoding="utf-8")).get("start_at_login") is True
+    except Exception:
+        return False
+
+
+def clean_login_item():
+    """Removes the start-at-sign-in file unless you've turned that on. Returns True if it removed one."""
+    if login_item_allowed() or not LOGIN_VBS.exists():
+        return False
+    try:
+        LOGIN_VBS.unlink()
+        print("(removed Jarvis from Windows start-up, as asked)")
+        return True
+    except Exception as e:
+        print(f"(couldn't remove the start-up file {LOGIN_VBS}: {e})")
+        return False
+
+
 def set_login_item(enable):
     """Starts Jarvis quietly (tray icon only) when you sign in to Windows."""
+    _save_login_choice(enable)
     if not enable:
         LOGIN_VBS.unlink(missing_ok=True)
         return True
