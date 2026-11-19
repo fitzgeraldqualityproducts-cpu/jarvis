@@ -1,0 +1,9 @@
+{
+  "_how": "Copy this file to addons.json, set disabled to false on the ones you want, and restart Jarvis. Each entry is a free MCP server someone else built; Jarvis's brain can then use its tools. npx needs Node.js; uvx comes with uv (already installed for Jarvis).",
+  "mcpServers": {
+    "time": {"command": "uvx", "args": ["mcp-server-time"], "disabled": true},
+    "fetch": {"command": "uvx", "args": ["mcp-server-fetch"], "disabled": true},
+    "wikipedia": {"command": "uvx", "args": ["wikipedia-mcp"], "disabled": true},
+    "desktop-files": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "~/Desktop"], "disabled": true}
+  }
+}

@@ -135,6 +135,21 @@ words (claps and "Hey Jarvis" still work).
   listens to what you're saying. "barge_in": false turns that off (stop/Jarvis still work).
   Group chat mode still checks who's talking.
 
+## One brain for everything (skills and add-ons)
+Everything Jarvis can do is also a **skill** his brain (Claude) can use as a tool, so any wording
+works, and one sentence can do several things: "play my gym playlist, remind me in 20 to stretch,
+and tell the squad I'm off at 9". Quick everyday commands still go straight through (instant);
+anything else, or several things at once, goes to his brain, which picks the skills and chains them.
+- Say **"use your brain for everything"** to send every command through his brain (a second or two
+  slower, but smartest), or **"use quick commands"** to go back. ("tool_brain": false turns skills off.)
+- **Skills** live in the skills folder, one file per area (music, organize, computer, me, social). A
+  new file there is a new ability: see skills/__init__.py for the 5-line format. "Upgrade yourself to
+  ..." adds new skills too. Say **"what skills do you have"**.
+- **Add-ons:** free MCP servers other people built. Copy addons.example.json to addons.json, switch
+  on the ones you want, and restart him. His brain can then use their tools.
+- Discord: his brain can post for you ("tell the squad ..."). It posts in the channel you name, or
+  "discord_channel" in config.json, or where you last talked to him.
+
 ## Hears you better
 A while after he's started (when he's idle and has heard you once), he tries a bigger free speech
 model, Whisper large-v3-turbo, that runs on this computer. On an Apple Silicon Mac it runs on the

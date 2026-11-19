@@ -20,6 +20,10 @@ memory.json
 .spotify_token
 .update-*
 .hearing.json
+.jarvis-mcp.json
+addons.json
+memory.db
+memory.db-*
 *.part
 oura_tokens.json
 sounds/
@@ -44,7 +48,8 @@ team_lessons.json
 PROMPT = """You are editing the source code of Jarvis, a Python voice assistant that lives in this folder.
 It runs on macOS and on Windows (Windows-only parts are in win.py and behind sys.platform == "win32"
 checks); keep both working. Read README.md and jarvis.py first to see how it fits together: voice commands are
-routed in jarvis.py (handle -> organize / computer / music), settings live in config.json, the
+routed in jarvis.py (handle -> organize / computer / music); every ability is also a plug-in tool
+in skills/ (see skills/__init__.py: a new ability is usually a new @tool function or file there), settings live in config.json, the
 display is display.html, speech is voice.py, listening is ears.py.
 
 The owner asked, out loud: "{request}"

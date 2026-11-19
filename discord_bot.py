@@ -241,7 +241,34 @@ def _make_client():
             return "Left the call."
         return "I wasn't in a call."
 
-    _state["join"], _state["leave"] = join, leave
+    async def send(text, where=None):
+        """Post in a text channel: the one named, else config "discord_channel", else where Connor
+        last talked to Jarvis, else the only one there is."""
+        import difflib
+        chans = [c for g in client.guilds for c in g.text_channels if c.permissions_for(g.me).send_messages]
+        if not chans:
+            return "I'm not in any Discord server I can post in."
+        names = {c.name.lower(): c for c in chans}
+        target = None
+        for hint in (where, _cfg().get("discord_channel")):
+            if not hint or target:
+                continue
+            h = hint.lower().strip(" #")
+            target = names.get(h) or next((c for n, c in names.items() if h in n or n in h), None)
+            if not target:
+                close = difflib.get_close_matches(h, list(names), 1, 0.6)
+                target = names[close[0]] if close else None
+        if not target and _state.get("last_channel"):
+            target = client.get_channel(_state["last_channel"])
+        if not target and len(chans) == 1:
+            target = chans[0]
+        if not target:
+            return ("Which Discord channel? I can post in " + ", ".join(sorted(names)[:8]) +
+                    ". Add \"discord_channel\" to my config to set a default.")
+        await target.send(text[:1900])
+        return f"Posted in #{target.name}."
+
+    _state["join"], _state["leave"], _state["send"] = join, leave, send
 
     async def player():
         q = _state["queue"]
@@ -293,6 +320,8 @@ def _make_client():
             return
         question = re.sub(rf"<@!?{client.user.id}>", "", text[m.end():] if m else text).strip()
         is_owner = msg.author.id == _state["owner"]
+        if is_owner and not is_dm:
+            _state["last_channel"] = msg.channel.id
         low = question.lower().strip(" .!?")
         if is_owner and re.fullmatch(r"(join|come|hop in|get in)( (the|my|this))?( call| vc| voice| channel)?( please)?", low):
             await msg.reply(await join(), mention_author=False)
@@ -371,6 +400,20 @@ def _call(name):
     except Exception as e:
         print(f"(Discord {name} failed: {e})")
         return "Discord didn't answer me."
+
+
+def send_text(text, where=None):
+    """Post a message in Discord (a skill uses this). Returns what happened."""
+    if not token():
+        return "I'm not on Discord yet. Double-click Connect Discord in my folder to set me up."
+    loop = _state["loop"]
+    if not loop or not _state.get("send"):
+        return "I'm still logging in to Discord, try again in a moment."
+    try:
+        return asyncio.run_coroutine_threadsafe(_state["send"](text, where), loop).result(20)
+    except Exception as e:
+        print(f"(Discord send failed: {e})")
+        return "Discord didn't let me post that."
 
 
 JOIN_RE = re.compile(r"\b(join|hop in|get in|come in(?:to)?|jump in)(?: (?:the|my|our))? (?:discord|discord call|call|vc|voice chat)\b|"
