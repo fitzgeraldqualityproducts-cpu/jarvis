@@ -51,6 +51,7 @@ import clarify  # noqa: E402
 import hearing  # noqa: E402
 import keeper  # noqa: E402
 import learn  # noqa: E402
+import nightschool  # noqa: E402
 import mac  # noqa: E402
 import obsidian  # noqa: E402
 import personality  # noqa: E402
@@ -598,6 +599,10 @@ def handle(text, _part=False):
             offer_store_action()                 # the next one, if there's another
             return True
         PENDING.clear()                          # he moved on; it stays queued for later
+    if PENDING.get("kind") == "night":
+        said = answer_lesson(t)
+        if said is not None:
+            return said
     if PENDING.get("kind") in ("predict", "rule"):
         said = answer_suggestion(t)
         if said is not None:
@@ -725,8 +730,28 @@ STRUGGLES_RE = re.compile(r"what (?:have you been|are you|were you) struggling w
                           r"what (?:have you|did you) (?:struggle with|mess up|get wrong)|what couldn'?t you do")
 
 
+NIGHT_WHAT = re.compile(r"what (?:did|have) you (?:learn|learned|teach yourself|taught yourself)(?: last night| overnight| "
+                        r"while i (?:was )?(?:slept|sleeping|asleep))?|what did you learn|night school report")
+NIGHT_TOGGLE = re.compile(r"(?:turn )?night school (on|off)|(?:turn )?(on|off) night school|(stop|start) (?:learning|"
+                          r"teaching yourself) (?:at night|overnight)")
+
+
 def ideas_command(t):
     """Owner asks about self-improvement. Returns True if handled."""
+    if NIGHT_WHAT.fullmatch(t):
+        lesson = nightschool.pending()
+        if lesson and not PENDING:
+            offer_lesson(lesson)
+        else:
+            voice.say(nightschool.last_night())
+        return True
+    m = NIGHT_TOGGLE.fullmatch(t)
+    if m:
+        on = (m.group(1) or m.group(2) or m.group(3)) in ("on", "start")
+        nightschool.set_enabled(on)
+        voice.say("Night school's on. I'll teach myself fixes overnight and ask you in the morning." if on else
+                  "Night school's off. I won't change myself overnight.")
+        return True
     if STRUGGLES_RE.search(t):
         voice.say(learn.struggles())
         return True
@@ -768,6 +793,36 @@ def offer_idea(idea):
         return
     PENDING.update(kind="selfedit", request=idea["request"], idea=idea["id"])
     voice.say(f"{idea['spoken'].rstrip('.')}. Want me to upgrade myself to do that?")
+
+
+def offer_lesson(lesson):
+    """What he taught himself overnight (nightschool.py): keep it?"""
+    PENDING.clear()
+    PENDING.update(kind="night", lesson=lesson["id"])
+    voice.say(nightschool.offer_line(lesson))
+
+
+def answer_lesson(t):
+    """Connor's answer to "Overnight I taught myself to ... Want to keep it?". None if he moved on."""
+    yes, no = YES_RE.search(t) and len(t.split()) <= 6, NO_RE.fullmatch(t) or re.fullmatch(
+        r"(?:throw it (?:out|away)|get rid of it|bin it|don'?t keep it|no keep|scrap it)", t)
+    if not yes and not no:
+        PENDING.clear()                          # he moved on: ask again later
+        return None
+    lid = PENDING.pop("lesson", None)
+    PENDING.clear()
+    if no:
+        nightschool.discard(lid)
+        voice.say("Okay, I've thrown that one out.")
+        return True
+    voice.say("Adding it to myself.", interruptible=False)
+    reply, restart = nightschool.keep(lid)
+    if restart:
+        voice.say(reply + restart_words(), interruptible=False)
+        restart_jarvis()
+    else:
+        voice.say(reply)
+    return True
 
 
 YES_RE = re.compile(r"\b(yes|yeah|yep|yup|sure|go ahead|do it|go for it|please|ok|okay|absolutely|bet|"
@@ -1017,8 +1072,11 @@ def _handle_and_learn(text):
     if learn.couldnt_help(said) and not PENDING:
         learn.note(original_case(text), said)
     if awake and not PENDING and not twitch.busy():
-        idea = learn.next_offer()
-        if idea:
+        lesson = nightschool.morning_offer()
+        idea = None if lesson else learn.next_offer()
+        if lesson:
+            offer_lesson(lesson)
+        elif idea:
             offer_idea(idea)
         else:
             maybe_suggest()
@@ -1086,12 +1144,12 @@ def speak_up(text):
 def restart_jarvis():
     """Start a fresh copy of Jarvis (to load new code). If the team is in the middle of a project, wait
     for it: restarting would kill their agents and cut the project off."""
-    if not workforce.busy():
+    if not workforce.busy() and not nightschool.busy():
         selfedit.restart()
         return
 
     def wait():
-        while workforce.busy() or is_busy():
+        while workforce.busy() or nightschool.busy() or is_busy():
             time.sleep(5)
         selfedit.restart()
     print("(restart waits for the team to finish)")
@@ -1234,10 +1292,11 @@ def main():
             print(f"(start-up check failed: {e})")
     if "--text" not in sys.argv:
         workforce.recover()                                   # a project cut off by the last restart
-        updater.start(lambda: is_busy() or workforce.busy(), restart_jarvis)
+        updater.start(lambda: is_busy() or workforce.busy() or nightschool.busy(), restart_jarvis)
         updater.verify_on_start(restart_jarvis, is_busy)      # after an update: check the new version works
         learn.start(is_busy)
-        hearing.start(is_busy)
+        nightschool.start(lambda: is_busy() or workforce.busy())
+        hearing.start(lambda: is_busy() or workforce.busy() or nightschool.busy())
         predict.start(is_busy)
         threading.Thread(target=speak_up_loop, daemon=True, name="speak-up").start()
         threading.Thread(target=typed_loop, daemon=True, name="typed").start()
