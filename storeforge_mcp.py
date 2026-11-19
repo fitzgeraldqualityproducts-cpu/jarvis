@@ -95,10 +95,30 @@ def _wait(pid, secs):
     return storeforge.summary(pid)
 
 
+def _fill_project(name, a):
+    """Agents sometimes leave out project_id. Use this mission's latest store, or say what's missing."""
+    tool = next((t for t in TOOLS if t["name"] == name), None)
+    need = (tool or {}).get("inputSchema", {}).get("required", [])
+    if "project_id" in need and not a.get("project_id"):
+        mine = storeforge.projects_for(MISSION) if MISSION else []
+        if mine:
+            a["project_id"] = mine[-1]["pid"]
+    missing = [k for k in need if a.get(k) in (None, "")]
+    if missing:
+        props = (tool or {}).get("inputSchema", {}).get("properties", {})
+        return {"error": f"{name} needs {', '.join(missing)}. Its inputs are: {', '.join(props)}. "
+                         "create_store returns the project_id; list_stores shows existing ones."}
+    return None
+
+
 def call(name, a):
     problem = storeforge.ensure_running()
     if problem:
         return {"error": problem}
+    a = dict(a)
+    problem = _fill_project(name, a)
+    if problem:
+        return problem
     if name == "storeforge_status":
         return storeforge.capabilities()
     if name == "list_stores":
