@@ -118,7 +118,11 @@ ABILITIES = (
 # He starts speaking as soon as the first sentence arrives, so it should be a good one.
 SPOKEN = ("Your words are spoken aloud the moment you write them: open with the answer itself in a "
           "short first sentence, keep it conversational, and never use lists, headings or markdown. "
-          "Don't write anything before a web search.")
+          "Don't write anything before a web search. The user's words come from speech recognition and "
+          "may have small mistakes, so read them generously. If you really can't tell what they meant, "
+          "don't guess: ask one short question, like 'Did you mean X or Y?'")
+UNSURE = ("(The speech recognition wasn't confident it heard this right. If it doesn't quite make sense, "
+          "ask a short question to check what they meant instead of answering.)")
 
 
 def run_claude(cmd, timeout, cwd=None):
@@ -311,7 +315,7 @@ def guest_think(question, name=None, owner="Connor"):
     return str(guest_think_stream(question, name, owner))
 
 
-def think_stream(question, context=""):
+def think_stream(question, context="", unsure=False):
     """Answers a question, streaming: returns an Answer you can start speaking from
     as soon as the first sentence arrives."""
     claude = find_claude()
@@ -345,7 +349,7 @@ def think_stream(question, context=""):
     except Exception:
         rules = ""
     prompt = (f"{personality.persona()} {ABILITIES} {SPOKEN} {rules}\n\nCurrent time: {now}\n\n{known}\n\n{extra}"
-              f"Recent conversation:\n{past}\n\nUser: {question}\nJarvis:")
+              f"Recent conversation:\n{past}\n\nUser: {question}" + (f"\n{UNSURE}" if unsure else "") + "\nJarvis:")
     try:
         cfg = json.loads(CONFIG.read_text())
     except Exception:

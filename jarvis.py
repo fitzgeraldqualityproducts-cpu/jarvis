@@ -47,6 +47,8 @@ import briefing  # noqa: E402
 import display  # noqa: E402
 import hands  # noqa: E402
 import inbox  # noqa: E402
+import clarify  # noqa: E402
+import hearing  # noqa: E402
 import keeper  # noqa: E402
 import learn  # noqa: E402
 import mac  # noqa: E402
@@ -419,7 +421,7 @@ PRIVATE = re.compile(
     r"how did i sleep|shortcuts?|e-?mails?|inbox|group chat mode|party mode|guest mode|voice ?prints?|check for updates|self[- ]?(check|test)|diagnostics?|"
     r"upgrade ideas?|improvement ideas?|struggling with|(?:your|the|ai) (?:ai )?(?:team|agents|crew|workforce)|"
     r"report|my routines?|my habits?|noticed about me|what do (you think )?i need|review yourself|"
-    r"how have you been doing|your rules)\b")
+    r"how have you been doing|your rules|your hearing|your ears|speech model)\b")
 GUEST_OK = re.compile(r"\b(timer|alarm|time left|how long left|weather|youtube|google|blinker|cough|breath)\b")
 
 
@@ -627,6 +629,8 @@ def handle(text, _part=False):
         return True
     if ideas_command(t) or team_command(t) or predict_command(t):
         return True
+    if hearing_command(t):
+        return True
     request = self_edit_request(t)
     if request:
         PENDING.update(kind="selfedit", request=request)
@@ -686,7 +690,32 @@ def handle(text, _part=False):
         predict.record(original_case(t), "weather")
         return True
     display.update(status="thinking")
-    voice.say(brain.think_stream(text))       # starts talking as soon as the first sentence is ready
+    # starts talking as soon as the first sentence is ready
+    voice.say(brain.think_stream(text, unsure=HEARD_UNSURE.is_set()))
+    return True
+
+
+HEARD_UNSURE = threading.Event()     # set while handling something he wasn't sure he heard right
+HEARING_RE = re.compile(r"(?:your|the) (?:hearing|ears|speech (?:model|recognition))")
+
+
+def hearing_command(t):
+    """ "how's your hearing", "upgrade your hearing", "use your old hearing". True if handled."""
+    if not HEARING_RE.search(t):
+        return False
+    if re.search(r"(old|original|usual|previous|small|faster|quicker).*hearing|"
+                 r"(downgrade|undo|revert|go back)", t):
+        voice.say(hearing.downgrade())
+    elif re.search(r"(upgrade|improve|better|boost|update|try)", t):
+        voice.say("On it. I'll download a bigger speech model and test it on your voice. "
+                  "It can take a few minutes, so I'll tell you how it went.", interruptible=False)
+
+        def go():
+            said = hearing.upgrade(force=True)
+            hearing._notes.append(said)
+        threading.Thread(target=go, daemon=True).start()
+    else:
+        voice.say(hearing.describe())
     return True
 
 
@@ -951,9 +980,31 @@ def predict_command(t):
     return False
 
 
-def handle_and_learn(text):
+def handle_and_learn(text, unsure=False):
     """handle(), and if he couldn't help Connor, remember it so he can work out an upgrade.
-    Sometimes afterwards he suggests an upgrade he's worked out (learn.py)."""
+    Sometimes afterwards he suggests an upgrade he's worked out (learn.py).
+    unsure: the speech model wasn't confident it heard this right, so check before acting."""
+    owner = WHO.get("owner", True)
+    if clarify.waiting(owner):                 # the answer to "Open Discord or Spotify?"
+        command, said = clarify.resolve(text)
+        if said:
+            voice.say(said)
+            return True
+        if command:
+            text, unsure = command, False
+    question = clarify.check_heard(text, unsure, owner)
+    if question:                               # "Did you say close Discord?"
+        voice.say(question)
+        return True
+    if unsure:
+        HEARD_UNSURE.set()
+    try:
+        return _handle_and_learn(text)
+    finally:
+        HEARD_UNSURE.clear()
+
+
+def _handle_and_learn(text):
     before = len(voice.SAID)
     last = dict(LAST_EXCHANGE)
     if WHO.get("owner", True) and last and time.time() - last.get("t", 0) < 120 and learn.is_correction(text):
@@ -1092,6 +1143,9 @@ def _conversation(get_input, how="clap", spoken=False):
     note = updater.pop_note()
     if note:
         voice.say(note)
+    note = hearing.pop_note()
+    if note:
+        voice.say(note)
     with HANDLE_LOCK:
         WHO.update(owner=True, name=None)
         try:
@@ -1117,7 +1171,8 @@ def _conversation(get_input, how="clap", spoken=False):
         display.log("you", text)
         with HANDLE_LOCK:
             WHO.update(owner=who.get("owner", True), name=who.get("name"))
-            awake = handle_and_learn(text)
+            heard = sys.modules["ears"].HEARD if spoken and "ears" in sys.modules else {}
+            awake = handle_and_learn(text, unsure=bool(heard.get("unsure")))
         follow_up = True
         if not awake:
             display.update(status="sleeping")
@@ -1182,6 +1237,7 @@ def main():
         updater.start(lambda: is_busy() or workforce.busy(), restart_jarvis)
         updater.verify_on_start(restart_jarvis, is_busy)      # after an update: check the new version works
         learn.start(is_busy)
+        hearing.start(is_busy)
         predict.start(is_busy)
         threading.Thread(target=speak_up_loop, daemon=True, name="speak-up").start()
         threading.Thread(target=typed_loop, daemon=True, name="typed").start()

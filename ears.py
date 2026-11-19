@@ -164,8 +164,13 @@ _whisper_lock = __import__("threading").Lock()
 JUNK = {"", "you", "thank you", "thank you.", "thanks for watching!", "bye.", ".", "uh", "um"}
 
 
+LAST_AUDIO = {"audio": None}     # the last thing heard (hearing.py tests a bigger model on it)
+HEARD = {"text": "", "confidence": 0.0, "unsure": False}   # how sure he was of the last thing heard
+
+
 def whisper_model():
-    """Loads the local Whisper model once (faster-whisper). None if not installed."""
+    """Loads the local Whisper model once (faster-whisper, or the bigger one hearing.py set up).
+    None if not installed."""
     global _whisper
     with _whisper_lock:
         if _whisper is None:
@@ -173,14 +178,35 @@ def whisper_model():
                 _whisper = False
             else:
                 try:
-                    from faster_whisper import WhisperModel
-                    name = _cfg().get("whisper_model", "small.en")
-                    _whisper = WhisperModel(name, device="cpu", compute_type="int8")
-                    print(f"(speech recognition: Whisper {name}, on this computer)")
+                    import hearing
+                    _whisper = hearing.load()
+                    if _whisper:
+                        print(f"(speech recognition: Whisper {_whisper.name}, on this computer)")
                 except Exception as e:
-                    print(f"(Whisper unavailable, using Google speech: {e})")
-                    _whisper = False
+                    print(f"(better hearing unavailable: {e})")
+                    _whisper = None
+                if not _whisper:
+                    try:
+                        from faster_whisper import WhisperModel
+                        name = _cfg().get("whisper_model", "small.en")
+                        name = "small.en" if name in ("auto", "") else name
+                        _whisper = WhisperModel(name, device="cpu", compute_type="int8")
+                        print(f"(speech recognition: Whisper {name}, on this computer)")
+                    except Exception as e:
+                        print(f"(Whisper unavailable, using Google speech: {e})")
+                        _whisper = False
         return _whisper or None
+
+
+def use_model(model, name):
+    """Switch speech models while running (None goes back to the usual one)."""
+    global _whisper
+    with _whisper_lock:
+        _whisper = model if model else None
+    if model:
+        print(f"(speech recognition: switched to Whisper {name})")
+    else:
+        whisper_model()
 
 
 def _preload_speaker():
@@ -211,15 +237,24 @@ def _vocabulary():
 
 
 def transcribe(audio):
+    HEARD.update(text="", confidence=0.0, unsure=False)
     model = whisper_model()
     if model:
         segments, _ = model.transcribe(
             audio.astype(np.float32) / 32768.0, language="en", beam_size=5,
             initial_prompt=_vocabulary(), condition_on_previous_text=False,
             vad_filter=True, vad_parameters={"min_silence_duration_ms": 400})
-        text = " ".join(seg.text for seg in segments if seg.no_speech_prob < 0.6).strip()
+        kept = [seg for seg in segments if seg.no_speech_prob < 0.6]
+        text = " ".join(seg.text for seg in kept).strip()
         if text.lower().strip(" .!?") in JUNK:
             return ""
+        # How sure Whisper was: the average log-probability per token, weighted by length.
+        weight = sum(max(len(seg.text), 1) for seg in kept) or 1
+        conf = sum(getattr(seg, "avg_logprob", 0.0) * max(len(seg.text), 1) for seg in kept) / weight
+        HEARD.update(text=text, confidence=round(conf, 2),
+                     unsure=bool(text) and conf < float(_cfg().get("unsure_below", -0.8)))
+        if HEARD["unsure"]:
+            print(f"(not sure I heard that right: confidence {conf:.2f})")
         return text
     data = sr.AudioData(audio.tobytes(), RATE, 2)
     try:
@@ -265,6 +300,7 @@ def listen(max_seconds=8, carry_on=None):
         print("(no speech detected)")
         return ""
     display.update(status="thinking")
+    LAST_AUDIO["audio"] = audio
     start = time.time()
     try:
         import speaker
