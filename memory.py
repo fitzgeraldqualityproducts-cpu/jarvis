@@ -89,6 +89,12 @@ def add_exchange(user, jarvis):
         stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
         data["history"] = (data["history"] + [{"t": stamp, "user": user, "jarvis": jarvis}])[-30:]
         _save(data)
+    try:                                   # and for good, searchable by meaning (recall.py)
+        import recall
+        if not user.startswith("(Twitch viewer"):         # only Connor's own conversations
+            recall.save(user, jarvis, "brain")
+    except Exception as e:
+        print(f"(long-term memory save failed: {e})")
 
 
 def history(n=8):
