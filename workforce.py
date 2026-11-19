@@ -30,6 +30,7 @@ draws the network from those events. Nothing on that page is made up.
 Set "team": false in config.json to turn it off."""
 import datetime
 import json
+import os
 import re
 import threading
 import time
@@ -248,7 +249,10 @@ def _stream(cmd, timeout, cwd, node, task):
     cmd = list(cmd) + ["--output-format", "stream-json", "--include-partial-messages", "--verbose"]
     prompt = cmd.pop(cmd.index("-p") + 1) if brain.WINDOWS else None
     kw = {"creationflags": 0x08000000} if brain.WINDOWS else {}
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if prompt is not None else subprocess.DEVNULL,
+    # Load every tool's inputs up front. With tool search on, agents sometimes called a StoreForge
+    # tool before its inputs were loaded and left out project_id.
+    env = dict(os.environ, ENABLE_TOOL_SEARCH="false")
+    proc = subprocess.Popen(cmd, env=env, stdin=subprocess.PIPE if prompt is not None else subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
                             errors="replace", cwd=cwd, bufsize=1, **kw)
     _procs.add(proc)
