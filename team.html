@@ -184,6 +184,7 @@ function describe(e) {
     case "blocked": return e.denied === false
       ? [nm(e.node), `<span style="color:var(--amber)">${esc(e.tool)} failed</span>${e.reason ? ": " + esc(e.reason.replace(/[{}"\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 110)) : ""}${T}`]
       : [nm(e.node), `<span style="color:var(--red)">tried ${esc(e.tool)}, blocked (not allowed for this agent)</span>${T}`];
+    case "repair": return ["Jarvis (repair)", `<span style="color:${e.fixed ? "var(--green, #4dffc3)" : "var(--amber, #ffb347)"}">${e.fixed ? "fixed" : "couldn't fix"}</span> ${esc(nm(e.role))}'s ${esc(e.tool)} error${e.cause ? ": " + esc(e.cause) : ""}${T}`];
     case "agent": return [nm(e.node), `${esc(LABEL[e.status] || e.status).toLowerCase()} · ${esc(e.activity)}${T}`];
     case "finished": return [nm(e.node), `${e.ok ? "finished" : "came back empty"} in ${e.seconds}s · ${k(e.chars)} chars${T}`];
     case "result": return [nm(e.node), `delivered result${e.needs_ok ? " (needs your OK)" : ""}${T}`];

@@ -392,8 +392,11 @@ def _stream(cmd, timeout, cwd, node, task):
                                 if isinstance(body, list) else str(body or "")
                             denied = bool(re.search(r"no such tool available|not allowed|permission|disabled for this "
                                                     r"session|requires approval", body, re.I))
-                            _emit("blocked", node=node, task=task, tool=names.get(block.get("tool_use_id"), "tool"),
-                                  reason=body[:160], denied=denied)
+                            tool_name = names.get(block.get("tool_use_id"), "tool")
+                            _emit("blocked", node=node, task=task, tool=tool_name, reason=body[:160], denied=denied)
+                            if task and not denied:
+                                with _err_lock:
+                                    _errors.setdefault(task, []).append((tool_name, body[:1500]))
                         _emit("agent", node=node, task=task, status="analyzing", activity="reading tool results")
             elif kind == "result":
                 got = True
@@ -414,6 +417,8 @@ def _stream(cmd, timeout, cwd, node, task):
 
 
 _procs = set()
+_errors = {}                 # task id -> [(tool, error text)] from this mission, for self-repair
+_err_lock = threading.Lock()
 
 
 def _run(prompt, tools, cwd, timeout, label, node=None, task=None):
@@ -515,6 +520,8 @@ def _plan(goal, owner, folder):
 
 
 def _do_task(t, plan, goal, owner, folder, notes=""):
+    with _err_lock:
+        _errors.pop(t["id"], None)           # only this attempt's errors count
     about, tools = ROLES.get(t["role"]) or (plan.get("hires") or {}).get(t["role"]) or ROLES["researcher"]
     if tools == "STORE":
         tools = _store_tools(folder, LIVE.get("pid"))
@@ -541,6 +548,8 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
             problem = storeforge.ensure_running()
             if problem:
                 _emit("blocked", node=t["role"], task=t["id"], tool="StoreForge", reason=problem, denied=False)
+                with _err_lock:
+                    _errors.setdefault(t["id"], []).append(("StoreForge start-up", problem[:1500]))
         except Exception as e:
             print(f"(team: couldn't start StoreForge: {e})")
         redoing = bool(notes)
@@ -580,7 +589,21 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
                                   inputs=inputs, notes=notes, rules=_rules())
     t["status"] = "working"
     timeout = 1500 if t["role"] == "store builder" else 900 if tools is BUILD else 600
-    t["result"] = _run(prompt, tools, folder, timeout, t["role"], node=t["role"], task=t["id"]) or t["result"]
+    result = _run(prompt, tools, folder, timeout, t["role"], node=t["role"], task=t["id"])
+    fixed = _self_repair(t, goal, result)
+    if fixed and not _stop.is_set():
+        _emit("delegate", **{"from": "jarvis", "to": t["role"], "task": t["id"], "text": "Retry after a fix: " +
+                             str(fixed.get("cause") or "")[:160]})
+        if t["role"] == "store builder":
+            try:
+                import storeforge
+                storeforge.ensure_running()
+            except Exception:
+                pass
+        retry = prompt + (f"\nJarvis just repaired an error you hit ({fixed.get('cause') or 'see above'}). Try again "
+                          f"from where it failed.\nYour last attempt:\n{result[:3000]}\n")
+        result = _run(retry, tools, folder, timeout, t["role"] + " (retry)", node=t["role"], task=t["id"]) or result
+    t["result"] = result or t["result"]
     t["status"] = "done" if t["result"] else "failed"
     m = re.search(r"^#+\s*needs .{0,20}ok\W*\n+\s*(?:[-*]\s*)?(.{0,40})", t["result"], re.I | re.M)
     needs_ok = bool(m) and not re.match(r"(nothing|none|no\b|n/a)", m.group(1).strip(), re.I)
@@ -594,6 +617,50 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
             (folder / f"{t['id']} {t['role']}.md").write_text(t["result"], encoding="utf-8")
         except Exception:
             pass
+
+
+def _self_repair(t, goal, result):
+    """Looks at the errors this task hit. Waiting-on-Connor errors just mark the task; real errors get
+    the mechanic (repair.py). Returns the repair result if the task should be tried again."""
+    with _err_lock:
+        errs = list(_errors.get(t["id"], []))
+    if not result and not errs:
+        errs = [("agent", "The agent came back with nothing (it crashed, timed out or got no answer from Claude).")]
+    try:
+        import repair
+    except Exception:
+        return None
+    bugs = []
+    for tool, err in errs:
+        k = repair.kind(tool, err)
+        if k == "owner":
+            t["waiting_owner"] = err[:300]
+        elif k == "limit":
+            t["limit"] = err[:300]
+        elif k == "bug":
+            bugs.append((tool, err))
+    if not bugs or t.get("limit") or _stop.is_set():
+        return None
+    if t.get("repaired"):
+        return None                                  # one repair per task
+    t["repaired"] = True
+    tool, err = bugs[-1]
+    others = "\n".join(f"- {a}: {b[:300]}" for a, b in bugs[:-1][-4:])
+    extra = (f"Other errors it hit:\n{others}\n" if others else "") + \
+            (f"What the agent reported:\n{(result or '')[-1500:]}\n" if result else "")
+    _emit("agent", node=t["role"], task=t["id"], status="analyzing", activity="Jarvis is repairing an error")
+    try:
+        res = repair.fix(goal, t["role"], t["task"], f"{tool}: {err}", extra, mission=LIVE.get("pid"))
+    except Exception as e:
+        print(f"(self-repair failed: {e})")
+        return None
+    if not res:
+        return None
+    _emit("repair", role=t["role"], task=t["id"], tool=tool, fixed=res["fixed"], cause=str(res.get("cause"))[:200],
+          say=str(res.get("say"))[:300], changed=res.get("changed", []))
+    if res.get("owner_needs"):
+        t["waiting_owner"] = str(res["owner_needs"])[:300]
+    return res if res["retry"] else None
 
 
 def _waves(tasks):
@@ -758,6 +825,22 @@ def _run_wave(wave, plan, goal, owner, folder, notes=None):
         th.join()
 
 
+def _skip_stuck(plan, redo):
+    """Redoing a task that's waiting on Connor (photo rights, an OK) or on a Claude plan limit just hits
+    the same wall again, so leave those out."""
+    keep = {}
+    for tid, fix in redo.items():
+        t = next((x for x in plan["tasks"] if x["id"] == tid), {})
+        why = t.get("waiting_owner") or t.get("limit")
+        if why:
+            print(f"(team: not redoing {t.get('role')}: waiting on {'Connor' if t.get('waiting_owner') else 'a limit'})")
+            _emit("agent", node=t.get("role"), task=tid, status="approval" if t.get("waiting_owner") else "waiting",
+                  activity="waiting for your OK" if t.get("waiting_owner") else "waiting for the Claude limit")
+        else:
+            keep[tid] = fix
+    return keep
+
+
 def _project(pid, goal):
     owner = _owner()
     folder = Path(_load_project(pid)["folder"])
@@ -797,6 +880,7 @@ def _project(pid, goal):
                                 "chars": len(t["result"][:5000])})
         score, parts, verdict, redo = _review(plan, goal, owner, folder, pid, 1)
         rounds = 1
+        redo = _skip_stuck(plan, redo)
         while redo and rounds <= MAX_REDO_ROUNDS and not _stop.is_set():
             _emit("phase", phase="redoing")
             _current["step"] = "redoing " + ", ".join(t["role"] for t in plan["tasks"] if t["id"] in redo)
@@ -807,7 +891,7 @@ def _project(pid, goal):
             score2, parts2, verdict2, redo2 = _review(plan, goal, owner, folder, pid, rounds)
             if not parts2 and score2 is None:
                 break
-            score, parts, verdict, redo = score2, parts2, verdict2, redo2
+            score, parts, verdict, redo = score2, parts2, verdict2, _skip_stuck(plan, redo2)
         review = {"verdict": verdict, "score": score, "parts": parts}
         flags = []
         if not _stop.is_set():
@@ -882,6 +966,14 @@ def _project(pid, goal):
         traceback.print_exc()
         _update(pid, status="failed", error=f"{type(e).__name__}: {e}"[:300], told=False)
         _emit("phase", phase="failed", error=f"{type(e).__name__}: {e}"[:300])
+        try:
+            import repair
+            res = repair.fix(goal, "team lead", "running the mission", traceback.format_exc()[-3000:],
+                             mission=pid)
+            if res and res["fixed"]:
+                _update(pid, repaired=str(res.get("say") or "")[:300])
+        except Exception as e2:
+            print(f"(self-repair failed: {e2})")
         try:
             import learn
             learn.note(goal, "My team couldn't finish that project.", "error", f"workforce: {type(e).__name__}: {e}")
@@ -1056,6 +1148,9 @@ def news():
             if p.get("status") == "interrupted":
                 return p["id"], (f"Heads up, my restart cut off the team's work on {p.get('title')}. "
                                  "Say restart the team project and they'll start it again."), p
+            if p.get("repaired"):
+                return p["id"], (f"My team crashed on {p.get('title')}, but I found the cause and fixed it. "
+                                 "Say restart the team project to run it again."), p
             return p["id"], f"Sorry, my team couldn't finish {p.get('title')}. Something went wrong on their end.", p
     return None
 
