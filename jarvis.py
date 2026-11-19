@@ -807,7 +807,11 @@ def team_command(t):
         if not storeforge.available():
             voice.say("I can't find StoreForge on this computer.")
             return True
-        voice.say("One sec, opening StoreForge.", interruptible=False)
+        if storeforge.needs_build():
+            voice.say("One sec, getting StoreForge ready. After an update that takes about a minute.",
+                      interruptible=False)
+        else:
+            voice.say("One sec, opening StoreForge.", interruptible=False)
         voice.say(storeforge.open_app())
         return True
     if re.search(r"\b(?:store|storeforge|shopify) (?:requests?|approvals?)\b|what needs my (?:ok|okay|approval)", t):

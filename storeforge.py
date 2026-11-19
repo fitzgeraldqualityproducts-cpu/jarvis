@@ -101,8 +101,7 @@ def _log_problem(since):
     return ""
 
 
-def _start(f):
-    npm = "npm.cmd" if sys.platform == "win32" else "npm"
+def _env():
     env = {k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")}
     env["PATH"] = env.get("PATH", "") + os.pathsep + os.pathsep.join(
         ["/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/.npm-global/bin")])
@@ -113,9 +112,96 @@ def _start(f):
             env["CLAUDE_CLI_PATH"] = cli
     except Exception:
         pass
+    return env
+
+
+def _dev_mode():
+    """StoreForge runs as a finished build (next start) unless "storeforge_mode" is "dev". The dev
+    server live-reloads the page, and on Connor's Mac it got stuck reloading over and over, so the
+    page flickered and never loaded."""
+    return _cfg().get("storeforge_mode") == "dev"
+
+
+SOURCES = ("src", "prisma", "public", "package.json", "package-lock.json", "next.config.ts", "tsconfig.json")
+
+
+def needs_build(f=None):
+    """True if StoreForge has no finished build, or its code changed since the last one."""
+    f = f or folder()
+    if not f or _dev_mode():
+        return False
+    try:
+        built = (Path(f) / ".next" / "BUILD_ID").stat().st_mtime
+    except OSError:
+        return True
+    for name in SOURCES:
+        p = Path(f) / name
+        files = [p] if p.is_file() else (x for x in p.rglob("*") if x.is_file() and "generated" not in x.parts)
+        for x in files:
+            try:
+                if x.stat().st_mtime > built:
+                    return True
+            except OSError:
+                pass
+    return False
+
+
+def _build(f, env):
+    print("(StoreForge: building it, about a minute)")
+    with open(HERE / "storeforge.log", "a") as log:
+        try:
+            r = subprocess.run([NPM, "run", "build"], cwd=str(f), stdout=log, stderr=log,
+                               stdin=subprocess.DEVNULL, env=env, timeout=900)
+            return r.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+
+NPM = "npm.cmd" if sys.platform == "win32" else "npm"
+
+
+def _start(f):
+    env = _env()
+    script = "dev"
+    if not _dev_mode():
+        if needs_build(f) and not _build(f, env):
+            print("(StoreForge: the build failed, so starting the dev server instead; see storeforge.log)")
+        else:
+            script = "start"
     log = open(HERE / "storeforge.log", "a")
-    return subprocess.Popen([npm, "run", "dev"], cwd=str(f), stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+    return subprocess.Popen([NPM, "run", script], cwd=str(f), stdout=log, stderr=log, stdin=subprocess.DEVNULL,
                             env=env, start_new_session=sys.platform != "win32"), env
+
+
+def _dev_pid(f):
+    """The process id of a StoreForge dev server that's running now, if there is one."""
+    try:
+        pid = int(json.loads((Path(f) / ".next" / "dev" / "lock").read_text())["pid"])
+        cmd = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True,
+                             timeout=5).stdout
+        return pid if "next" in cmd else None           # a leftover lock can name some other program
+    except Exception:
+        return None
+
+
+def _stop_dev(f):
+    """Stops the dev server so the finished build can take over. Jobs it was running pick up again
+    when StoreForge starts."""
+    pid = _dev_pid(f)
+    if not pid or sys.platform == "win32":
+        return False
+    import signal
+    print("(StoreForge: switching from the dev server to the finished build)")
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            pass
+        for _ in range(20):
+            time.sleep(0.5)
+            if not running():
+                return True
+    return not running()
 
 
 def _sqlite_packages(f):
@@ -160,15 +246,17 @@ def _rebuild_sqlite(f, env):
 
 
 def ensure_running(wait=90):
-    """Starts StoreForge (npm run dev) if it isn't running, and fixes the usual start-up problems
+    """Starts StoreForge (its finished build, built first if needed) if it isn't running, and fixes the usual start-up problems
     (a one-off Next.js notice that stops the first start, a database driver built for another
     Node.js). Returns None, or what went wrong, in plain words."""
-    if running():
-        return None
     f = folder()
+    if running() and not (f and not _dev_mode() and _dev_pid(f)):
+        return None
     if not f:
         return "StoreForge isn't on this computer (set storeforge_path in Jarvis's config)."
     with _start_lock:
+        if running() and _dev_pid(f) and not _dev_mode():
+            _stop_dev(f)
         if running():
             return None
         rebuilt, problem = False, ""
