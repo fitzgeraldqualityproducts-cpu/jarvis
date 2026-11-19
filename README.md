@@ -158,6 +158,12 @@ anything, the most relevant old conversations are given to his brain, and it can
 itself. Friends in group chat mode are never saved. Say "forget what we said about X" to delete
 those conversations. "perfect_memory": false turns it off.
 
+## A more human voice
+His brain can mark how a line should sound, and he plays it in his own (Kokoro) voice: he can
+**whisper** a secret, **laugh**, **chuckle** or **sigh**, get **hyped** for a win, or go **sarcastic**
+for a roast. It all runs on this computer and needs no downloads. He only does it now and then, when
+the moment calls for it. Other voice engines just skip it. "expressive": false turns it off.
+
 ## Hears you better
 A while after he's started (when he's idle and has heard you once), he tries a bigger free speech
 model, Whisper large-v3-turbo, that runs on this computer. On an Apple Silicon Mac it runs on the
