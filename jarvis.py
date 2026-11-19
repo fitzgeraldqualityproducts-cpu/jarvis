@@ -422,7 +422,7 @@ PRIVATE = re.compile(
     r"how did i sleep|shortcuts?|e-?mails?|inbox|group chat mode|party mode|guest mode|voice ?prints?|check for updates|self[- ]?(check|test)|diagnostics?|"
     r"upgrade ideas?|improvement ideas?|struggling with|(?:your|the|ai) (?:ai )?(?:team|agents|crew|workforce)|"
     r"report|my routines?|my habits?|noticed about me|what do (you think )?i need|review yourself|"
-    r"how have you been doing|your rules|your hearing|your ears|speech model)\b")
+    r"how have you been doing|your rules|your hearing|your ears|speech model|skills|add-?ons|plug-?ins|for everything)\b")
 GUEST_OK = re.compile(r"\b(timer|alarm|time left|how long left|weather|youtube|google|blinker|cough|breath)\b")
 
 
@@ -512,6 +512,11 @@ def handle(text, _part=False):
     t = re.sub(r"\b(?:hey |ok |okay )?jarvis\b[,.]?", " ", t)
     t = re.sub(r"^\s*(?:please\s+|can you\s+|could you\s+|would you\s+)*", "", t)
     t = re.sub(r"\b(play|open|add|remind me)\s+(?:\1\s+)+", r"\1 ", re.sub(r"\s+", " ", t)).strip(" .?!,")
+    # "play my gym playlist, remind me in 20 and tell the squad I'm off at 9": his brain does them all
+    if not _part and not PENDING and WHO.get("owner", True) and brain.tools_on() and chained(t):
+        display.update(status="thinking")
+        voice.say(brain.think_stream(text, unsure=HEARD_UNSURE.is_set(), tools=True))
+        return True
     # "open Safari and open YouTube" -> two commands, done in order
     if not _part and not PENDING and not re.search(r"new tab in|\b(team|agents|crew|workforce|project)\b", t):
         parts = re.split(r",?\s+(?:and then|and|then)\s+(?=" + COMMAND_START + ")", t)
@@ -669,6 +674,12 @@ def handle(text, _part=False):
         apps = hands.allowed_apps()
         voice.say("I can open " + (", ".join(apps) if apps else "nothing at the moment") + ", and most websites.")
         return True
+    if skills_command(t):
+        return True
+    if tool_mode() == "always":                  # "use your brain for everything"
+        display.update(status="thinking")
+        voice.say(brain.think_stream(text, unsure=HEARD_UNSURE.is_set(), tools=True))
+        return True
     for skill in (organize, computer, music):
         failed = False
         try:
@@ -695,8 +706,48 @@ def handle(text, _part=False):
         predict.record(original_case(t), "weather")
         return True
     display.update(status="thinking")
-    # starts talking as soon as the first sentence is ready
-    voice.say(brain.think_stream(text, unsure=HEARD_UNSURE.is_set()))
+    # starts talking as soon as the first sentence is ready; with his skills, any wording works
+    voice.say(brain.think_stream(text, unsure=HEARD_UNSURE.is_set(), tools=brain.tools_on()))
+    return True
+
+
+ACTION_WORDS = re.compile(r"(?:open|close|quit|play|pause|resume|skip|set|start|remind|add|put|schedule|book|make|"
+                          r"turn|switch|run|launch|text|tell|message|send|post|cancel|stop|queue|take|write|note|"
+                          r"search|google|look up|join|leave|call|wake)\b")
+
+
+def chained(t):
+    """True if one sentence asks for several things ("play X, remind me in 20 and tell the squad ...")."""
+    parts = [p for p in re.split(r"\s*,\s*(?:and\s+|then\s+|and then\s+)?|\s+(?:and then|then|and also|also|and)\s+", t) if p]
+    return sum(1 for p in parts if ACTION_WORDS.match(re.sub(r"^(?:please|can you|could you|also)\s+", "", p))) >= 2
+
+
+def tool_mode():
+    """"fallback" (default): quick built-in commands first, his brain and skills for everything else
+    and for several things at once. "always": his brain decides everything."""
+    return str(CONFIG.get("tool_brain_mode", "fallback"))
+
+
+SKILLS_RE = re.compile(r"\bwhat (?:skills|add-?ons|plug-?ins|tools) (?:do you have|have you got)|\blist (?:your )?(?:skills|add-?ons|plug-?ins)\b")
+
+
+def skills_command(t):
+    """ "what skills do you have", "use your brain for everything", "use quick commands". True if handled."""
+    if SKILLS_RE.search(t):
+        import skills
+        voice.say(skills.describe())
+        return True
+    m = re.search(r"\buse (?:your )?(brain|quick commands?|shortcuts|regular commands?|normal commands?) for everything\b|"
+                  r"\b(?:go back to|use) (?:your )?(quick|regular|normal) commands\b|\bthink before (?:you act|acting)\b", t)
+    if not m:
+        return False
+    always = "brain" in t or "think before" in t
+    cfg = json.loads(Path(__file__).with_name("config.json").read_text())
+    cfg["tool_brain_mode"] = "always" if always else "fallback"
+    Path(__file__).with_name("config.json").write_text(json.dumps(cfg, indent=2))
+    CONFIG["tool_brain_mode"] = cfg["tool_brain_mode"]
+    voice.say("Got it. My brain decides everything now. It's a second or two slower, but any wording works."
+              if always else "Got it. Quick commands go straight through again, and my brain handles the rest.")
     return True
 
 

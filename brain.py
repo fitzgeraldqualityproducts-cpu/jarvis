@@ -315,9 +315,29 @@ def guest_think(question, name=None, owner="Connor"):
     return str(guest_think_stream(question, name, owner))
 
 
-def think_stream(question, context="", unsure=False):
+ACTIONS = ("You can act: the jarvis tools (mcp__jarvis__*) control this computer, Spotify, timers, alarms, "
+           "reminders, the calendar, notes, Discord and more, and any add-on tools are yours too. When the user "
+           "asks you to do things, call the tools to do them, several in a row if they asked for several, BEFORE "
+           "writing anything. Then reply in one or two short spoken sentences saying what you did. Work out the "
+           "details yourself (times, which playlist, which channel) and only ask if you really can't tell. Only "
+           "say something happened if a tool said it did. If no tool fits, say what you can't do yet. If the "
+           "user wants to change your own code, look or behaviour, tell them to say 'upgrade yourself' and what "
+           "they want. For anything current or factual you're unsure of, search the web first and give the "
+           "answer in plain spoken words without links.")
+
+
+def tools_on():
+    """Is the brain allowed to use Jarvis's skills as tools? ("tool_brain": false turns it off.)"""
+    try:
+        return json.loads(CONFIG.read_text()).get("tool_brain", True) is not False
+    except Exception:
+        return True
+
+
+def think_stream(question, context="", unsure=False, tools=False):
     """Answers a question, streaming: returns an Answer you can start speaking from
-    as soon as the first sentence arrives."""
+    as soon as the first sentence arrives. tools=True lets the brain use Jarvis's skills
+    (skills/) and add-ons to actually do things."""
     claude = find_claude()
     if not claude:
         return Answer(lambda state: iter([
@@ -348,19 +368,32 @@ def think_stream(question, context="", unsure=False):
         rules = learn.rules_for_prompt()
     except Exception:
         rules = ""
-    prompt = (f"{personality.persona()} {ABILITIES} {SPOKEN} {rules}\n\nCurrent time: {now}\n\n{known}\n\n{extra}"
-              f"Recent conversation:\n{past}\n\nUser: {question}" + (f"\n{UNSURE}" if unsure else "") + "\nJarvis:")
+    def prompt_with(abilities):
+        return (f"{personality.persona()} {abilities} {SPOKEN} {rules}\n\nCurrent time: {now}\n\n{known}\n\n{extra}"
+                f"Recent conversation:\n{past}\n\nUser: {question}" + (f"\n{UNSURE}" if unsure else "") + "\nJarvis:")
     try:
         cfg = json.loads(CONFIG.read_text())
     except Exception:
         cfg = {}
     model = cfg.get("brain_model", "")
-    # The brain only talks and looks things up; edits go through selfedit.py.
-    tools = ["--disallowedTools", "Edit Write NotebookEdit Bash"]
-    if cfg.get("web_search", True):
-        tools += ["--allowedTools", "WebSearch WebFetch"]
-    cmds = ([[claude, "-p", prompt] + tools + ["--model", model]] if model else []) + [[claude, "-p", prompt] + tools]
-    print(f"(thinking with {claude})")
+    # The brain talks, looks things up and uses his skills; code edits go through selfedit.py.
+    web = "WebSearch WebFetch" if cfg.get("web_search", True) else ""
+    plain = ["--disallowedTools", "Edit Write NotebookEdit Bash"] + (["--allowedTools", web] if web else [])
+    cmds = []
+    if tools:
+        try:
+            import skills
+            mcp, allowed = skills.mcp_args()
+            acting = ["--disallowedTools", "Edit Write NotebookEdit Bash Task"] + mcp + \
+                ["--allowedTools", f"{allowed} {web}".strip()]
+            cmds = [[claude, "-p", prompt_with(ACTIONS)] + acting]
+        except Exception as e:
+            print(f"(skills unavailable, answering without them: {e})")
+    base = [claude, "-p", prompt_with(ABILITIES)] + plain
+    cmds = cmds + [base]                              # without tools, if they don't work
+    if model:
+        cmds = [c + ["--model", model] for c in cmds] + [cmds[-1]]
+    print(f"(thinking with {claude}{', with my skills' if len(cmds) > 1 else ''})")
 
     def make(state):
         said = []

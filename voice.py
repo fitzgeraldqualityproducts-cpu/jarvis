@@ -33,6 +33,7 @@ HERE = Path(__file__).resolve().parent
 CONFIG = HERE / "config.json"
 MODELS = HERE / "models"
 _speaking = threading.Lock()
+QUIET = set()                   # threads running a skill for the brain: they mustn't talk over his reply
 SAID = []                       # everything he's said lately (jarvis.py uses it to notice when he couldn't help)
 CONVERSING = threading.Event()  # set by jarvis.py during a spoken conversation: talking over him is allowed then
 _barge = {}                     # what was heard when someone talked over him, for ears.listen to carry on from
@@ -544,6 +545,9 @@ def speaking():
 def say(text, interruptible=True):
     """Speak text. Returns True if the user interrupted.
     text can also be a brain answer that's still arriving (see say_stream)."""
+    if threading.get_ident() in QUIET:
+        print(f"(skill wanted to say: {text if isinstance(text, str) else '...'})")
+        return False
     if not isinstance(text, str):
         return say_stream(text, interruptible)
     print(f"Jarvis: {text}")
