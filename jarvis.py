@@ -1119,6 +1119,11 @@ def _handle_and_learn(text):
     if not WHO.get("owner", True):
         return awake
     said = " ".join(voice.SAID[before:])
+    try:
+        import recall
+        recall.save(text, said, "typed" if TYPING.is_set() else "voice")   # perfect memory
+    except Exception as e:
+        print(f"(long-term memory save failed: {e})")
     LAST_EXCHANGE.update(asked=original_case(text), said=said[:400], t=time.time())
     if learn.couldnt_help(said) and not PENDING:
         learn.note(original_case(text), said)
@@ -1347,6 +1352,8 @@ def main():
         updater.verify_on_start(restart_jarvis, is_busy)      # after an update: check the new version works
         learn.start(is_busy)
         nightschool.start(lambda: is_busy() or workforce.busy())
+        import recall
+        recall.start()
         hearing.start(lambda: is_busy() or workforce.busy() or nightschool.busy())
         predict.start(is_busy)
         threading.Thread(target=speak_up_loop, daemon=True, name="speak-up").start()

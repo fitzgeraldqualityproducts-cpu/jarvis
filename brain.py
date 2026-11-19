@@ -363,6 +363,14 @@ def think_stream(question, context="", unsure=False, tools=False):
                              "actually help with the question:\n" + notes + "\n\n")
     except Exception as e:
         print(f"(Obsidian context failed: {e})")
+    if not context:
+        try:                                        # perfect memory: old conversations that fit
+            import recall
+            old = recall.for_prompt(question)
+            if old:
+                extra += old + "\n\n"
+        except Exception as e:
+            print(f"(memory recall failed: {e})")
     try:
         import learn
         rules = learn.rules_for_prompt()

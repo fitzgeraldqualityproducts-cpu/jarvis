@@ -22,6 +22,25 @@ def what_you_remember():
     return memory.recall_summary()
 
 
+@tool("Search everything the user and Jarvis have ever said to each other (by meaning, so 'that pizza place' "
+      "finds 'Tony's on 5th'). Use it whenever they refer to something from an earlier conversation.",
+      query="what to look for", how_many="how many results (default 5)")
+def search_memory(query: str, how_many: int = 5):
+    import recall
+    hits = recall.search(query, k=max(1, min(int(how_many), 15)))
+    if not hits:
+        return "Nothing in my long-term memory about that."
+    return "\n".join(f"{h['when']}: user said {h['user'][:400]!r}; Jarvis said {h['jarvis'][:400]!r}" for h in hits)
+
+
+@tool("Delete past conversations about something from long-term memory (only when the user asks).",
+      about="what the conversations were about")
+def forget_conversations(about: str):
+    import recall
+    n = recall.forget(about)
+    return f"Deleted {n} conversation{'s' if n != 1 else ''} about that." if n else "I didn't find any to delete."
+
+
 @tool("The local weather right now (for other places, search the web instead).")
 def weather():
     import weather as w

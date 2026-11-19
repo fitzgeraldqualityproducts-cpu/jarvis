@@ -150,6 +150,14 @@ anything else, or several things at once, goes to his brain, which picks the ski
 - Discord: his brain can post for you ("tell the squad ..."). It posts in the channel you name, or
   "discord_channel" in config.json, or where you last talked to him.
 
+## Perfect memory
+Every conversation you have with him (spoken or typed) is saved on this computer in memory.db and
+searchable by meaning, using a tiny free model (about 30 MB) that runs on your computer. Months later
+"that pizza place we talked about" still finds "Tony's on 5th has the best slice". When you ask him
+anything, the most relevant old conversations are given to his brain, and it can search further
+itself. Friends in group chat mode are never saved. Say "forget what we said about X" to delete
+those conversations. "perfect_memory": false turns it off.
+
 ## Hears you better
 A while after he's started (when he's idle and has heard you once), he tries a bigger free speech
 model, Whisper large-v3-turbo, that runs on this computer. On an Apple Silicon Mac it runs on the
