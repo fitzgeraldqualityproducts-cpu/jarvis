@@ -550,10 +550,12 @@ def say(text, interruptible=True):
         return False
     if not isinstance(text, str):
         return say_stream(text, interruptible)
-    print(f"Jarvis: {text}")
     import display
-    display.log("jarvis", text)
-    return _speak(_chunks([_speakable(text)]), interruptible, text)
+    import expressive
+    shown = expressive.strip(text)
+    print(f"Jarvis: {shown}")
+    display.log("jarvis", shown)
+    return _speak(_chunks([_speakable(text)]), interruptible, shown)
 
 
 def say_stream(pieces, interruptible=True):
@@ -614,17 +616,30 @@ def _speak(chunks, interruptible, text, source=None):
             return text or " ".join(said)
 
         def produce():
-            finished = False
+            import expressive
+            finished, style = False, "normal"
             try:
                 for chunk in chunks:
                     if stop.is_set():
                         break
-                    said.append(chunk)
-                    spoken = _speakable(chunk)
-                    if not spoken:
+                    plain = expressive.strip(chunk)
+                    said.append(plain)
+                    audio = None
+                    if (expressive.has_tags(chunk) or style != "normal") and expressive.enabled() and \
+                            _cfg().get("fast_voice", True) and _order()[:1] == ["kokoro"]:
+                        try:                       # whisper, laugh, hyped, sarcastic (expressive.py)
+                            audio, style = expressive.render(chunk, style, sys.modules[__name__])
+                        except Exception as e:
+                            print(f"(expressive voice failed, plain voice instead: {e})")
+                            audio = None
+                        if audio is None and not plain:
+                            continue
+                    spoken = _speakable(plain)
+                    if audio is None and not spoken:
                         continue
                     try:
-                        audio = synthesize_audio(spoken)
+                        if audio is None:
+                            audio = synthesize_audio(spoken)
                     except Exception as e:
                         print(f"(couldn't speak: {e})")
                         break

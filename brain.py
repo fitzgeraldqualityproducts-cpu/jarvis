@@ -312,7 +312,8 @@ def guest_think_stream(question, name=None, owner="Connor"):
 
 
 def guest_think(question, name=None, owner="Connor"):
-    return str(guest_think_stream(question, name, owner))
+    import expressive
+    return expressive.strip(str(guest_think_stream(question, name, owner)))
 
 
 ACTIONS = ("You can act: the jarvis tools (mcp__jarvis__*) control this computer, Spotify, timers, alarms, "
@@ -376,8 +377,14 @@ def think_stream(question, context="", unsure=False, tools=False):
         rules = learn.rules_for_prompt()
     except Exception:
         rules = ""
+    try:
+        import expressive
+        voice_tags = expressive.PROMPT if expressive.enabled() else ""
+    except Exception:
+        voice_tags = ""
+
     def prompt_with(abilities):
-        return (f"{personality.persona()} {abilities} {SPOKEN} {rules}\n\nCurrent time: {now}\n\n{known}\n\n{extra}"
+        return (f"{personality.persona()} {abilities} {SPOKEN} {voice_tags} {rules}\n\nCurrent time: {now}\n\n{known}\n\n{extra}"
                 f"Recent conversation:\n{past}\n\nUser: {question}" + (f"\n{UNSURE}" if unsure else "") + "\nJarvis:")
     try:
         cfg = json.loads(CONFIG.read_text())
@@ -412,6 +419,11 @@ def think_stream(question, context="", unsure=False, tools=False):
                 yield piece
         finally:
             answer = "".join(said).strip()
+            try:
+                import expressive
+                answer = expressive.strip(answer)       # no voice tags in memory
+            except Exception:
+                pass
             if state.get("cancelled") and answer:
                 answer += " (cut off)"
             if answer:
@@ -425,8 +437,9 @@ def think_stream(question, context="", unsure=False, tools=False):
 
 
 def think(question, context=""):
-    """Answers a question and returns the whole reply as text."""
-    return str(think_stream(question, context))
+    """Answers a question and returns the whole reply as text (without voice tags)."""
+    import expressive
+    return expressive.strip(str(think_stream(question, context)))
 
 
 if __name__ == "__main__":
