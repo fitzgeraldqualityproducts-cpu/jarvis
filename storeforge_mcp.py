@@ -32,6 +32,12 @@ TOOLS = [
          "tone": {"type": "string", "description": "e.g. Minimal, Playful, Premium, Bold"},
          "brand_name": {"type": "string"}, "target_price": {"type": "number"}, "unit_cost": {"type": "number"},
          "target_margin_pct": {"type": "number"}, "notes": {"type": "string"}}}},
+    {"name": "product_facts",
+     "description": "What a product page really says about the product: specs like size, material, "
+                    "capacity and weight from the page's product data and spec lines. Use it before "
+                    "create_store, and put the confirmed facts in create_store's notes, so the listing only "
+                    "states real facts. Anything not listed is unconfirmed.",
+     "inputSchema": {"type": "object", "required": ["page_url"], "properties": {"page_url": {"type": "string"}}}},
     {"name": "store_details",
      "description": "Everything about a store project: steps, risk flags, brand, listing, preflight checklist, "
                     "running jobs and exports. wait_seconds (up to 150) waits for running jobs to move on first.",
@@ -95,6 +101,9 @@ def _wait(pid, secs):
     return storeforge.summary(pid)
 
 
+CHANGES = ("add_product_photos", "add_placeholder_photos", "generate_store", "regenerate_section")
+
+
 def _fill_project(name, a):
     """Agents sometimes leave out project_id. Use this mission's latest store, or say what's missing."""
     tool = next((t for t in TOOLS if t["name"] == name), None)
@@ -132,6 +141,10 @@ def call(name, a):
         storeforge.remember(pid, a["name"], MISSION)
         return {"project_id": pid, "next": "Ask for the rights confirmation (request_rights_confirmation); "
                                           "StoreForge can't generate until the owner confirms."}
+    if name == "product_facts":
+        return storeforge.product_facts(a["page_url"])
+    if name in CHANGES:
+        storeforge.team_changed(a["project_id"])
     if name == "store_details":
         return _wait(a["project_id"], a.get("wait_seconds"))
     if name == "add_product_photos":

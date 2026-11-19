@@ -169,8 +169,9 @@ bigger jobs: research, planning, business ideas, writing or code. A team lead sp
 16 specialists (researcher, market analyst, fact checker, trend scout, planner, project manager,
 business strategist, finance analyst, marketer, designer, coder, code reviewer, writer, editor, coach,
 devil's advocate). Ones that don't need each other work at the same time; the rest get their
-teammates' work passed along. A critic scores the result and sends weak parts back to be redone,
-then the lead writes a report. It all happens in the background, so keep talking to him; he tells
+teammates' work passed along. A critic scores each part on its own (for a store: photos, writing,
+price, look and facts; otherwise accuracy, completeness, specificity and usefulness) and sends only
+the parts under 8 back, up to 3 rounds, then the lead writes a report. It all happens in the background, so keep talking to him; he tells
 you when they're done (not between 11pm and 8am, "quiet_hours").
 - **"How's the team doing?"**, **"read me the report"**, **"who's on your team?"**, **"call off the team"**.
 - If I restart while the team is working (an update, a crash), I now wait for them first. If a project still gets cut off, I say so, and **"restart the team project"** starts it again.
@@ -179,10 +180,16 @@ you when they're done (not between 11pm and 8am, "quiet_hours").
   middle and the team lead, critic and all 16 specialists as pixel people at their desks. They type
   while really working, walk the work over when they hand it on, walk to the web terminal, file
   cabinet, toolbox or StoreForge kiosk when they really use those tools, and the critic walks round
-  the finished desks while it reviews. Also glowing lines for who handed what to whom, dashed lines for which task needs
+  the finished desks while it reviews. Their faces show how it's really going: narrowed eyes while
+  working, a sweat drop when a tool fails or the critic sends their part back, a smile when done, and
+  arms up with confetti when the critic scores the mission 8 or more. Also glowing lines for who handed what to whom, dashed lines for which task needs
   which, a live activity feed, the mission's progress, and a task pipeline. Click any agent to see its
   task, tool calls, output and past missions. It's drawn only from the team's real events (saved as
   events.jsonl in each project folder); nothing on it is simulated.
+- Store builds use only real product facts: the store builder reads the product page's specs first
+  (size, material, capacity...), and anything it couldn't confirm is taken out or marked [confirm].
+- The team learns from your own edits: what you change in a store in StoreForge (price, title,
+  wording, colours) is noted, and the next store is done your way.
 - Reports are in the **team** folder here (and "Jarvis Team" in Obsidian if you use it).
 - The agents can only search the web, think, and write files in their own project folder. They
   can't send, post, buy, delete or change your stuff or Jarvis. Anything like that is listed in the

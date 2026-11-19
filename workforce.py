@@ -129,11 +129,26 @@ CRITIC_PROMPT = """You are the critic on Jarvis's AI team. {owner} asked: "{goal
 
 Here is the team's work:
 {work}
+{store}
+Judge it strictly against what {owner} asked. Score each of these parts on its own, from 1 to 10:
+{parts}
+Be tough: 8 means genuinely good, ready for {owner} to use. For every part under 8, name the task that
+should fix it (its id, like "t2") and exactly what to fix. Reply with ONLY one line of JSON, no markdown:
+{{"parts": {{"<part>": {{"score": 1-10, "task": "task id, or empty", "fix": "what to improve, or empty"}}}},
+  "verdict": "one sentence"}}"""
 
-Judge it strictly against what {owner} asked: is it correct, complete, specific and useful? Reply with ONLY
-one line of JSON, no markdown:
-{{"score": 1-10, "verdict": "one sentence", "redo": [{{"id": "task id", "fix": "what to improve"}}]}}
-Only ask for redos that would clearly make it better (none if score is 8 or more)."""
+STORE_PARTS = """- photos: real product photos (or clearly marked placeholders when none exist), enough of them
+- writing: title, description and page copy are clear and persuasive, with no made-up claims
+- price: a price is set, it's sensible next to what similar products sell for, and leaves a margin
+- look: brand name, colours, logo and homepage sections suit the product and the buyer
+- facts: every spec in the listing matches the product page's facts; anything unconfirmed is marked"""
+
+GENERAL_PARTS = """- accuracy: correct, nothing made up
+- completeness: covers everything that was asked
+- specificity: concrete names, numbers and steps, not generic advice
+- usefulness: ready to act on"""
+
+MAX_REDO_ROUNDS = 3
 
 REPORT_PROMPT = """You are the team lead of Jarvis's AI team. {owner} asked: "{goal}"
 
@@ -441,6 +456,17 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
                 _emit("blocked", node=t["role"], task=t["id"], tool="StoreForge", reason=problem, denied=False)
         except Exception as e:
             print(f"(team: couldn't start StoreForge: {e})")
+        redoing = bool(notes)
+        try:
+            import storeforge
+            storeforge.learn_edits()                 # what he changed by hand in earlier stores
+            notes += storeforge.edit_notes()
+            mine = storeforge.projects_for(LIVE.get("pid")) if redoing else []
+            if mine:
+                notes += (f"\nThis is a redo: the store already exists in StoreForge (project_id "
+                          f"{mine[-1]['pid']}). Fix that store; don't create a new one.\n")
+        except Exception as e:
+            print(f"(team: couldn't read past StoreForge edits: {e})")
         notes += "\nUse only the StoreForge tools (and web search). If StoreForge reports an error, don't look for " \
                  "other ways in: say exactly what the error was and what the owner needs to do.\n" \
                  "StoreForge reads the product from the link, so give create_store direct product pages (one " \
@@ -448,12 +474,17 @@ def _do_task(t, plan, goal, owner, folder, notes=""):
                  "a small independent online store's product page (Shopify stores work best), found with web " \
                  "search. Check the page loads with WebFetch first.\n" \
                  "The store must end up fully built in StoreForge (every step except exporting), so the owner " \
-                 "can open it and decide about Shopify himself. In order: 1) create_store. 2) add_product_photos " \
+                 "can open it and decide about Shopify himself. In order: 1) product_facts on the product page, then " \
+                 "create_store with those confirmed facts in its notes (\"Confirmed facts: ...; don't state any " \
+                 "other specs as fact\"). 2) add_product_photos " \
                  "with the product page (and any direct image links you found); if it adds none, try another " \
                  "page, then add_placeholder_photos. 3) request_rights_confirmation (Jarvis asks him; when he " \
                  "says yes, Jarvis runs every step). 4) If the rights are already confirmed, generate_store and " \
                  "follow it with store_details (wait_seconds 150) until the steps are ready. Never export, " \
-                 "build the ZIP or push to Shopify unless the mission asks for it.\n"
+                 "build the ZIP or push to Shopify unless the mission asks for it. 5) Once the listing exists, " \
+                 "compare it with the product facts; for any spec the page didn't confirm, use regenerate_section " \
+                 "to take it out or mark it [confirm], and list those under a heading \"Facts I couldn't " \
+                 "confirm\" in your result.\n"
     if t["role"] in ("coder", "code reviewer"):
         notes += "\nWrite any code or files in the current folder (the project's own folder). Keep it working " \
                  "and explain how to run it.\n"
@@ -491,6 +522,59 @@ def _waves(tasks):
 def _work_text(plan, limit=5000):
     return "\n\n".join(f"## {t['id']} ({t['role']}): {t['task']}\n{(t['result'] or '(no result)')[:limit]}"
                        for t in plan["tasks"])
+
+
+def _is_store(plan):
+    return any(t["role"] == "store builder" for t in plan["tasks"])
+
+
+def _review(plan, goal, owner, folder, pid, rnd):
+    """The critic scores each part of the work on its own. Returns (overall score, parts, verdict,
+    {task id: what to fix}) where only tasks behind a part under 8 are sent back."""
+    store, store_mission = "", _is_store(plan)
+    if store_mission:
+        try:
+            import storeforge
+            pics = [storeforge.review_picture(x["pid"]) for x in storeforge.projects_for(pid)[-2:]]
+            if pics:
+                store = "\nWhat's actually in StoreForge now (judge this, not just what the agents said):\n" + \
+                        json.dumps(pics, indent=1, default=str)[:7000] + "\n"
+            else:
+                store = "\nNo store was created in StoreForge.\n"
+        except Exception as e:
+            store = f"\n(Couldn't read the store from StoreForge: {e})\n"
+    review = _json(_run(CRITIC_PROMPT.format(owner=owner, goal=goal, work=_work_text(plan), store=store,
+                                             parts=STORE_PARTS if store_mission else GENERAL_PARTS),
+                        THINK, folder, 240, "critic" if rnd == 1 else f"critic (round {rnd})", node="critic")) or {}
+    ids = {t["id"] for t in plan["tasks"]}
+    builder = next((t["id"] for t in plan["tasks"] if t["role"] == "store builder"), None)
+    parts = {}
+    for name, v in (review.get("parts") or {}).items():
+        if not isinstance(v, dict):
+            continue
+        try:
+            sc = max(1, min(10, int(round(float(v.get("score"))))))
+        except (TypeError, ValueError):
+            continue
+        task = str(v.get("task") or "")
+        if task not in ids:
+            task = builder if store_mission and builder else ""
+        parts[str(name)[:30]] = {"score": sc, "task": task, "fix": str(v.get("fix") or "")[:400]}
+    score = round(sum(p["score"] for p in parts.values()) / len(parts)) if parts else review.get("score")
+    redo = {}
+    for name, p in parts.items():
+        if p["score"] < 8 and p["task"] and p["fix"]:
+            redo.setdefault(p["task"], []).append(f"{name} ({p['score']}/10): {p['fix']}")
+    if store_mission:
+        for tid in redo:
+            if tid == builder:
+                redo[tid].append("Fix it in the store itself with the StoreForge tools (regenerate_section with an "
+                                 "instruction, add_product_photos, product_facts), then check it with store_details.")
+    redo = {k: "; ".join(v) for k, v in redo.items()}
+    verdict = str(review.get("verdict", ""))[:300]
+    _emit("review", score=score, verdict=verdict, redo=list(redo), round=rnd, parts=parts)
+    _emit("agent", node="critic", status="completed", activity=f"scored it {score}/10" if score else "reviewed")
+    return score, parts, verdict, redo
 
 
 def _run_wave(wave, plan, goal, owner, folder, notes=None):
@@ -535,26 +619,20 @@ def _project(pid, goal):
         for t in plan["tasks"]:
             _emit("handoff", **{"from": t["role"], "to": "critic", "from_task": t["id"], "task": None,
                                 "chars": len(t["result"][:5000])})
-        review = _json(_run(CRITIC_PROMPT.format(owner=owner, goal=goal, work=_work_text(plan)), THINK, folder, 240,
-                            "critic", node="critic")) or {}
-        score = review.get("score")
-        redo = {str(r.get("id")): str(r.get("fix", "")) for r in (review.get("redo") or []) if r.get("id")}
-        redo = {k: v for k, v in redo.items() if any(t["id"] == k for t in plan["tasks"])}
-        _emit("review", score=score, verdict=str(review.get("verdict", ""))[:300], redo=list(redo),
-              round=1)
-        _emit("agent", node="critic", status="completed", activity=f"scored it {score}/10" if score else "reviewed")
-        if redo and isinstance(score, (int, float)) and score < 8 and not _stop.is_set():
+        score, parts, verdict, redo = _review(plan, goal, owner, folder, pid, 1)
+        rounds = 1
+        while redo and rounds <= MAX_REDO_ROUNDS and not _stop.is_set():
             _emit("phase", phase="redoing")
             _current["step"] = "redoing " + ", ".join(t["role"] for t in plan["tasks"] if t["id"] in redo)
-            print(f"(team: critic gave {score}/10, redoing {list(redo)})")
+            print(f"(team: critic gave {score}/10, round {rounds}, redoing {list(redo)})")
             _run_wave([t for t in plan["tasks"] if t["id"] in redo], plan, goal, owner, folder, redo)
+            rounds += 1
             _emit("phase", phase="reviewing")
-            review2 = _json(_run(CRITIC_PROMPT.format(owner=owner, goal=goal, work=_work_text(plan)), THINK, folder,
-                                 240, "critic (second look)", node="critic")) or {}
-            if review2.get("score"):
-                review, score = review2, review2.get("score")
-                _emit("review", score=score, verdict=str(review.get("verdict", ""))[:300], redo=[], round=2)
-            _emit("agent", node="critic", status="completed", activity=f"scored it {score}/10" if score else "reviewed")
+            score2, parts2, verdict2, redo2 = _review(plan, goal, owner, folder, pid, rounds)
+            if not parts2 and score2 is None:
+                break
+            score, parts, verdict, redo = score2, parts2, verdict2, redo2
+        review = {"verdict": verdict, "score": score, "parts": parts}
         _current["step"] = "writing the report"
         _emit("phase", phase="reporting")
         _emit("handoff", **{"from": "critic", "to": "lead", "from_task": None, "task": None, "chars": 0})
@@ -897,7 +975,8 @@ def _reduce(events):
             if t is not None:
                 t.update(ok=e.get("ok"), needs_ok=e.get("needs_ok", False))
         elif k == "review":
-            mission.update(score=e.get("score"), verdict=e.get("verdict"), reviewed=True)
+            mission.update(score=e.get("score"), verdict=e.get("verdict"), reviewed=True,
+                           parts=e.get("parts") or {}, round=e.get("round") or 1)
             for tid in e.get("redo") or []:
                 if tid in tasks:
                     tasks[tid].update(status="waiting", activity="sent back by the critic")

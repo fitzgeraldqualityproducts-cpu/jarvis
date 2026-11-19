@@ -187,7 +187,7 @@ function describe(e) {
     case "agent": return [nm(e.node), `${esc(LABEL[e.status] || e.status).toLowerCase()} · ${esc(e.activity)}${T}`];
     case "finished": return [nm(e.node), `${e.ok ? "finished" : "came back empty"} in ${e.seconds}s · ${k(e.chars)} chars${T}`];
     case "result": return [nm(e.node), `delivered result${e.needs_ok ? " (needs your OK)" : ""}${T}`];
-    case "review": return ["Critic", `Score ${e.score ?? "?"}/10: ${esc(e.verdict)}${e.redo && e.redo.length ? " · sent back " + e.redo.join(", ") : ""}`];
+    case "review": return ["Critic", `${e.round > 1 ? `Round ${e.round} · ` : ""}Score ${e.score ?? "?"}/10${e.parts && Object.keys(e.parts).length ? " (" + Object.entries(e.parts).map(([k2, p]) => `${esc(k2)} <span style="color:${p.score >= 8 ? "var(--green, #4dffc3)" : "var(--amber, #ffb347)"}">${p.score}</span>`).join(" · ") + ")" : ""}: ${esc(e.verdict)}${e.redo && e.redo.length ? " · sent back " + e.redo.join(", ") : ""}`];
     case "approval": return ["JARVIS", `Waiting for your OK: ${esc((e.items || []).join("; ") || e.change)}`];
     case "writing": return null;          // too chatty for the feed; shown on the node instead
   }
@@ -320,13 +320,61 @@ function blit(g, rows, x0, y0, pal) {
     g.fillStyle = pal[c]; g.fillRect(x0 + i * PX, y0 + j * PX, PX, PX);
   }
 }
+// How each worker feels, from what's really happening to their work (never made up):
+//   focused  - working or thinking right now          stuck - failed, a tool failed or was blocked
+//   happy    - their part is done                       in the last 90 s, or the critic sent it back
+//   party    - the mission just finished and the critic scored it 8 or more
+function moodOf(id) {
+  const snap = S.snap; if (!snap) return "";
+  const n = nodeOf(id), m = snap.mission || {}, now = Date.now() / 1000;
+  if (m.phase === "done" && (m.score || 0) >= 8 && m.finished && now - m.finished < 180 && n.status !== "idle") return "party";
+  if (n.status === "failed") return "stuck";
+  const t = n.task && snap.tasks[n.task];
+  if (t) {
+    const last = t.tools && t.tools[t.tools.length - 1];
+    if (last && (last.blocked || last.failed) && now - (last.t || 0) < 90 && /working|analyzing/.test(n.status)) return "stuck";
+    if (t.attempts && /waiting|working|analyzing/.test(t.status) && /reviewing|redoing/.test(m.phase || "")) return "stuck";
+    const weak = Object.values(m.parts || {}).some(p => p.task === t.id && p.score < 8);
+    if (weak && /reviewing|redoing/.test(m.phase || "")) return "stuck";
+  }
+  if (/working|analyzing/.test(n.status)) return "focused";
+  if (/completed|approval/.test(n.status)) return "happy";
+  return "";
+}
+const confettiAt = {};
 function person(g, id, x, y, o) {              // feet at (x, y)
   const pal = palOf(id), x0 = Math.round(x - 3.5 * PX), bob = o.moving ? (Math.floor(o.step) % 2) * PX : 0;
-  const y0 = Math.round(y - 11 * PX) - bob;
+  const mood = o.mood || "", T = o.T || 0;
+  const jump = mood === "party" ? Math.round(Math.abs(Math.sin(T * 5 + hashOf(id))) * 2) * PX : 0;
+  const y0 = Math.round(y - 11 * PX) - bob - jump;
   blit(g, SPR.head, x0, y0, pal);
   blit(g, SPR.body, x0, y0 + 4 * PX, pal);
   if (!o.sit) blit(g, o.moving ? (Math.floor(o.step) % 2 ? SPR.w1 : SPR.w2) : SPR.stand, x0, y0 + 8 * PX, pal);
-  if (o.raise) { g.fillStyle = pal.S; g.fillRect(x0 + 7 * PX, y0 + 2 * PX, PX, PX * 3); }
+  const half = Math.max(1, Math.round(PX / 2));
+  if (mood === "focused") {                     // narrowed eyes
+    g.fillStyle = pal.S; g.fillRect(x0 + 2 * PX, y0 + 2 * PX, PX, half); g.fillRect(x0 + 4 * PX, y0 + 2 * PX, PX, half);
+    g.fillStyle = pal.H; g.fillRect(x0 + 2 * PX, y0 + 2 * PX - 1, PX, 1); g.fillRect(x0 + 4 * PX, y0 + 2 * PX - 1, PX, 1);
+  } else if (mood === "happy" || mood === "party") {   // a smile
+    g.fillStyle = "#3b1d14"; g.fillRect(x0 + 2 * PX + half, y0 + 3 * PX + half, 2 * PX, 1);
+    g.fillRect(x0 + 2 * PX, y0 + 3 * PX + 1, half, half); g.fillRect(x0 + 4 * PX + half, y0 + 3 * PX + 1, half, half);
+  } else if (mood === "stuck") {                // a worried mouth and a sweat drop running down
+    g.fillStyle = "#3b1d14"; g.fillRect(x0 + 3 * PX, y0 + 3 * PX + half, PX, 1);
+    const k = (T * 1.4 + hashOf(id) % 7 / 7) % 1;
+    g.globalAlpha = 1 - k * .6; g.fillStyle = "#7fd9ff";
+    g.fillRect(x0 + 6 * PX, Math.round(y0 + PX + k * 3 * PX), half + 1, PX); g.fillRect(x0 + 6 * PX + 1, Math.round(y0 + k * 3 * PX + PX / 2), 1, half);
+    g.globalAlpha = 1;
+  }
+  if (mood === "party") {                       // both arms up, and confetti now and then
+    g.fillStyle = pal.S; g.fillRect(x0 - PX, y0 + PX, PX, PX * 3); g.fillRect(x0 + 7 * PX, y0 + PX, PX, PX * 3);
+    const now = performance.now();
+    if (!confettiAt[id] || now - confettiAt[id] > 450) {
+      confettiAt[id] = now;
+      const cols = ["#ffd166", "#4dffc3", "#ff6bd6", "#4fd8ff", "#9d8cff"];
+      for (let i = 0; i < 5; i++) sparks.push({ x:x, y:y0 - PX, a:-Math.PI / 2 + (Math.random() - .5) * 2.2, v:18 + Math.random() * 18,
+                                                color:cols[(i + hashOf(id)) % cols.length], t0:now });
+    }
+  }
+  if (o.raise && mood !== "party") { g.fillStyle = pal.S; g.fillRect(x0 + 7 * PX, y0 + 2 * PX, PX, PX * 3); }
   if (id === "lead") { g.fillStyle = "#e8eef2"; g.fillRect(x0 - 2 * PX, y0 + 5 * PX, 2 * PX, 3 * PX); }      // clipboard
   if (id === "critic") { g.strokeStyle = "#cfe6ff"; g.lineWidth = 2; g.strokeRect(x0 + 7 * PX, y0 + 4 * PX, 2 * PX, 2 * PX); }  // magnifier
   if (o.carry) { g.fillStyle = o.carry; g.shadowColor = o.carry; g.shadowBlur = 8;
@@ -465,7 +513,7 @@ function drawDesk(id, label, T) { // desk, label and real progress, at the agent
     halo.addColorStop(0, col + "33"); halo.addColorStop(1, col + "00"); g.fillStyle = halo; g.beginPath(); g.arc(p.x, p.y - 10, 46, 0, 7); g.fill(); }
   g.globalAlpha = n.status === "idle" ? .6 : 1;
   if (home) {                     // sitting at the desk
-    person(g, id, p.x, p.y + 2, { sit:true, raise:n.status === "approval" });
+    person(g, id, p.x, p.y + 2, { sit:true, raise:n.status === "approval", mood:moodOf(id), T });
     if (live) {                   // typing, only while really working
       const pal = palOf(id), up = Math.floor(T * (/writ/.test(n.activity) ? 12 : 6)) % 2;
       g.fillStyle = pal.S; g.fillRect(Math.round(p.x - 3 * PX), Math.round(p.y - 5 * PX - up * PX), PX, PX); g.fillRect(Math.round(p.x + 2 * PX), Math.round(p.y - 5 * PX - (1 - up) * PX), PX, PX);
@@ -510,7 +558,7 @@ function drawWalkers(T) {         // people away from their desks, nearest last 
   for (const [id, a] of list) {
     const g = cx2, n = nodeOf(id);
     g.save(); g.fillStyle = "rgba(0,0,0,.35)"; g.beginPath(); g.ellipse(a.x, a.y + 1, 9, 3, 0, 0, 7); g.fill();
-    const r = person(g, id, a.x, a.y, { moving:a.moving, step:a.step, carry:a.carry, raise:n.status === "approval" });
+    const r = person(g, id, a.x, a.y, { moving:a.moving, step:a.step, carry:a.carry, raise:n.status === "approval", mood:moodOf(id), T });
     g.font = "500 8px Orbitron, sans-serif"; g.textAlign = "center"; g.fillStyle = "#a8f0ff";
     g.fillText(nm(id).toUpperCase(), a.x, r.top - 4);
     g.restore();
