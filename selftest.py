@@ -8,6 +8,7 @@ It checks, each in a separate little Python run so a broken part can't take Jarv
   mic     the microphone still opens
   speaker there's still a speaker to talk through
   display the HUD page and its 3D engine are there and the display's web server serves them
+  clipper the Shorts clipper's modules and video tools (OpenCV, FFmpeg, yt-dlp) load
 
 updater.py runs it before and after installing an update (before restarting) and again when
 he starts up on the new version. Anything that worked before the update but not after is a
@@ -23,7 +24,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SKIP = {"mac", "menubar", "inbox"} if sys.platform == "win32" else {"win", "menubar_win", "wincal"}
 NAMES = {"code": "my code", "parts": "some of my parts", "voice": "my voice", "brain": "my brain",
-         "mic": "the microphone", "speaker": "the speaker", "display": "my display"}
+         "mic": "the microphone", "speaker": "the speaker", "display": "my display",
+         "clipper": "my Shorts clipper"}
 
 
 def _py(code, timeout):
@@ -119,7 +121,19 @@ def _display():
     return ok, detail, []
 
 
-CHECKS = {"code": _code, "parts": _parts, "voice": _voice, "brain": _brain, "mic": _mic, "speaker": _speaker, "display": _display}
+def _clipper():
+    ok, detail = _py("import json\n"
+                     "try:\n"
+                     "    import cv2, PIL, yt_dlp\n"
+                     "    from clipper import media, pipeline, jobs, youtube, api, intents\n"
+                     "    media.ffmpeg()\n"
+                     "    print('@@' + json.dumps([True, 'video tools and modules load']))\n"
+                     "except Exception as e:\n"
+                     "    print('@@' + json.dumps([False, f'{type(e).__name__}: {e}'[:200]]))", 90)
+    return ok, detail, []
+
+
+CHECKS = {"code": _code, "parts": _parts, "voice": _voice, "brain": _brain, "mic": _mic, "speaker": _speaker, "display": _display, "clipper": _clipper}
 
 
 def run(skip=()):

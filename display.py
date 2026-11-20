@@ -22,6 +22,7 @@ from pathlib import Path
 PORT = 8765
 HTML = Path(__file__).with_name("display.html")
 TEAM_HTML = HTML.with_name("team.html")    # the live view of Jarvis's AI team at /team
+CLIPPER_HTML = HTML.with_name("clipper.html")   # the Shorts clipper dashboard at /clipper
 VENDOR = HTML.with_name("vendor")       # the 3D engine (three.js), served to the page
 WINDOWS = sys.platform == "win32"
 
@@ -227,7 +228,83 @@ def _team_version():
 
 
 class _Handler(BaseHTTPRequestHandler):
+    def _clipper_get(self):
+        """The Shorts clipper dashboard (clipper/api.py). True if it handled the request."""
+        path = urllib.parse.urlparse(self.path).path
+        if not path.startswith("/clipper"):
+            return False
+        if path in ("/clipper", "/clipper/"):
+            self._send(200, CLIPPER_HTML.read_bytes(), "text/html; charset=utf-8")
+            return True
+        try:
+            from clipper import api
+            if path == "/clipper/state":
+                body = dict(api.state(), token=TOKEN, page=CLIPPER_HTML.stat().st_mtime)
+                self._send(200, json.dumps(body, default=str).encode(), "application/json")
+                return True
+            for kind, ext, ctype in (("media", ".mp4", "video/mp4"), ("thumb", ".jpg", "image/jpeg")):
+                prefix = f"/clipper/{kind}/"
+                if path.startswith(prefix) and path.endswith(ext) and path[len(prefix):-len(ext)].isdigit():
+                    f = api.media_path(kind, int(path[len(prefix):-len(ext)]))
+                    if not f:
+                        break
+                    self._send_file(f, ctype)
+                    return True
+        except Exception as e:
+            self._send(500, json.dumps({"error": f"{type(e).__name__}: {e}"}).encode(), "application/json")
+            return True
+        self._send(404, b"not found", "text/plain")
+        return True
+
+    def _send(self, code, body, ctype):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_file(self, path, ctype):
+        """Serves a clip with HTTP Range support, so the preview player can seek."""
+        import os
+        size = os.path.getsize(path)
+        start, end = 0, size - 1
+        rng = self.headers.get("Range", "")
+        if rng.startswith("bytes="):
+            a, _, b = rng[6:].partition("-")
+            try:
+                start = int(a) if a else max(0, size - int(b))
+                end = min(size - 1, int(b)) if a and b else end
+            except ValueError:
+                start, end = 0, size - 1
+        if start > end or start >= size:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.end_headers()
+            return
+        self.send_response(206 if rng else 200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        if rng:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        with open(path, "rb") as f:
+            f.seek(start)
+            left = end - start + 1
+            try:
+                while left > 0:
+                    chunk = f.read(min(1 << 20, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
     def do_GET(self):
+        if self._clipper_get():
+            return
         if self.path.startswith("/state"):
             _last_view[0] = time.time()
             with _lock:
@@ -273,9 +350,23 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        """The display's text box: {"text": "..."} with the page's token."""
+        """The display's text box: {"text": "..."} with the page's token (and the clipper's buttons)."""
         origin = self.headers.get("Origin", "")
         ok_origin = origin in ("", f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}")
+        if self.path.startswith("/clipper/action"):
+            if not ok_origin or self.headers.get("X-Jarvis-Token") != TOKEN:
+                self.send_response(403)
+                self.end_headers()
+                return
+            try:
+                n = min(int(self.headers.get("Content-Length", 0)), 200000)
+                req = json.loads(self.rfile.read(n) or b"{}")
+                from clipper import api
+                res = api.action(req)
+            except Exception as e:
+                res = {"ok": False, "message": f"{type(e).__name__}: {e}"}
+            self._send(200, json.dumps(res, default=str).encode(), "application/json")
+            return
         if not self.path.startswith("/say") or not ok_origin or self.headers.get("X-Jarvis-Token") != TOKEN:
             self.send_response(403)
             self.end_headers()

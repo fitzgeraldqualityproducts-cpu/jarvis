@@ -10,12 +10,16 @@ sherpa-onnx
 certifi
 discord.py[voice]>=2.7
 av
+# Shorts clipper (video editing, face tracking, captions, downloads of authorized videos)
+opencv-python-headless>=4.8,<5
+imageio-ffmpeg
+Pillow
+yt-dlp
 # Mac only
 pyobjc-framework-EventKit; sys_platform == "darwin"
 rumps; sys_platform == "darwin"
 # Windows only
 miniaudio; sys_platform == "win32"
 pystray; sys_platform == "win32"
-Pillow; sys_platform == "win32"
 pycaw; sys_platform == "win32"
 psutil; sys_platform == "win32"

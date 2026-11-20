@@ -298,3 +298,50 @@ Double-click **Teach Jarvis My Voice** (Mac: .command, PC: .bat) and read the si
 - At the end you can add friends by name so he greets them ("who am I?").
 - Say "group chat mode off" or "on" any time. Run the file again to re-teach your voice or remove a friend.
 - Your voiceprint is saved in voiceprints.json, and gets a little better each time he's sure it's you.
+
+## Shorts Clipper (turns long videos into YouTube Shorts)
+
+Jarvis finds the best moments in a long video, edits them into vertical 1080x1920 Shorts with
+captions, writes titles and descriptions, checks the quality, and (once you allow it) uploads them.
+
+**Say:**
+- "Clip my last stream" (your newest Twitch VOD)
+- Copy a link (or a video file), then "find the best moments from this podcast" or "generate five Shorts from this video"
+- "Show me the clips awaiting approval" (opens the dashboard), "approve clip 12", "redo clip 12", "reject clip 12"
+- "Upload the approved clips" (he asks first), "turn on public publishing" (he asks first)
+- "Process the latest videos from my approved sources", "how's the clipper doing", "show me today's processing report"
+- "Use my premium caption style", "prioritize clips with strong opening hooks"
+- "Analyze which of my last 20 Shorts performed best", "use the highest performing editing style"
+- "Pause clipping", "resume clipping", and **"emergency stop"** (no new jobs, no uploads, until "resume clipping")
+
+**Dashboard:** http://localhost:8765/clipper (or the CLIPPER link on the HUD): overview, queue with
+retry/cancel, clip library with previews, approval center (edit titles, approve, reject, make another),
+analytics, and settings (permissions, caption style, lengths, posting times, sources, brand colours).
+You can also drop video files into `clipper_data/inbox` and they're picked up automatically.
+
+**What it will clip:** only videos you're allowed to use: your own Twitch VODs (your stream-mode channel
+is an approved source automatically), your own YouTube channel, files you add, Creative Commons (CC BY)
+videos (credited in the description), and creators you mark "I have permission". Anything else waits
+for your OK. Protected, private or members-only videos are never downloaded.
+
+**How it works (all on your computer, nothing to pay):** yt-dlp gets authorized videos (long VODs: just
+the audio first, then only the clip sections), faster-whisper (or Parakeet) makes a word-timed transcript,
+Claude (your plan, through Claude Code) picks and scores moments and double-checks each clip's context,
+OpenCV follows whoever's talking (or uses a streamer facecam-over-gameplay layout), and FFmpeg renders
+with captions, jump cuts and -14 LUFS sound. Every clip passes a quality check before it can be uploaded.
+Jobs survive restarts and updates. Command line: `.venv/bin/python -m clipper --help`.
+
+**Connect YouTube (one time, free):** double-click **Connect YouTube** and follow the steps it shows:
+make a Google Cloud project, enable *YouTube Data API v3* and *YouTube Analytics API*, set up the consent
+screen (add yourself as a test user, then "Publish app"), create a *Desktop app* OAuth client and download
+its JSON. The script finds it in Downloads, opens Google's sign-in, and stores the tokens only on this
+computer (`clipper_data/secrets`, never in git). Private uploads can then be switched on; public stays off.
+
+**Good to know:**
+- Google keeps videos uploaded by an app it hasn't audited locked to private. Private and unlisted
+  work right away; to publish publicly from Jarvis, request Google's free YouTube API audit for your
+  Cloud project (https://support.google.com/youtube/contact/yt_api_form). Jarvis tells you if a clip got locked.
+- The free API quota allows about 6 uploads a day (each costs 1,600 of 10,000 units). Jarvis tracks it.
+- Settings: `config.json` "clipper" (worker, disk limits, whisper model, retries); per-channel settings
+  live in the dashboard. Background music is only used from a folder of licensed tracks you choose.
+- Tests: `.venv/bin/python -m pytest tests` (YouTube is tested against a fake Google server).

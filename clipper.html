@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis Clipper</title>
+<style>
+  :root {
+    --cyan:#4fd8ff; --cyan2:#a8f0ff; --cyanDim:rgba(79,216,255,.32); --gold:#f2b84b; --red:#ff6b6b; --green:#5ee6a0;
+    --bg:#03070d; --panel:rgba(6,22,34,.72); --text:#dff6ff; --dim:#7fa3b3; --line:rgba(79,216,255,.18);
+    --hfont:"Orbitron","Avenir Next","Segoe UI",sans-serif; --bfont:"Rajdhani","Avenir Next","Segoe UI",-apple-system,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; color:var(--text); font-family:var(--bfont); font-size:16px;
+    background:radial-gradient(ellipse at 50% 0%, #0b2233 0%, #050d16 55%, var(--bg) 100%) fixed; min-height:100%; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:16px 20px 8px; }
+  h1 { font-family:var(--hfont); font-size:18px; letter-spacing:.3em; color:var(--cyan); margin:0; font-weight:600; }
+  h1 small { color:var(--dim); letter-spacing:.15em; font-size:11px; margin-left:10px; }
+  h2 { font-family:var(--hfont); font-size:11px; letter-spacing:.28em; text-transform:uppercase; color:var(--cyan); margin:0 0 12px; font-weight:500; }
+  nav { display:flex; flex-wrap:wrap; gap:4px; padding:0 20px 12px; border-bottom:1px solid var(--line); }
+  nav button { background:none; border:1px solid transparent; color:var(--dim); font-family:var(--hfont); font-size:11px;
+    letter-spacing:.18em; padding:8px 12px; cursor:pointer; text-transform:uppercase; border-radius:2px; }
+  nav button.on { color:var(--cyan); border-color:var(--cyanDim); background:rgba(79,216,255,.06); }
+  nav button .n { color:var(--gold); margin-left:6px; }
+  main { padding:18px 20px 60px; max-width:1400px; margin:0 auto; }
+  .panel { background:var(--panel); border:1px solid var(--cyanDim); padding:16px; position:relative; margin-bottom:16px; }
+  .panel::before { content:""; position:absolute; top:0; left:0; width:30%; height:2px; background:var(--cyan); box-shadow:0 0 10px var(--cyan); }
+  .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); }
+  .tile { border:1px solid var(--line); padding:12px; }
+  .tile b { display:block; font-family:var(--hfont); font-size:28px; font-weight:500; font-variant-numeric:tabular-nums; }
+  .tile span { color:var(--dim); font-size:14px; }
+  .btn { background:rgba(79,216,255,.08); border:1px solid var(--cyanDim); color:var(--cyan2); padding:7px 12px; cursor:pointer;
+    font-family:var(--bfont); font-size:15px; font-weight:600; border-radius:2px; }
+  .btn:hover { background:rgba(79,216,255,.18); }
+  .btn.warn { color:#ffd0d0; border-color:rgba(255,107,107,.5); background:rgba(255,107,107,.1); }
+  .btn.good { color:#cffff0; border-color:rgba(94,230,160,.5); background:rgba(94,230,160,.1); }
+  .btn:disabled { opacity:.4; cursor:default; }
+  input, select, textarea { background:rgba(0,0,0,.35); border:1px solid var(--line); color:var(--text); padding:8px; font:inherit; border-radius:2px; }
+  textarea { width:100%; min-height:80px; }
+  input[type=color] { padding:2px; width:46px; height:36px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .row input[type=text] { flex:1 1 260px; min-width:0; }
+  table { width:100%; border-collapse:collapse; font-size:15px; }
+  th { text-align:left; color:var(--dim); font-weight:500; font-size:13px; letter-spacing:.06em; padding:6px 8px; border-bottom:1px solid var(--line); }
+  td { padding:8px; border-bottom:1px solid rgba(79,216,255,.07); vertical-align:top; }
+  .scroll { overflow-x:auto; }
+  .state { font-family:var(--hfont); font-size:10px; letter-spacing:.12em; text-transform:uppercase; padding:3px 6px; border:1px solid var(--line); white-space:nowrap; }
+  .s-failed,.s-qa_failed,.s-upload_failed { color:var(--red); border-color:rgba(255,107,107,.5); }
+  .s-awaiting_approval,.s-awaiting_authorization { color:var(--gold); border-color:rgba(242,184,75,.5); }
+  .s-published,.s-uploaded,.s-scheduled,.s-done,.s-approved { color:var(--green); border-color:rgba(94,230,160,.4); }
+  .bar { height:4px; background:var(--line); margin-top:6px; } .bar i { display:block; height:100%; background:var(--cyan); }
+  .cards { display:grid; gap:14px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
+  .card { border:1px solid var(--line); background:rgba(0,0,0,.25); display:flex; flex-direction:column; }
+  .card video, .card img { width:100%; aspect-ratio:9/16; object-fit:cover; background:#000; display:block; }
+  .card .body { padding:10px 12px; display:flex; flex-direction:column; gap:6px; flex:1; }
+  .card .title { font-weight:700; font-size:17px; line-height:1.2; }
+  .meta { color:var(--dim); font-size:14px; }
+  .score { font-family:var(--hfont); color:var(--cyan); font-size:13px; }
+  .banner { padding:10px 14px; border:1px solid rgba(255,107,107,.6); color:#ffd0d0; background:rgba(255,107,107,.1); margin-bottom:14px; }
+  .note { padding:10px 14px; border:1px solid rgba(242,184,75,.5); color:#ffe3b0; background:rgba(242,184,75,.08); margin-bottom:14px; }
+  .log { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; max-height:340px; overflow:auto; }
+  .log div { padding:3px 0; border-bottom:1px solid rgba(79,216,255,.05); }
+  .lv-warn { color:var(--gold); } .lv-error { color:var(--red); }
+  .hbar { display:grid; grid-template-columns:140px 1fr 70px; gap:8px; align-items:center; margin:6px 0; font-size:14px; }
+  .hbar .track { position:relative; height:14px; }
+  .hbar .track .zero { position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background:var(--dim); opacity:.6; }
+  .hbar .track i { position:absolute; top:2px; height:10px; background:var(--cyan); border-radius:0 4px 4px 0; }
+  .hbar .track i.neg { border-radius:4px 0 0 4px; background:var(--cyan); opacity:.55; }
+  .hbar .v { text-align:right; font-variant-numeric:tabular-nums; color:var(--text); }
+  .muted { color:var(--dim); }
+  .toast { position:fixed; right:16px; bottom:16px; max-width:min(420px,calc(100% - 32px)); background:#071a26; border:1px solid var(--cyan);
+    padding:12px 14px; display:none; z-index:10; }
+  .ask { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:9; padding:16px; }
+  .ask .panel { max-width:460px; width:100%; }
+  .hide { display:none !important; }
+  label.ck { display:flex; gap:8px; align-items:center; margin:6px 0; }
+  @media (max-width:600px) { header, nav, main { padding-left:16px; padding-right:16px; } .hbar { grid-template-columns:90px 1fr 56px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>CLIPPER<small id="sub">SHORTS AGENT · CONNECTING</small></h1>
+  <div class="row">
+    <button class="btn" data-act="discover">Check sources</button>
+    <button class="btn" id="pausebtn" data-act="pause">Pause</button>
+    <button class="btn warn" id="stopbtn" data-act="stop">Emergency stop</button>
+  </div>
+</header>
+<nav id="tabs"></nav>
+<main>
+  <div id="stopbanner" class="banner hide">Emergency stop is on: no new jobs and no uploads. <button class="btn" data-act="resume">Resume clipping</button></div>
+
+  <section data-tab="overview">
+    <div class="panel"><h2>Add a video</h2>
+      <div class="row"><input type="text" id="addurl" placeholder="YouTube or Twitch link, or a file path on this computer">
+        <select id="addcount"><option value="">Default count</option><option>1</option><option>2</option><option>3</option><option>5</option><option>8</option></select>
+        <button class="btn good" id="addbtn">Clip it</button></div>
+      <p class="muted">Only videos you're allowed to use are processed: your own Twitch VODs and channel, files you add, Creative Commons, or creators you have permission from.</p>
+    </div>
+    <div class="panel"><h2>Overview</h2><div class="grid" id="tiles"></div></div>
+    <div class="panel"><h2>Needs your OK to clip</h2><div id="authlist"></div></div>
+    <div class="panel"><h2>What I've been doing</h2><div class="log" id="log"></div></div>
+  </section>
+
+  <section data-tab="queue"><div class="panel"><h2>Processing queue</h2><div class="scroll"><table id="jobs"></table></div></div></section>
+  <section data-tab="approvals"><div class="panel"><h2>Approval center</h2><div class="cards" id="approvals"></div></div></section>
+  <section data-tab="library"><div class="panel"><h2>Clip library</h2>
+    <div class="row" style="margin-bottom:12px"><select id="libfilter"><option value="">All clips</option><option value="awaiting_approval">Awaiting approval</option>
+      <option value="approved">Approved</option><option value="published,uploaded,scheduled">On YouTube</option><option value="qa_failed,upload_failed">Problems</option><option value="rejected">Rejected</option></select></div>
+    <div class="cards" id="library"></div></div></section>
+  <section data-tab="analytics">
+    <div class="panel"><h2>Results</h2><div id="anasummary" class="muted"></div><div class="grid" id="anatiles" style="margin-top:12px"></div></div>
+    <div class="panel"><h2>What's working</h2><p class="muted">Bars show how clips with each choice did compared with your typical clip (0 = typical). Labels say whether the gap is likely real. These are patterns, not proof.</p><div id="anafeatures"></div></div>
+    <div class="panel"><h2>Published clips</h2><div class="scroll"><table id="anatable"></table></div></div>
+  </section>
+  <section data-tab="settings">
+    <div class="panel"><h2>YouTube</h2><div id="ytbox"></div></div>
+    <div class="panel"><h2>Publishing permissions</h2><div id="perms"></div></div>
+    <div class="panel"><h2>Clips</h2><div id="clipset"></div></div>
+    <div class="panel"><h2>Approved sources</h2><div id="sources"></div>
+      <div class="row" style="margin-top:10px"><select id="srckind"><option value="twitch_channel">Twitch channel</option><option value="youtube_channel">YouTube channel</option>
+        <option value="youtube_search">Niche search (Creative Commons only)</option><option value="folder">Folder of my videos</option></select>
+        <input type="text" id="srcval" placeholder="channel name, @handle, search words or folder path">
+        <label class="ck"><input type="checkbox" id="srcok"> I own it or have permission</label>
+        <button class="btn" id="srcadd">Add</button></div></div>
+  </section>
+</main>
+<div class="ask" id="ask"><div class="panel"><h2>Please confirm</h2><p id="asktext"></p><div class="row"><button class="btn good" id="askyes">Yes</button><button class="btn" id="askno">Cancel</button></div></div></div>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  const TABS = [["overview","Overview"],["queue","Queue"],["approvals","Approvals"],["library","Library"],["analytics","Analytics"],["settings","Settings"]];
+  let S = null, token = "", tab = (location.hash || "#overview").slice(1), playing = new Set();
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const words = (s) => String(s || "").replace(/_/g, " ");
+  const ago = (t) => { const d = Math.max(0, (Date.now() / 1000) - t); return d < 90 ? Math.round(d) + "s ago" : d < 5400 ? Math.round(d / 60) + " min ago" : d < 129600 ? Math.round(d / 3600) + " h ago" : Math.round(d / 86400) + " days ago"; };
+
+  function toast(msg) { const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", 6000); }
+  function confirmBox(text) { return new Promise(res => { $("asktext").textContent = text; $("ask").style.display = "flex";
+    $("askyes").onclick = () => { $("ask").style.display = "none"; res(true); }; $("askno").onclick = () => { $("ask").style.display = "none"; res(false); }; }); }
+
+  async function act(body) {
+    try {
+      const r = await fetch("/clipper/action", { method: "POST", headers: { "Content-Type": "application/json", "X-Jarvis-Token": token }, body: JSON.stringify(body) });
+      const j = await r.json(); toast(j.message || (j.ok ? "Done." : "That didn't work.")); load(); return j;
+    } catch (e) { toast("Jarvis isn't answering: " + e); }
+  }
+
+  function tabs() {
+    const n = S ? S.overview.pending : 0;
+    $("tabs").innerHTML = TABS.map(([k, v]) => `<button class="${k === tab ? "on" : ""}" data-tab="${k}">${v}${k === "approvals" && n ? `<span class="n">${n}</span>` : ""}</button>`).join("");
+    document.querySelectorAll("section[data-tab]").forEach(s => s.classList.toggle("hide", s.dataset.tab !== tab));
+  }
+
+  function clipCard(c, approve) {
+    const vid = c.has_file ? `<video preload="none" controls playsinline poster="/clipper/thumb/${c.id}.jpg" src="/clipper/media/${c.id}.mp4"></video>` : `<img alt="" src="/clipper/thumb/${c.id}.jpg" onerror="this.style.visibility='hidden'">`;
+    const qa = c.qa && c.qa.checks ? (c.qa.passed ? "Quality check passed" + (c.qa.warnings.length ? " (notes: " + c.qa.warnings.map(words).join(", ") + ")" : "") : "Quality check failed: " + c.qa.critical.map(words).join(", ")) : "";
+    const yt = c.youtube_id ? `<a class="btn" target="_blank" rel="noopener" href="https://youtu.be/${esc(c.youtube_id)}">Open on YouTube</a>` : "";
+    const m = c.metrics ? `<div class="meta">${c.metrics.views} views · ${Math.round(c.metrics.avg_view_pct || 0)}% watched · ${c.metrics.likes} likes</div>` : "";
+    const edit = approve ? `<input type="text" value="${esc(c.title)}" data-title="${c.id}" maxlength="100" aria-label="Title">
+       <select data-titles="${c.id}" aria-label="Other titles"><option value="">Other title ideas...</option>${(c.titles || []).map(t => `<option>${esc(t)}</option>`).join("")}</select>
+       <textarea data-desc="${c.id}" aria-label="Description">${esc(c.description)}</textarea>` : `<div class="title">${esc(c.title)}</div>`;
+    const buttons = approve ? `<div class="row"><button class="btn good" data-clip="${c.id}" data-do="approve">Approve</button>
+       <button class="btn" data-clip="${c.id}" data-do="regenerate">Make another</button><button class="btn warn" data-clip="${c.id}" data-do="reject">Reject</button></div>`
+      : (c.state === "approved" || c.state === "ready" || c.state === "upload_failed") ? `<div class="row"><button class="btn good" data-clip="${c.id}" data-do="upload">Upload</button>${yt}</div>` : (yt ? `<div class="row">${yt}</div>` : "");
+    return `<div class="card">${vid}<div class="body">
+      <div class="row"><span class="state s-${esc(c.state)}">${words(c.state)}</span><span class="score">SCORE ${Number(c.score || 0).toFixed(1)}</span><span class="meta">#${c.id} · ${Math.round(c.duration || 0)}s · ${esc(c.layout || "")} · ${esc(c.caption_style || "")}</span></div>
+      ${edit}
+      <div class="meta">${esc(c.hook_type ? words(c.hook_type) + " opening. " : "")}${esc(c.reason || "")}</div>
+      <div class="meta">From "${esc((c.source || {}).title)}" at ${fmt(c.start)}–${fmt(c.end)} · ${esc((c.source || {}).basis || "")}</div>
+      ${c.note ? `<div class="meta">${esc(c.note)}</div>` : ""}<div class="meta">${esc(qa)}</div>${m}${buttons}</div></div>`;
+  }
+  const fmt = (t) => { t = Math.floor(t || 0); const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0"); };
+
+  function render() {
+    tabs();
+    const o = S.overview;
+    $("sub").textContent = "SHORTS AGENT · " + (o.stopped ? "EMERGENCY STOP" : o.paused ? "PAUSED" : o.active ? "WORKING" : "IDLE");
+    $("stopbanner").classList.toggle("hide", !o.stopped);
+    $("pausebtn").textContent = o.paused ? "Resume" : "Pause"; $("pausebtn").dataset.act = o.paused ? "resume" : "pause";
+    $("tiles").innerHTML = [["videos","Videos discovered"],["processed","Videos processed"],["clips","Clips made"],["published","On YouTube"],["active","Running now"],["queued","Queued"],["failed","Failed jobs"],["pending","Awaiting approval"]]
+      .map(([k, v]) => `<div class="tile"><b>${o[k]}</b><span>${v}</span></div>`).join("");
+    $("authlist").innerHTML = S.awaiting_auth.length ? S.awaiting_auth.map(a => `<div class="row" style="margin:6px 0"><span>"${esc(a.title)}" by ${esc(a.creator || "unknown")} <span class="muted">(${esc(a.auth_basis)})</span></span>
+      <button class="btn" data-grant="${a.video_id}" data-name="${esc(a.title)}">I have permission</button><button class="btn warn" data-cancel="${a.job_id}">Drop</button></div>`).join("") : `<div class="muted">Nothing waiting.</div>`;
+    $("log").innerHTML = S.events.map(e => `<div class="lv-${esc(e.level)}">${new Date(e.t * 1000).toLocaleString()} · ${e.job_id ? "job " + e.job_id + " · " : ""}${esc(e.msg)}</div>`).join("") || `<div class="muted">Nothing yet.</div>`;
+    $("jobs").innerHTML = `<tr><th>Job</th><th>Video</th><th>Stage</th><th>Progress</th><th>Notes</th><th></th></tr>` + S.jobs.map(j => {
+      const pct = Math.round((j.progress || 0) * 100), eta = j.eta ? ` · about ${Math.ceil(j.eta / 60)} min left` : "";
+      const btn = ["failed","cancelled"].includes(j.state) ? `<button class="btn" data-retry="${j.id}">Retry</button>` : !["done","published"].includes(j.state) ? `<button class="btn warn" data-cancel="${j.id}">Cancel</button>` : "";
+      return `<tr><td>${j.id}</td><td>${esc(j.title)}<div class="meta">${esc(j.platform)} · ${j.duration ? fmt(j.duration) : ""} · ${esc(j.auth_basis || "")}</div></td>
+        <td><span class="state s-${esc(j.state)}">${words(j.state)}</span></td><td style="min-width:120px">${pct}%${eta}<div class="bar"><i style="width:${pct}%"></i></div><div class="meta">${esc(j.detail || "")}</div></td>
+        <td class="meta">${esc(j.error || "")}${j.attempts ? " (try " + (j.attempts + 1) + ")" : ""}</td><td>${btn}</td></tr>`; }).join("");
+    const pend = S.clips.filter(c => c.state === "awaiting_approval");
+    if (!document.activeElement || !document.activeElement.closest || !document.activeElement.closest("#approvals")) {
+      if (!playing.size) $("approvals").innerHTML = pend.length ? pend.map(c => clipCard(c, true)).join("") : `<div class="muted">No clips waiting for approval.</div>`;
+    }
+    const f = $("libfilter").value.split(",").filter(Boolean);
+    const lib = S.clips.filter(c => !f.length || f.includes(c.state));
+    if (!playing.size) $("library").innerHTML = lib.map(c => clipCard(c, false)).join("") || `<div class="muted">No clips yet.</div>`;
+    analytics(); settingsTab();
+  }
+
+  function analytics() {
+    const a = S.analysis || { n: 0 };
+    const pub = S.clips.filter(c => c.youtube_id);
+    $("anasummary").textContent = a.n ? `Based on ${a.n} published clips with YouTube numbers.` : (S.youtube.connected ? "No numbers yet: they appear a day or so after clips are published." : "Connect YouTube to see how your clips perform.");
+    const sum = (k) => pub.reduce((t, c) => t + ((c.metrics || {})[k] || 0), 0);
+    $("anatiles").innerHTML = pub.length ? [["views","Views"],["likes","Likes"],["shares","Shares"],["subs_gained","Subscribers gained"]].map(([k, v]) => `<div class="tile"><b>${sum(k)}</b><span>${v}</span></div>`).join("") : "";
+    const names = { hook_type: "Opening type", caption_style: "Caption style", duration: "Length", layout: "Framing", hour: "Upload time", topic: "Topic" };
+    $("anafeatures").innerHTML = a.n ? Object.entries(names).map(([k, label]) => {
+      const t = Object.entries((a.features || {})[k] || {}).filter(([n]) => n !== "unknown");
+      if (t.length < 2) return "";
+      const max = Math.max(0.5, ...t.map(([, v]) => Math.abs(v.effect)));
+      return `<h2 style="margin-top:14px">${label}</h2>` + t.sort((x, y) => y[1].effect - x[1].effect).map(([n, v]) => {
+        const w = Math.abs(v.effect) / max * 50, left = v.effect >= 0 ? 50 : 50 - w;
+        return `<div class="hbar" title="${esc(words(n))}: ${v.effect.toFixed(2)} vs typical, ${v.n} clips, ${v.label}"><span>${esc(words(n))}</span>
+          <div class="track"><span class="zero"></span><i class="${v.effect < 0 ? "neg" : ""}" style="left:${left}%;width:${Math.max(1, w)}%"></i></div><span class="v">${v.effect >= 0 ? "+" : ""}${v.effect.toFixed(2)}</span></div>
+          <div class="meta" style="margin:-4px 0 6px 148px">${v.n} clips · ${esc(v.label)}</div>`; }).join("");
+    }).join("") : `<div class="muted">Not enough data yet.</div>`;
+    $("anatable").innerHTML = `<tr><th>Clip</th><th>Views</th><th>% watched</th><th>Likes</th><th>Shares</th><th>Subs</th><th>Style</th></tr>` + pub.map(c => {
+      const m = c.metrics || {}; return `<tr><td><a style="color:var(--cyan2)" target="_blank" rel="noopener" href="https://youtu.be/${esc(c.youtube_id)}">${esc(c.title)}</a></td><td>${m.views ?? "–"}</td><td>${m.avg_view_pct != null ? Math.round(m.avg_view_pct) + "%" : "–"}</td><td>${m.likes ?? "–"}</td><td>${m.shares ?? "–"}</td><td>${m.subs_gained ?? "–"}</td><td>${esc(c.caption_style)}</td></tr>`; }).join("");
+  }
+
+  let settingsDrawn = false;
+  function settingsTab() {
+    const ch = S.channel, yt = S.youtube, p = ch.permissions;
+    $("ytbox").innerHTML = yt.connected ? `<div>Connected to <b>${esc(yt.title || "your channel")}</b>. API quota used today: ${yt.quota_used} of ${yt.quota}.</div>`
+      : `<div class="note">YouTube isn't connected. Double-click <b>Connect YouTube</b> in Jarvis's folder${yt.client ? "" : " (it walks you through the one-time Google setup)"}. Until then, clips are saved here and nothing is uploaded.</div>`;
+    if (settingsDrawn && document.activeElement && document.activeElement.closest && document.activeElement.closest("section[data-tab=settings]")) return;
+    settingsDrawn = true;
+    const perm = [["discover","Look for new videos from my approved sources"],["process","Process authorized videos"],["render","Make clips"],["save","Keep finished clips"],
+      ["upload_private","Upload clips to YouTube as private"],["schedule_public","Schedule approved clips to go public"],["publish_public","Publish approved clips publicly"],
+      ["require_approval","Clips wait for my approval before any upload"],["delete_files","Delete downloaded source videos after a few days"],["auto_process","Start clipping new videos from sources automatically"]];
+    $("perms").innerHTML = perm.map(([k, v]) => `<label class="ck"><input type="checkbox" data-perm="${k}" ${p[k] ? "checked" : ""}> ${v}</label>`).join("") +
+      `<div class="row" style="margin-top:8px">Upload as <select id="privacy">${["draft","private","unlisted","scheduled","public"].map(x => `<option ${ch.privacy === x ? "selected" : ""}>${x}</option>`).join("")}</select>
+       <span class="muted">Public and scheduled still need their switches above.</span></div>`;
+    $("clipset").innerHTML = `<div class="row">Caption style <select id="cstyle">${["auto"].concat(S.styles).map(x => `<option ${ch.caption_style === x ? "selected" : ""}>${x}</option>`).join("")}</select>
+      Length <input type="number" id="cmin" value="${ch.clip_min}" min="5" max="170" style="width:70px"> to <input type="number" id="cmax" value="${ch.clip_max}" min="10" max="180" style="width:70px"> seconds
+      Clips per video <input type="number" id="cper" value="${ch.max_clips_per_video}" min="1" max="30" style="width:60px">
+      Posting times <input type="text" id="ctimes" value="${esc((ch.publish_times || []).join(", "))}" style="width:140px">
+      Max uploads a day <input type="number" id="cday" value="${ch.max_uploads_per_day}" min="1" max="20" style="width:60px"></div>
+      <div class="row" style="margin-top:8px">Niches <input type="text" id="cniche" value="${esc((ch.niches || []).join(", "))}"></div>
+      <div class="row" style="margin-top:8px"><label class="ck"><input type="checkbox" id="cjump" ${ch.jump_cuts ? "checked" : ""}> Jump cuts (remove dead air)</label>
+      <label class="ck"><input type="checkbox" id="czoom" ${ch.zooms ? "checked" : ""}> Subtle zooms</label><label class="ck"><input type="checkbox" id="chook" ${ch.hook_overlay ? "checked" : ""}> Opening title text</label>
+      <label class="ck"><input type="checkbox" id="cnoise" ${ch.noise_reduction ? "checked" : ""}> Noise reduction</label></div>
+      <div class="row" style="margin-top:8px">Brand colour <input type="color" id="cbrand" value="${esc(ch.brand.color)}"> Highlight <input type="color" id="chl" value="${esc(ch.brand.highlight)}">
+      Licensed music folder <input type="text" id="cmusic" value="${esc(ch.music_folder || "")}" placeholder="empty = no music"></div>
+      <div class="row" style="margin-top:10px"><button class="btn good" id="savesettings">Save</button></div>`;
+    $("sources").innerHTML = S.sources.filter(s => s.enabled).map(s => `<div class="row" style="margin:4px 0"><span>${esc(words(s.kind))}: <b>${esc(s.label || s.value)}</b> <span class="muted">${s.authorized ? esc(s.auth_basis) : "needs your OK per video"}</span></span>
+      <button class="btn" data-rmsrc="${s.id}">Remove</button></div>`).join("") || `<div class="muted">No sources yet. Your Twitch channel is added automatically once stream mode knows it.</div>`;
+  }
+
+  document.addEventListener("click", async (e) => {
+    const t = e.target.closest("button, [data-tab]"); if (!t) return;
+    if (t.parentElement && t.parentElement.id === "tabs") { tab = t.dataset.tab; location.hash = tab; render(); return; }
+    if (t.dataset.act) {
+      if (t.dataset.act === "stop" && !(await confirmBox("Stop all clipping and uploads now? Running jobs stop safely and resume later."))) return;
+      return act({ action: t.dataset.act });
+    }
+    if (t.dataset.do) {
+      const id = +t.dataset.clip;
+      if (t.dataset.do === "approve") { const ti = document.querySelector(`[data-title="${id}"]`), de = document.querySelector(`[data-desc="${id}"]`);
+        return act({ action: "approve", clip: id, title: ti && ti.value, description: de && de.value }); }
+      if (t.dataset.do === "upload" && !(await confirmBox(`Upload clip ${id} to YouTube (${S.channel.privacy})?`))) return;
+      return act({ action: t.dataset.do, clip: id });
+    }
+    if (t.dataset.grant) { if (await confirmBox(`Confirm you own "${t.dataset.name}" or have the creator's permission to clip and re-post it?`)) act({ action: "grant", video: +t.dataset.grant }); return; }
+    if (t.dataset.cancel) return act({ action: "cancel", job: +t.dataset.cancel });
+    if (t.dataset.retry) return act({ action: "retry", job: +t.dataset.retry });
+    if (t.dataset.rmsrc) return act({ action: "remove_source", id: +t.dataset.rmsrc });
+    if (t.id === "addbtn") { const u = $("addurl").value.trim(); if (!u) return toast("Paste a link or file path first.");
+      const r = await act({ action: "add", url: u, count: +$("addcount").value || null }); if (r && r.ok) $("addurl").value = ""; return; }
+    if (t.id === "srcadd") { const v = $("srcval").value.trim(); if (!v) return; return act({ action: "add_source", kind: $("srckind").value, value: v, authorized: $("srcok").checked }); }
+    if (t.id === "savesettings") {
+      const perms = {}; document.querySelectorAll("[data-perm]").forEach(x => perms[x.dataset.perm] = x.checked);
+      const old = S.channel.permissions;
+      if ((perms.publish_public && !old.publish_public) || (perms.schedule_public && !old.schedule_public)) {
+        if (!(await confirmBox("Turn on public publishing? Approved clips will go public on YouTube without asking again. (Google keeps uploads from unaudited apps private until you pass its free API audit.)"))) return; }
+      const list = (s) => s.split(",").map(x => x.trim()).filter(Boolean);
+      act({ action: "settings", changes: { permissions: perms, privacy: $("privacy").value, caption_style: $("cstyle").value, clip_min: +$("cmin").value, clip_max: +$("cmax").value,
+        clip_hard_max: Math.max(+$("cmax").value, S.channel.clip_hard_max), max_clips_per_video: +$("cper").value, publish_times: list($("ctimes").value), max_uploads_per_day: +$("cday").value,
+        niches: list($("cniche").value), jump_cuts: $("cjump").checked, zooms: $("czoom").checked, hook_overlay: $("chook").checked, noise_reduction: $("cnoise").checked,
+        brand: { color: $("cbrand").value, highlight: $("chl").value }, music_folder: $("cmusic").value.trim() } });
+      settingsDrawn = false;
+    }
+  });
+  document.addEventListener("change", (e) => {
+    if (e.target.dataset && e.target.dataset.titles && e.target.value) { const i = document.querySelector(`[data-title="${e.target.dataset.titles}"]`); if (i) i.value = e.target.value; }
+    if (e.target.id === "libfilter") render();
+  });
+  document.addEventListener("play", (e) => playing.add(e.target), true);
+  document.addEventListener("pause", (e) => playing.delete(e.target), true);
+  document.addEventListener("ended", (e) => playing.delete(e.target), true);
+  window.addEventListener("hashchange", () => { tab = (location.hash || "#overview").slice(1); if (S) render(); });
+
+  let page = null;
+  async function load() {
+    try {
+      const r = await fetch("/clipper/state", { cache: "no-store" }); S = await r.json();
+      if (S.error) { $("sub").textContent = "SHORTS AGENT · " + S.error; return; }
+      token = S.token; if (page && S.page !== page) location.reload(); page = S.page; render();
+    } catch (e) { $("sub").textContent = "SHORTS AGENT · JARVIS OFFLINE"; }
+  }
+  tabs(); load(); setInterval(load, 4000);
+})();
+</script>
+</body>
+</html>

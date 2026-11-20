@@ -93,6 +93,8 @@ CAPABILITIES = (
     "I learn your routines and offer them before you ask, give you a heads-up before events, and say what do you "
     "think I need to hear what's coming. For bigger jobs, say get the team on, then what you want, and my AI team "
     "of researchers, planners, coders and strategists will work on it in the background. "
+    "I'm also a YouTube Shorts clipper: copy a video link and say clip this video, or say clip my last stream, "
+    "and I'll find the best moments, edit them into captioned vertical Shorts and, once you allow it, upload them. "
     "If I can't do something, I'll work out an upgrade and offer it to you, and say review yourself for my report "
     "card. And you can ask me anything else."
 )
@@ -605,6 +607,14 @@ def handle(text, _part=False):
             offer_store_action()                 # the next one, if there's another
             return True
         PENDING.clear()                          # he moved on; it stays queued for later
+    if PENDING.get("kind") == "clipper":
+        if YES_RE.search(t) and len(t.split()) <= 6 or NO_RE.fullmatch(t):
+            action = PENDING.pop("action")
+            PENDING.clear()
+            from clipper import control
+            voice.say(control.confirm(action, bool(YES_RE.search(t) and not NO_RE.fullmatch(t))))
+            return True
+        PENDING.clear()
     if PENDING.get("kind") == "night":
         said = answer_lesson(t)
         if said is not None:
@@ -637,6 +647,8 @@ def handle(text, _part=False):
         request = LAST_SELF_EDIT.pop("request")
         LAST_SELF_EDIT.clear()
         voice.say(do_self_edit(request))
+        return True
+    if clipper_command(t, text):
         return True
     if ideas_command(t) or team_command(t) or predict_command(t):
         return True
@@ -1015,6 +1027,51 @@ def team_command(t):
     return False
 
 
+def clipper_command(t, text):
+    """The Shorts clipper (clipper/): "clip this podcast", "clip my last stream", "show me the clips awaiting
+    approval", "upload the approved clips", "emergency stop"... True if handled."""
+    try:
+        from clipper import intents
+        hit = intents.parse(t, text)
+    except Exception as e:
+        print(f"(clipper unavailable: {e})")
+        return False
+    if not hit:
+        return False
+    from clipper import control
+    if hit[0] in ("clip", "discover", "report", "analyze"):
+        display.update(status="thinking")
+    reply, confirm = control.run(*hit)
+    if confirm:
+        PENDING.clear()
+        PENDING.update(kind="clipper", action=confirm)
+    voice.say(reply)
+    predict.record(original_case(t), "clipper")
+    return True
+
+
+def start_clipper():
+    """Starts the clipper's background worker (unless "clipper": {"enabled": false} in config.json)."""
+    try:
+        from clipper import jobs, settings as clip_settings
+        if clip_settings.general().get("enabled", True):
+            jobs.start()
+    except Exception as e:
+        print(f"(clipper didn't start: {e})")
+
+
+def clipper_news():
+    """Finished clips, failures and questions from the clipper, as one sentence (or None)."""
+    try:
+        from clipper import db as clip_db
+        rows = clip_db.news()
+    except Exception:
+        return None, []
+    if not rows:
+        return None, []
+    return " ".join(r["msg"] for r in rows[:3]), [r["id"] for r in rows]
+
+
 def offer_team_change():
     """If the team's last project worked out a change to Jarvis himself, ask before doing it.
     Also asks about anything the store builder queued for Connor's OK (StoreForge)."""
@@ -1189,6 +1246,11 @@ def speak_up_loop():
                 fix_news = repair.pop_say()
                 if fix_news and not speak_up(fix_news):
                     repair.say(fix_news, first=True)  # busy: say it in a moment
+                if not late:
+                    said, ids = clipper_news()
+                    if said and speak_up(said):
+                        from clipper import db as clip_db
+                        clip_db.mark_told(ids)
                 n = None if late else workforce.news()
                 if n and speak_up(team_news_words(n)):
                     workforce.told(n[0])
@@ -1376,6 +1438,7 @@ def main():
         updater.start(lambda: is_busy() or workforce.busy() or nightschool.busy(), restart_jarvis)
         updater.verify_on_start(restart_jarvis, is_busy)      # after an update: check the new version works
         learn.start(is_busy)
+        start_clipper()
         nightschool.start(lambda: is_busy() or workforce.busy())
         import recall
         recall.start()
