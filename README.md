@@ -134,6 +134,13 @@ words (claps and "Hey Jarvis" still work).
 - **Talk over him:** in a spoken conversation, start talking while he's mid-answer and he stops and
   listens to what you're saying. "barge_in": false turns that off (stop/Jarvis still work).
   Group chat mode still checks who's talking.
+- **He doesn't hear himself:** the mic picks up his own voice from the speakers, so he ignores it
+  (echo.py). While he talks, talking over him only counts if it's words he isn't saying, a few
+  checks in a row, and louder than his own echo. After he stops he waits half a second, and anything
+  heard that's just a bit of his own reply is ignored (or cut off the front of what you said).
+  "Stop", "Jarvis" and claps always interrupt. Tuning: "echo_gap" (0.5), "barge_in_checks" (3),
+  "barge_in_louder" (1.2, lower it if talking over him stopped working), "echo_guard": false to turn
+  the after-speech checks off.
 
 ## One brain for everything (skills and add-ons)
 Everything Jarvis can do is also a **skill** his brain (Claude) can use as a tool, so any wording
