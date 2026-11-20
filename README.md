@@ -157,6 +157,14 @@ anything else, or several things at once, goes to his brain, which picks the ski
 - Discord: his brain can post for you ("tell the squad ..."). It posts in the channel you name, or
   "discord_channel" in config.json, or where you last talked to him.
 
+## Light on your Claude plan
+Every question Jarvis sends to Claude Code now loads only the tools that question can use, instead of
+Claude Code's whole toolbox, skills list and your own MCP servers. Same model, same prompt, same
+answers, about 3 to 4 times fewer tokens per question. Simple things ("what time is it", "what's the
+date", "thanks") he answers himself without asking Claude at all, and the self-improvement loop waits
+for a quiet 15 minutes and thinks at most 3 times a day. Older Claude Code that doesn't know the new
+options is spotted and gets the old way. "lean_claude": false in config.json turns it off.
+
 ## Perfect memory
 Every conversation you have with him (spoken or typed) is saved on this computer in memory.db and
 searchable by meaning, using a tiny free model (about 30 MB) that runs on your computer. Months later
