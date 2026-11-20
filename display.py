@@ -242,13 +242,26 @@ class _Handler(BaseHTTPRequestHandler):
                 body = dict(api.state(), token=TOKEN, page=CLIPPER_HTML.stat().st_mtime)
                 self._send(200, json.dumps(body, default=str).encode(), "application/json")
                 return True
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            for kind, fn in (("job", api.job_detail), ("clip", api.clip_detail)):
+                prefix = f"/clipper/{kind}/"
+                if path.startswith(prefix) and path[len(prefix):].isdigit():
+                    self._send(200, json.dumps(fn(int(path[len(prefix):])), default=str).encode(), "application/json")
+                    return True
+            if path.startswith("/clipper/frame/") and path.endswith(".jpg") and path[15:-4].isdigit():
+                f = api.frame(int(path[15:-4]), float((query.get("t") or ["0"])[0]))
+                if f:
+                    self._send_file(f, "image/jpeg")
+                    return True
             for kind, ext, ctype in (("media", ".mp4", "video/mp4"), ("thumb", ".jpg", "image/jpeg")):
                 prefix = f"/clipper/{kind}/"
                 if path.startswith(prefix) and path.endswith(ext) and path[len(prefix):-len(ext)].isdigit():
-                    f = api.media_path(kind, int(path[len(prefix):-len(ext)]))
+                    cid = int(path[len(prefix):-len(ext)])
+                    f = api.media_path(kind, cid)
                     if not f:
                         break
-                    self._send_file(f, ctype)
+                    name = api.download_name(cid) if kind == "media" and query.get("download") else None
+                    self._send_file(f, ctype, download=name)
                     return True
         except Exception as e:
             self._send(500, json.dumps({"error": f"{type(e).__name__}: {e}"}).encode(), "application/json")
@@ -264,8 +277,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_file(self, path, ctype):
-        """Serves a clip with HTTP Range support, so the preview player can seek."""
+    def _send_file(self, path, ctype, download=None):
+        """Serves a clip with HTTP Range support, so the preview player can seek. download = a file
+        name to save it as."""
         import os
         size = os.path.getsize(path)
         start, end = 0, size - 1
@@ -286,6 +300,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(end - start + 1))
+        if download:
+            self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + urllib.parse.quote(download))
         if rng:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()
@@ -353,6 +369,23 @@ class _Handler(BaseHTTPRequestHandler):
         """The display's text box: {"text": "..."} with the page's token (and the clipper's buttons)."""
         origin = self.headers.get("Origin", "")
         ok_origin = origin in ("", f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}")
+        if self.path.startswith("/clipper/upload"):
+            if not ok_origin or self.headers.get("X-Jarvis-Token") != TOKEN:
+                self.send_response(403)
+                self.end_headers()
+                return
+            try:
+                from clipper import api
+                name = urllib.parse.unquote(self.headers.get("X-File-Name", "video.mp4"))
+                res = api.save_upload(self.rfile, int(self.headers.get("Content-Length", 0)), name)
+                if res.get("ok"):
+                    count = self.headers.get("X-Clip-Count")
+                    res = api.action({"action": "add", "url": res["path"], "count": int(count) if count and count.isdigit() else None,
+                                      "length": self.headers.get("X-Clip-Length") or None})
+            except Exception as e:
+                res = {"ok": False, "message": f"{type(e).__name__}: {e}"}
+            self._send(200, json.dumps(res, default=str).encode(), "application/json")
+            return
         if self.path.startswith("/clipper/action"):
             if not ok_origin or self.headers.get("X-Jarvis-Token") != TOKEN:
                 self.send_response(403)

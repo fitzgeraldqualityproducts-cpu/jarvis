@@ -251,10 +251,11 @@ class FrameReader:
 class FrameWriter:
     """Encodes BGR frames + a WAV file into an H.264/AAC MP4 made for phones."""
 
-    def __init__(self, out, w, h, fps, audio, preset="veryfast", crf=20):
+    def __init__(self, out, w, h, fps, audio, preset="veryfast", crf=20, vf=None):
         self.out = str(out)
         self.proc = popen(["-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}", "-r", fps, "-i", "-",
-                           "-i", audio, "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", preset,
+                           "-i", audio, "-map", "0:v", "-map", "1:a"] + (["-vf", vf] if vf else []) +
+                          ["-c:v", "libx264", "-preset", preset,
                            "-crf", crf, "-profile:v", "high", "-pix_fmt", "yuv420p", "-r", fps,
                            "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart",
                            "-shortest", self.out], stdin=subprocess.PIPE, stderr=subprocess.PIPE)

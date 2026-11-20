@@ -322,10 +322,26 @@ captions, writes titles and descriptions, checks the quality, and (once you allo
 - "Analyze which of my last 20 Shorts performed best", "use the highest performing editing style"
 - "Pause clipping", "resume clipping", and **"emergency stop"** (no new jobs, no uploads, until "resume clipping")
 
-**Dashboard:** http://localhost:8765/clipper (or the CLIPPER link on the HUD): overview, queue with
-retry/cancel, clip library with previews, approval center (edit titles, approve, reject, make another),
-analytics, and settings (permissions, caption style, lengths, posting times, sources, brand colours).
+**Dashboard:** http://localhost:8765/clipper (or the CLIPPER link on the HUD), a dark dashboard with:
+- **New video:** paste a YouTube/Twitch link (checked as you type) or drag in a video file; pick a clip
+  length (auto, 15–30, 30–45, 45–60, 60–90 seconds) and how many clips.
+- **Projects:** real progress through each step (getting the video, audio, transcript, understanding,
+  ranking, framing, rendering, quality check), with Retry now / Cancel.
+- **Moments, ranked:** every candidate with a 0–100 score (hook, entertainment and context shown
+  separately), why it was picked, its kind of moment (funny, story, reaction...), sorting by viral,
+  funniest, most emotional, storytelling, shortest, longest... and "Make selected" for any moment you
+  want as a clip. Turned-down moments are listed with the reason. Scores are estimates, not view predictions.
+- **Clips:** preview, download, multi-select export (to Movies/Videos › Jarvis Shorts), approve, delete.
+- **Editor:** trim on a timeline (snaps to words), caption style, font, size, colours, outline, shadow,
+  position, animation, fix caption words, layout or hand framing, dead-air and "um" removal, noise
+  reduction, music level, sound effects, zooms and punch-ins, opening text, titles/descriptions, re-render.
+  If a re-render fails, the previous version is kept.
+- **Approvals, Analytics** (predicted score vs. real results, kept separate) and **Settings**.
 You can also drop video files into `clipper_data/inbox` and they're picked up automatically.
+
+**Caption styles:** Clean, Bold Viral, Minimal White, Gaming, Podcast, Highlighted Keywords, Animated
+Pop, Cinematic, plus Kinetic, Educational and Premium. Auto picks one to suit the moment. Keywords
+(numbers, emphasised words, names, reactions) are highlighted on purpose, never at random.
 
 **What it will clip:** only videos you're allowed to use: your own Twitch VODs (your stream-mode channel
 is an approved source automatically), your own YouTube channel, files you add, Creative Commons (CC BY)
@@ -334,9 +350,13 @@ for your OK. Protected, private or members-only videos are never downloaded.
 
 **How it works (all on your computer, nothing to pay):** yt-dlp gets authorized videos (long VODs: just
 the audio first, then only the clip sections), faster-whisper (or Parakeet) makes a word-timed transcript,
-Claude (your plan, through Claude Code) picks and scores moments and double-checks each clip's context,
-OpenCV follows whoever's talking (or uses a streamer facecam-over-gameplay layout), and FFmpeg renders
-with captions, jump cuts and -14 LUFS sound. Every clip passes a quality check before it can be uploaded.
+Claude (your plan, through Claude Code) picks moments with a setup and payoff, scores them on twelve
+things (hook, emotion, story, replay value...), then one review call double-checks each clip's context
+and writes its 5 titles, 3 descriptions, hashtags and pinned-comment ideas. Measured checks reject dead
+air, repetition and mostly-silent picks. OpenCV follows whoever's talking, the action in gameplay, or a
+facecam-over-gameplay layout, and FFmpeg renders with captions, jump cuts, optional noise reduction,
+colour and sharpening (only when the picture needs it), music ducked under speech and -14 LUFS sound.
+Transcripts are cached, so the same video is never transcribed twice. Every clip passes a quality check before it can be uploaded.
 Jobs survive restarts and updates. Command line: `.venv/bin/python -m clipper --help`.
 
 **Connect YouTube (one time, free):** double-click **Connect YouTube** and follow the steps it shows:

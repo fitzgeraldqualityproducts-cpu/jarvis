@@ -7,9 +7,13 @@
    turns. Shots switch only when someone else clearly takes over (no jitter).
 4. Pick a layout for the clip:
      track   one person: a 9:16 window that glides smoothly to keep the speaker centred
+             (a little closer when the face is small: the "podcast"/speaker-focused framing)
      split   two people trading lines quickly: both stacked, top and bottom
      stack   streamer layout (small facecam in a corner + gameplay): facecam on top, game below
-     fit     no clear faces (screens, gameplay, slides): the whole frame over a blurred copy of itself
+     gameplay no faces but the action is in one area: a window that follows the movement, slowly
+     fit     no clear faces and action everywhere (screens, slides): the whole frame over a blurred copy
+   Shot changes are detected so the camera cuts with the video instead of panning across a cut.
+   The editor can force a layout or frame the clip by hand (position and zoom).
    Vertical videos are just scaled.
 The plan is saved per clip and render.py follows it frame by frame."""
 import urllib.request
@@ -106,9 +110,22 @@ def analyze(src, start, duration, progress=lambda f, d="": None):
                     act.append(float(np.mean(np.abs(a - b))))
                 else:
                     act.append(0.0)
+            motion, cut = None, False
+            if prev is not None and prev.shape == gray.shape:
+                diff = cv2.GaussianBlur(cv2.absdiff(gray, prev), (9, 9), 0).astype(np.float32)
+                col = diff.mean(axis=0)
+                total = float(col.sum())
+                if total > 1e-3:
+                    xs = np.arange(len(col)) / max(1, len(col) - 1)
+                    cx = float((col * xs).sum() / total)
+                    spread = float(np.sqrt((col * (xs - cx) ** 2).sum() / total))
+                    motion = [round(cx, 4), round(spread, 4), round(float(diff.mean()), 3)]
+                h1 = cv2.calcHist([gray], [0], None, [32], [0, 256])
+                h0 = cv2.calcHist([prev], [0], None, [32], [0, 256])
+                cut = float(cv2.compareHist(h0, h1, cv2.HISTCMP_BHATTACHARYYA)) > 0.45      # a new shot
             samples.append({"t": round(k / SAMPLE_FPS, 3),
                             "faces": [(x / reader.w, y / reader.h, fw / reader.w, fh / reader.h, c) for x, y, fw, fh, c in found],
-                            "act": act})
+                            "act": act, "motion": motion, "cut": cut})
             prev = gray
             k += 1
             if k % 25 == 0:
@@ -185,23 +202,45 @@ def speaking_track(trs, n, speech, hold=1.5):
     return out
 
 
-def plan(analysis, duration, words=(), src_w=1920, src_h=1080, out_w=1080, out_h=1920, prefer=None):
-    """Chooses the layout and makes the camera path. Returns a JSON-able plan."""
+def plan(analysis, duration, words=(), src_w=1920, src_h=1080, out_w=1080, out_h=1920, prefer=None, manual=None):
+    """Chooses the layout and makes the camera path. Returns a JSON-able plan.
+    prefer: a layout to use when it fits the video ("auto"/None = choose). manual: {"x": 0..1,
+    "zoom": 1..2, "layout": ...} from the editor, a fixed framing that overrides tracking."""
     samples = analysis["samples"]
     n = len(samples)
+    prefer = None if prefer in (None, "", "auto") else prefer
     aspect = src_w / max(1, src_h)
+    crop_w = min(1.0, (src_h * out_w / out_h) / src_w)        # a 9:16 window's width as a share of the frame
+    cuts = [round(s["t"], 2) for s in samples if s.get("cut")]
     if aspect <= out_w / out_h * 1.15:
         return {"layout": "scale", "reason": "already vertical"}
+    if manual and manual.get("layout") in ("fit", "split", "stack"):
+        prefer = manual["layout"]
+    elif manual and manual.get("x") is not None:
+        x = min(1 - crop_w / 2, max(crop_w / 2, float(manual["x"])))
+        return {"layout": "track", "reason": "framed by hand", "crop_w": crop_w, "x": [round(x, 4)], "fps": SAMPLE_FPS,
+                "shots": [], "speaker": [], "face_y": float(manual.get("y", 0.45)), "zoom": float(manual.get("zoom", 1.0)),
+                "manual": True}
+    if prefer == "fit":
+        return {"layout": "fit", "reason": "whole picture (chosen)"}
+    if prefer == "full":
+        return {"layout": "track", "reason": "centre of the picture (chosen)", "crop_w": crop_w, "x": [0.5], "fps": SAMPLE_FPS,
+                "shots": [], "speaker": [], "face_y": 0.5}
     trs = tracks(analysis)
     speech = [any(w["s"] <= s["t"] <= w["e"] + 0.3 for w in words) for s in samples] if words else [True] * n
     with_face = sum(1 for s in samples if s["faces"]) / max(1, n)
-    if not trs or with_face < 0.4:
-        return {"layout": "fit", "reason": "no steady faces"}
+    if prefer == "gameplay" or not trs or with_face < 0.4:
+        follow = _motion_path(samples, crop_w)
+        if follow and (prefer == "gameplay" or follow["steady"]):
+            return {"layout": "track", "reason": "following the action (no steady faces)" if prefer != "gameplay"
+                    else "following the action (chosen)", "crop_w": crop_w, "x": follow["x"], "fps": SAMPLE_FPS,
+                    "shots": cuts, "speaker": [], "face_y": 0.5, "gameplay": True}
+        return {"layout": "fit", "reason": "no steady faces, action spread across the screen"}
     big = [t for t in trs if t["size"] >= 0.035]
     # a streamer's facecam: one small face that stays in a corner (podcast faces sit mid-height)
     small_corner = [t for t in trs if t["size"] < 0.12 and (t["x"] < 0.3 or t["x"] > 0.7) and
                     (t["y"] < 0.33 or t["y"] > 0.67) and len(t["boxes"]) > n * 0.6]
-    if prefer in (None, "stack") and small_corner and len(trs) == 1:
+    if prefer in (None, "stack") and small_corner and len(trs) == 1 or (prefer == "stack" and small_corner):
         t = small_corner[0]
         boxes = _interp(t, n)
         cx = float(np.median([b[0] for b in boxes]))
@@ -210,10 +249,10 @@ def plan(analysis, duration, words=(), src_w=1920, src_h=1080, out_w=1080, out_h
         return {"layout": "stack", "reason": "facecam + gameplay", "cam": [cx, cy, fw], "top_share": 0.36}
     who = speaking_track(big or trs, n, speech)
     people = big or trs
-    if len(people) >= 2 and prefer in (None, "split"):
+    if len(people) >= 2 and prefer in (None, "split", "podcast"):
         switches = sum(1 for a, b in zip(who, who[1:]) if a != b)
         both = sum(1 for s in samples if len(s["faces"]) >= 2) / max(1, n)
-        if both > 0.7 and switches / max(1.0, duration) > 1 / 4.0:
+        if both > 0.7 and (prefer == "split" or (prefer is None and switches / max(1.0, duration) > 1 / 4.0)):
             order = sorted(range(len(people)), key=lambda k: people[k]["x"])[:2]
             return {"layout": "split", "reason": "two people trading lines",
                     "people": [[people[k]["x"], people[k]["y"], people[k]["size"]] for k in order]}
@@ -224,22 +263,45 @@ def plan(analysis, duration, words=(), src_w=1920, src_h=1080, out_w=1080, out_h
     for i in range(n):
         k = who[i] if who[i] is not None else 0
         target.append(paths[k][i][0])
-    xs = _smooth_path(target, crop_w)
+    scene = [bool(s.get("cut")) for s in samples]
+    xs = _smooth_path(target, crop_w, cuts=scene)
     shots = [i for i in range(1, n) if who[i] != who[i - 1]]
-    return {"layout": "track", "reason": f"following the speaker ({len(people)} on screen)", "crop_w": crop_w,
-            "x": [round(x, 4) for x in xs], "fps": SAMPLE_FPS, "shots": [round(i / SAMPLE_FPS, 2) for i in shots],
-            "speaker": who, "face_y": round(float(np.median([t["y"] for t in people])), 3)}
+    face_y = round(float(np.median([t["y"] for t in people])), 3)
+    zoom = 1.0
+    if prefer == "podcast" or (prefer is None and len(people) == 1 and float(np.median([t["size"] for t in people])) < 0.09):
+        zoom = 1.15                         # speaker-focused: a little closer on a small, far-away face
+    return {"layout": "track", "reason": f"following the speaker ({len(people)} on screen)" + (", closer" if zoom > 1 else ""),
+            "crop_w": crop_w, "x": [round(x, 4) for x in xs], "fps": SAMPLE_FPS,
+            "shots": sorted(set([round(i / SAMPLE_FPS, 2) for i in shots] + cuts)),
+            "speaker": who, "face_y": face_y, "zoom": zoom}
 
 
-def _smooth_path(target, crop_w, dead=0.06, ease=0.18):
+def _motion_path(samples, crop_w):
+    """For gameplay and other faceless video: a camera that follows where the action is (frame
+    differences), smoothed hard so it never whips around. steady = the action mostly fits the window."""
+    pts = [s.get("motion") for s in samples]
+    known = [p for p in pts if p and p[2] > 0.4]
+    if len(known) < max(3, len(samples) * 0.3):
+        return None
+    target, last = [], float(np.median([p[0] for p in known]))
+    for p in pts:
+        if p and p[2] > 0.4:
+            last = p[0]
+        target.append(last)
+    xs = _smooth_path(target, crop_w, dead=0.12, ease=0.08, cuts=[bool(s.get("cut")) for s in samples])
+    spread = float(np.median([p[1] for p in known]))
+    return {"x": [round(x, 4) for x in xs], "steady": spread < crop_w * 0.45}
+
+
+def _smooth_path(target, crop_w, dead=0.06, ease=0.18, cuts=None):
     """Camera centre over time: holds still inside a dead zone, eases toward the speaker otherwise,
-    and jumps (a cut) when the speaker changes to someone far away."""
+    and jumps (a cut, never a pan) when the speaker changes to someone far away or the shot changes."""
     half = crop_w / 2
     x = min(1 - half, max(half, target[0] if target else 0.5))
     out = []
-    for t in target:
+    for i, t in enumerate(target):
         t = min(1 - half, max(half, t))
-        if abs(t - x) > crop_w * 0.9:
+        if (cuts and i < len(cuts) and cuts[i]) or abs(t - x) > crop_w * 0.9:
             x = t                                   # a different person: cut, don't pan across
         elif abs(t - x) > dead * crop_w:
             x += (t - x) * ease
@@ -257,6 +319,8 @@ def camera_at(p, t):
     if i >= len(xs) - 1:
         return xs[-1]
     a = f - i
+    if abs(xs[i + 1] - xs[i]) > p.get("crop_w", 0.3) * 0.5:
+        return xs[i] if a < 0.5 else xs[i + 1]          # a cut, not a quick pan
     return xs[i] * (1 - a) + xs[i + 1] * a
 
 

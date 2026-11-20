@@ -95,9 +95,10 @@ def analyze_shorts(last: int = 20):
     return learning.report("main", last or 20)
 
 
-@tool("Change how clips are made: caption style (clean, bold, kinetic, educational, premium, auto), clip lengths, "
-      "clips per video, or what to prioritise (hook, story, education, entertainment, emotion).",
-      caption_style="clean, bold, kinetic, educational, premium or auto", min_seconds="shortest clip",
+@tool("Change how clips are made: caption style (clean = Clean Professional, bold = Bold Viral, minimal = Minimal White, "
+      "gaming, podcast, highlight = Highlighted Keywords, pop = Animated Pop, cinematic, or auto), clip lengths, "
+      "clips per video, or what to prioritise (hook, story, payoff, clarity, entertainment, emotion, curiosity).",
+      caption_style="clean, bold, minimal, gaming, podcast, highlight, pop, cinematic or auto", min_seconds="shortest clip",
       max_seconds="longest clip", clips_per_video="how many per video", prioritize="criterion to weigh double")
 def clipper_settings(caption_style: str = "", min_seconds: int = 0, max_seconds: int = 0, clips_per_video: int = 0,
                      prioritize: str = ""):

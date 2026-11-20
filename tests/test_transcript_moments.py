@@ -47,7 +47,7 @@ def test_dedupe_and_ranking_with_fake_claude(monkeypatch):
 
     def fake(prompt, timeout):
         calls.append(prompt)
-        if "checking Shorts clips" in prompt:
+        if "checking YouTube Shorts clips" in prompt:
             return json.dumps([{"clip": 0, "accurate": True, "standalone": True, "verdict": "keep"},
                                {"clip": 1, "accurate": False, "standalone": True, "verdict": "reject", "note": "misleading"}])
         return "Here you go:\n```json\n" + json.dumps([
@@ -75,9 +75,10 @@ def test_learned_nudges_are_capped():
     ch = settings.channel()
     c = {"scores": {k: 6 for k in moments.CRITERIA}, "context_complete": 6, "duration": 30, "hook_type": "question", "context_ok": True}
     base = moments.score(c, ch)
-    assert moments.score(c, ch, {"hook_type": {"question": 5.0}}) == round(base + 0.75, 2)
+    assert 0 <= base <= 100
+    assert moments.score(c, ch, {"hook_type": {"question": 5.0}}) == round(base + 7.5, 1)
     c["context_ok"] = False
-    assert moments.score(c, ch, {"hook_type": {"question": 5.0}}) <= 4.0   # learning can't rescue a context failure
+    assert moments.score(c, ch, {"hook_type": {"question": 5.0}}) <= 40   # learning can't rescue a context failure
 
 
 def test_parse_json_variants():
