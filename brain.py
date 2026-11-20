@@ -1,6 +1,7 @@
 """Brain: answers questions using your Claude Code login (the `claude` command)."""
 import glob
 import json
+import re
 
 import personality
 import os
@@ -125,15 +126,88 @@ UNSURE = ("(The speech recognition wasn't confident it heard this right. If it d
           "ask a short question to check what they meant instead of answering.)")
 
 
-def run_claude(cmd, timeout, cwd=None):
-    """Runs `claude -p <prompt> ...`. On Windows the prompt goes in through stdin, because
-    long prompts with line breaks don't survive the Windows command line."""
+# ---------- spending fewer Claude tokens ----------
+# A plain `claude -p` loads every built-in tool's instructions, the skills list and any MCP servers
+# set up in Claude Code, about 30,000 tokens, before it even reads the question. Jarvis only needs
+# the tools each call actually allows, so lean() asks Claude Code to load just those. Same model,
+# same prompt, same tools in use: the answers are the same, they just cost 3-4x less of his plan.
+# "lean_claude": false in config.json turns it off. Older Claude Code without these options is
+# spotted automatically and gets the old way.
+_LEAN_OFF = threading.Event()
+_READ_ONLY = ("Read", "Glob", "Grep")
+
+
+def lean_on():
+    if _LEAN_OFF.is_set():
+        return False
+    try:
+        return json.loads(CONFIG.read_text()).get("lean_claude", True) is not False
+    except Exception:
+        return True
+
+
+def _tool_list(cmd, flag):
+    """The tool names given after flag (e.g. --allowedTools), as a list of bare names."""
+    names = []
+    for i, a in enumerate(cmd):
+        if a in (flag, flag.replace("Tools", "-tools").lower()):
+            for v in cmd[i + 1:]:
+                if v.startswith("--"):
+                    break
+                names += re.findall(r"[^\s,()]+(?:\([^)]*\))?", v)
+    return names
+
+
+def lean(cmd):
+    """The same claude command, loading only the built-in tools it allows (plus Read/Glob/Grep unless
+    it bans them, as before, and the to-do list for coding jobs), no skills list, and none of Claude
+    Code's own MCP servers unless the command brings its own."""
+    if not lean_on() or "--tools" in cmd or "-p" not in cmd:
+        return list(cmd)
+    denied = {n.split("(")[0] for n in _tool_list(cmd, "--disallowedTools")}
+    tools = []
+    for n in _tool_list(cmd, "--allowedTools") + list(_READ_ONLY):
+        base = n.split("(")[0]
+        if base and not base.startswith("mcp__") and base not in denied and base not in tools:
+            tools.append(base)
+    if "Edit" in tools or "Write" in tools:
+        tools.append("TodoWrite")              # coding jobs keep their to-do list
+    extra = ["--tools", ",".join(tools), "--disable-slash-commands"]
+    if "--mcp-config" not in cmd and "--strict-mcp-config" not in cmd:
+        extra.append("--strict-mcp-config")
+    return list(cmd) + extra
+
+
+def lean_failed(error):
+    """True (and lean mode off from now on) if Claude Code didn't understand the lean options."""
+    low = (error or "").lower()
+    if any(o in low for o in ("--tools", "--disable-slash-commands", "--strict-mcp-config")) and \
+            ("unknown option" in low or "unknown argument" in low or "error: option" in low):
+        if not _LEAN_OFF.is_set():
+            print("(this Claude Code is older: using the full-size way)")
+        _LEAN_OFF.set()
+        return True
+    return False
+
+
+def _run_claude(cmd, timeout, cwd=None):
     if WINDOWS:
+        cmd = list(cmd)
         prompt = cmd.pop(cmd.index("-p") + 1)
         return subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=timeout, cwd=cwd)
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd,
                           stdin=subprocess.DEVNULL)
+
+
+def run_claude(cmd, timeout, cwd=None):
+    """Runs `claude -p <prompt> ...`. On Windows the prompt goes in through stdin, because
+    long prompts with line breaks don't survive the Windows command line."""
+    slim = lean(cmd)
+    out = _run_claude(slim, timeout, cwd)
+    if slim != list(cmd) and out.returncode != 0 and not (out.stdout or "").strip() and lean_failed(out.stderr):
+        out = _run_claude(list(cmd), timeout, cwd)
+    return out
 
 
 def _drain(pipe, into):
@@ -145,6 +219,18 @@ def _stream_claude(cmd, timeout, cwd=None, state=None):
     """Runs claude like run_claude, but yields the answer's text as Claude writes it.
     state gets "proc", "timed_out" and "error" so the caller can stop it or tell what went wrong."""
     state = {} if state is None else state
+    slim = lean(cmd)
+    if slim != list(cmd):
+        got = False
+        for piece in _stream_claude_once(slim, timeout, cwd, state):
+            got = got or bool(piece)
+            yield piece
+        if got or state.get("cancelled") or state.get("timed_out") or not lean_failed(state.get("error")):
+            return
+    yield from _stream_claude_once(cmd, timeout, cwd, state)
+
+
+def _stream_claude_once(cmd, timeout, cwd=None, state=None):
     cmd = list(cmd) + ["--output-format", "stream-json", "--include-partial-messages", "--verbose"]
     prompt = cmd.pop(cmd.index("-p") + 1) if WINDOWS else None
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if WINDOWS else subprocess.DEVNULL,

@@ -331,6 +331,16 @@ def _tool_detail(name, inp):
 
 def _stream(cmd, timeout, cwd, node, task):
     """Runs claude, turning its stream into live events. Returns (text, ok_stream)."""
+    import brain
+    slim = brain.lean(cmd)
+    if slim != list(cmd):
+        out, got, err = _stream_once(slim, timeout, cwd, node, task)
+        if got or _stop.is_set() or not brain.lean_failed(err):
+            return out, got
+    return _stream_once(cmd, timeout, cwd, node, task)[:2]
+
+
+def _stream_once(cmd, timeout, cwd, node, task):
     import subprocess
     import brain
     cmd = list(cmd) + ["--output-format", "stream-json", "--include-partial-messages", "--verbose"]
@@ -413,7 +423,7 @@ def _stream(cmd, timeout, cwd, node, task):
     out = (result if result else "".join(text)).strip()
     if not got:
         print(f"(team: streaming gave nothing for {node}: {''.join(err)[-200:]})")
-    return out, got
+    return out, got, "".join(err)[-500:]
 
 
 _procs = set()

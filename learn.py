@@ -247,8 +247,10 @@ def think_about_it(review=False):
             return None
         print(f"(thinking about how to fix {len(fresh)} thing(s) I couldn't do"
               + (f" and {len(results)} results" if review else "") + ")")
+        if not review:
+            _count_think()
         try:
-            idea = _ask_claude(fresh[-8:], old, results)
+            idea = _ask_claude(fresh[-12:], old, results)
         except Exception as e:
             print(f"(upgrade idea failed: {e})")
             idea = None
@@ -362,6 +364,29 @@ def _last_review():
         return data["last_review"]
 
 
+# Saving his Claude plan: wait until he's been fine for a while so a run of misses is looked at in one go,
+# and don't think up more ideas than he can be offered (twice a day) anyway.
+BATCH_WAIT = 15 * 60
+MAX_THINKS_PER_DAY = 3
+
+
+def _worth_thinking():
+    with _lock:
+        data = _load()
+        waiting = sum(1 for i in data.get("ideas", []) if i.get("status") == "new")
+        today = time.strftime("%Y-%m-%d")
+        done = data.get("thinks", {}).get(today, 0)
+    return waiting < MAX_OFFERS_PER_DAY and done < MAX_THINKS_PER_DAY
+
+
+def _count_think():
+    with _lock:
+        data = _load()
+        today = time.strftime("%Y-%m-%d")
+        data["thinks"] = {today: data.get("thinks", {}).get(today, 0) + 1}
+        _save(data)
+
+
 def start(is_busy):
     """Background: a little while after he's been stuck, and he's idle, work out an upgrade idea."""
     def loop():
@@ -371,7 +396,7 @@ def start(is_busy):
                 if enabled() and not is_busy():
                     with _lock:
                         fresh = [m for m in _load().get("misses", []) if not m.get("looked")]
-                    if fresh and time.time() - fresh[-1]["t"] > 60:
+                    if fresh and time.time() - fresh[-1]["t"] > BATCH_WAIT and _worth_thinking():
                         think_about_it()
                     elif time.time() - _last_review() > 7 * 86400:
                         think_about_it(review=True)        # the weekly review

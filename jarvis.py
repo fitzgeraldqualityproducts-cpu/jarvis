@@ -689,6 +689,10 @@ def handle(text, _part=False):
         return True
     if skills_command(t):
         return True
+    said = quick_answer(t)                       # no need to wake Claude for these
+    if said:
+        voice.say(said)
+        return True
     if tool_mode() == "always":                  # "use your brain for everything"
         display.update(status="thinking")
         voice.say(brain.think_stream(text, unsure=HEARD_UNSURE.is_set(), tools=True))
@@ -722,6 +726,29 @@ def handle(text, _part=False):
     # starts talking as soon as the first sentence is ready; with his skills, any wording works
     voice.say(brain.think_stream(text, unsure=HEARD_UNSURE.is_set(), tools=brain.tools_on()))
     return True
+
+
+TIME_ASK = re.compile(r"(?:so |and |um |uh )?(?:what(?:'s| is) the time|what time is it|what time(?: is it)? (?:right )?now|"
+                      r"(?:do you )?(?:know|have|got) the time|time check|the time)(?: (?:right )?now| please| bro)?")
+DATE_ASK = re.compile(r"(?:so |and |um |uh )?(?:what(?:'s| is) (?:the date|today's date|the date today)|what day is it|"
+                      r"what day is (?:it )?today|what(?:'s| is) the day today|what's today's date|what is today's date|"
+                      r"what date is it(?: today)?)(?: today)?(?: please| bro)?")
+THANKS = re.compile(r"(?:ok |okay |cool |nice |great |perfect |awesome )?(?:thanks|thank you|thank you so much|thanks a lot|"
+                    r"thanks so much|cheers|appreciate it|i appreciate it|ty|much appreciated)(?: bro| man| dude| buddy)?")
+
+
+def quick_answer(t):
+    """Simple things he can say himself, word for word, without asking Claude (saves his plan's tokens)."""
+    now = datetime.datetime.now()
+    if TIME_ASK.fullmatch(t):
+        return f"It's {now.strftime('%I:%M %p').lstrip('0')}."
+    if DATE_ASK.fullmatch(t):
+        day = now.day
+        suffix = "th" if 11 <= day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+        return f"It's {now.strftime('%A, %B')} {day}{suffix}."
+    if THANKS.fullmatch(t):
+        return personality.line("welcome")
+    return None
 
 
 ACTION_WORDS = re.compile(r"(?:open|close|quit|play|pause|resume|skip|set|start|remind|add|put|schedule|book|make|"
