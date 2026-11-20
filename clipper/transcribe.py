@@ -68,7 +68,13 @@ def _whisper_words(audio_path, duration, progress, prompt, language):
     if key not in _models:
         _models[key] = WhisperModel(name, device="cpu", compute_type="int8", cpu_threads=_threads())
     model = _models[key]
-    segments, info = model.transcribe(str(audio_path), word_timestamps=True, vad_filter=True, beam_size=5,
+    # Hand Whisper the samples, not the file: reading files itself needs a newer PyAV than some
+    # computers have ("open() got an unexpected keyword argument 'metadata_errors'").
+    samples, rate = media.read_wav(audio_path)
+    audio = samples.mean(axis=1) if samples.ndim > 1 else samples
+    if rate != 16000:
+        audio = np.interp(np.arange(0, len(audio), rate / 16000.0), np.arange(len(audio)), audio).astype(np.float32)
+    segments, info = model.transcribe(audio.astype(np.float32), word_timestamps=True, vad_filter=True, beam_size=5,
                                       initial_prompt=prompt or None, condition_on_previous_text=False,
                                       language=None if not language else language.split("-")[0])
     words, segs = [], []
