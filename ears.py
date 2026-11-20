@@ -118,6 +118,14 @@ def record_phrase(start_timeout=8, max_seconds=15, silence_seconds=0.9, preroll=
     if preroll is not None and len(preroll):
         frames, started, voiced = [preroll.astype(np.int16)], True, 0.3
         noise_levels = [_room["noise"]] * 8
+    if preroll is None:
+        try:
+            import echo
+            wait = echo.gap()             # let his own voice die away first
+        except Exception:
+            wait = 0.0
+        if wait:
+            time.sleep(wait)
     with sd.InputStream(samplerate=RATE, channels=1, blocksize=BLOCK, dtype="int16") as stream:
         t0 = time.time()
         while True:
@@ -294,6 +302,19 @@ def listen(max_seconds=8, carry_on=None):
     """Returns what was said as text, or '' if nothing understood.
     Also works out who said it (ears.SPEAKER) when group chat mode is set up.
     carry_on: (audio, his words) from voice.take_barge(), when someone talked over him."""
+    deadline = time.time() + max_seconds
+    for _ in range(3):
+        text = _listen_once(max_seconds, carry_on)
+        if text != _ECHO or time.time() > deadline - 1:
+            return "" if text == _ECHO else text
+        max_seconds, carry_on = deadline - time.time(), None   # that was his own voice: keep listening
+    return ""
+
+
+_ECHO = "\x00echo"           # what _listen_once returns when it only heard Jarvis himself
+
+
+def _listen_once(max_seconds, carry_on):
     preroll, own = carry_on if carry_on and carry_on[0] is not None else (None, "")
     audio = record_phrase(start_timeout=max_seconds, preroll=preroll)
     if audio is None:
@@ -314,5 +335,15 @@ def listen(max_seconds=8, carry_on=None):
     who.join(5)
     if own and text:
         text = _strip_echo(text, own)
+    elif text:
+        try:
+            import echo
+            cleaned = echo.clean(text)    # was that just his own voice coming back?
+            if text and not cleaned:
+                print(f"(heard {len(audio) / RATE:.1f}s, only my own voice: {text!r})")
+                return _ECHO
+            text = cleaned
+        except Exception as e:
+            print(f"(echo check failed: {e})")
     print(f"(heard {len(audio) / RATE:.1f}s, transcribed in {time.time() - start:.1f}s: {text!r})")
     return text

@@ -351,12 +351,27 @@ class _Spotter:
         self.barge = CONVERSING.is_set() and _cfg().get("barge_in", True)
         self.strikes = 0
         self.barge_audio = None
+        self.levels = []               # how loud his own voice is in the mic, block by block
+
+    def _louder(self, audio):
+        """Is the mic louder than his own echo has been? (A person talking over him adds to it.)"""
+        np = self.np
+        if len(self.levels) < 40:      # not enough to tell yet
+            return True
+        n = len(audio) // 800 * 800
+        if not n:
+            return True
+        now = np.sqrt(np.mean(audio[:n].astype(np.float32).reshape(-1, 800) ** 2, axis=1))
+        base = float(np.percentile(self.levels, 75))
+        return float(np.percentile(now, 75)) > base * float(_cfg().get("barge_in_louder", 1.2))
 
     def feed(self, block):
         if not self.model:
             return False
         import time
         keep = int(self.WINDOW * self.rate)
+        if self.barge:
+            self.levels = (self.levels + [float(self.np.sqrt(self.np.mean(block.astype(self.np.float32) ** 2)))])[-3000:]
         self.audio = self.np.concatenate([self.audio, block])[-keep:]
         now = time.time()
         if not self.busy.is_set() and now - self.last >= self.EVERY and len(self.audio) >= keep // 2:
@@ -377,9 +392,10 @@ class _Spotter:
                 self.heard.set()
                 return
             if self.barge:
-                new = _new_words(text, own)
+                import echo
+                new = echo.new_words(text, own) if self._louder(audio) else []
                 self.strikes = self.strikes + 1 if new else 0
-                if self.strikes >= 2:              # twice in a row: someone really is talking
+                if self.strikes >= int(_cfg().get("barge_in_checks", 3)):   # a few in a row: someone really is talking
                     print(f"(someone talked over me: {text.strip()!r})")
                     self.barge_audio = audio
                     self.heard.set()
@@ -390,17 +406,9 @@ class _Spotter:
             self.busy.clear()
 
 
-_FILLER = {"you", "thank", "thanks", "the", "a", "uh", "um", "hmm", "oh", "so", "and", "i", "it", "is", "bye",
-           "watching", "for", "to", "of", "okay", "ok", "yeah", "music", "applause", "laughter"}
-
-
 def _new_words(heard, own):
-    """The words in what the mic heard that aren't his own (echo) or noise, if it looks like
-    a person talking: at least two of them, and most of what was heard."""
-    words = re.findall(r"[a-z']+", heard)
-    mine = set(re.findall(r"[a-z']+", own))
-    new = [w for w in words if w not in mine and w not in _FILLER]
-    return new if len(new) >= 2 and len(new) >= 0.6 * len(words) else []
+    import echo
+    return echo.new_words(heard, own)
 
 
 def clear_barge():
@@ -697,5 +705,10 @@ def _speak(chunks, interruptible, text, source=None):
                 display.log("jarvis", full)
         SAID.append(full)
         del SAID[:-20]
+        try:
+            import echo
+            echo.spoke(full)              # so the mic ignores his own voice for a moment
+        except Exception:
+            pass
         display.update(status="listening")
         return interrupted
