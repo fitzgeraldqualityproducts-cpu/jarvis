@@ -28,6 +28,7 @@ class NotPermitted(AcquireError):
 
 
 def _ydl(opts=None):
+    ffmpeg_on_path()                                 # before yt-dlp looks (it remembers the answer)
     try:
         import yt_dlp
     except ImportError:
@@ -40,6 +41,30 @@ def _ydl(opts=None):
         pass
     base.update(opts or {})
     return yt_dlp.YoutubeDL(base)
+
+
+def ffmpeg_on_path():
+    """yt-dlp checks for "ffmpeg" on PATH before cutting a section of a video, ignoring
+    ffmpeg_location. On a computer without a system ffmpeg, the copy Jarvis brings (imageio-ffmpeg)
+    is linked into clipper_data/bin as "ffmpeg" and that folder is put on PATH."""
+    if shutil.which("ffmpeg"):
+        return True
+    try:
+        from clipper import data_dir
+        exe = media.ffmpeg()
+        folder = data_dir("bin")
+        link = folder / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+        if not link.exists():
+            try:
+                os.symlink(exe, link)
+            except (OSError, NotImplementedError):
+                shutil.copy2(exe, link)
+            os.chmod(link, 0o755)
+        os.environ["PATH"] = str(folder) + os.pathsep + os.environ.get("PATH", "")
+        return bool(shutil.which("ffmpeg"))
+    except Exception as e:
+        print(f"(clipper: couldn't put ffmpeg on PATH: {e})")
+        return False
 
 
 def _blocked(e):
@@ -167,6 +192,8 @@ def section(source, folder, start, end, pad=3.0):
     folder = Path(folder)
     if source.get("mode") != "sections":
         return source["video"], 0.0
+    if source.get("video") and os.path.exists(source["video"]):
+        return source["video"], 0.0                 # the whole video was fetched already (fallback)
     s, e = max(0.0, start - pad), end + pad
     key = f"{int(s * 10)}_{int(e * 10)}"
     have = source.setdefault("sections", {}).get(key)
@@ -180,8 +207,17 @@ def section(source, folder, start, end, pad=3.0):
         from yt_dlp.utils import download_range_func
     except ImportError:
         raise AcquireError("yt-dlp isn't installed")
-    path = _download(source["url"], folder, {"format": VIDEO_FMT, "download_ranges": download_range_func(None, [(s, e)]),
-                                             "force_keyframes_at_cuts": True}, f"section_{key}")
+    try:
+        path = _download(source["url"], folder, {"format": VIDEO_FMT, "download_ranges": download_range_func(None, [(s, e)]),
+                                                 "force_keyframes_at_cuts": True}, f"section_{key}")
+    except AcquireError as err:
+        if "ffmpeg" not in str(err).lower():
+            raise
+        # yt-dlp can't cut sections on this computer: get the whole video once and cut it ourselves
+        if not (source.get("video") and os.path.exists(source["video"])):
+            source["video"] = str(_download(source["url"], folder, {"format": VIDEO_FMT}, "source"))
+            media.dump(source, folder / "source.json")
+        return source["video"], 0.0
     source["sections"][key] = str(path)
     media.dump(source, folder / "source.json")
     return str(path), s

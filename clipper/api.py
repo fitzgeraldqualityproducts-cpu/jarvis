@@ -71,7 +71,7 @@ def state():
         "youtube": {"connected": youtube.connected("main"), "client": bool(youtube.client()), "title": ch.get("youtube_title"),
                     "quota_used": youtube.quota_used(), "quota": settings.general()["youtube_daily_quota"]},
         "uploads": db.q("SELECT id, clip_id, status, privacy, publish_at, youtube_id, attempts, error FROM uploads ORDER BY id DESC LIMIT 60"),
-        "analysis": analysis, "learned": (ch.get("learned") or {}).get("prefs", {}),
+        "analysis": analysis, "learned": (ch.get("learned") or {}).get("prefs", {}), "tuning": _tuning(),
         "general": settings.general(),
         "styles": [{"id": k, "name": captions.STYLE_NAMES.get(k, k), **{x: v[x] for x in ("font", "size", "color", "active", "keyword",
                     "stroke", "shadow", "y", "animation", "words_per_line", "uppercase")}} for k, v in captions.STYLES.items()],
@@ -79,6 +79,14 @@ def state():
         "lengths": settings.LENGTH_MODES, "sorts": list(moments.SORTS), "export_dir": str(export_dir()),
         "platform": sys.platform,
     }
+
+
+def _tuning():
+    try:
+        from clipper import selftune
+        return selftune.summary("main")
+    except Exception as e:
+        return {"error": str(e)[:200], "lessons": []}
 
 
 def stats():
@@ -254,6 +262,9 @@ def delete(clip_id):
             except OSError:
                 pass
     db.run("DELETE FROM uploads WHERE clip_id=? AND status IN ('queued','held','failed')", c["id"])
+    if c["state"] not in ("rejected", "qa_failed", "deleted"):
+        from clipper import selftune
+        selftune.record("deleted", clip_id=c["id"])
     db.set_clip(c["id"], state="deleted", note="deleted from the dashboard")
     db.log(f"Deleted clip {c['id']}.", clip_id=c["id"])
     return f"Deleted clip {c['id']}."
@@ -394,9 +405,15 @@ def action(req):
         if a == "remove_source":
             db.run("UPDATE sources SET enabled=0 WHERE id=?", int(req["id"]))
             return {"ok": True, "message": "Source switched off."}
+        if a in ("unlearn", "unlearn_all"):
+            from clipper import selftune
+            return {"ok": True, "message": selftune.forget("main", req.get("key") if a == "unlearn" else None)}
         if a == "settings":
             changes = {k: v for k, v in (req.get("changes") or {}).items() if k in settings.CHANNEL_DEFAULTS}
+            before = settings.channel("main")
             settings.update_channel("main", **changes)
+            from clipper import selftune
+            selftune.user_set("main", [k for k, v in changes.items() if before.get(k) != v])
             return {"ok": True, "message": "Saved."}
         return {"ok": False, "message": f"unknown action {a}"}
     except Exception as e:

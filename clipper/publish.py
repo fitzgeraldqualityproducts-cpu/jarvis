@@ -39,6 +39,9 @@ def approve(clip_id, title=None, description=None, hashtags=None, privacy=None, 
         changes["hashtags"] = hashtags
     db.set_clip(clip_id, **changes)
     db.log(f"Clip {clip_id} approved.", clip_id=clip_id)
+    if c["state"] in ("awaiting_approval", "ready"):
+        from clipper import selftune
+        selftune.record("approved", clip_id=clip_id)
     said = f"Clip {clip_id} approved."
     if upload and settings.allowed(c["channel"], "upload_private"):
         said += " " + queue(clip_id, privacy)
@@ -55,6 +58,9 @@ def reject(clip_id, reason=""):
     db.set_clip(clip_id, state="rejected", note=(reason or "rejected by you")[:300])
     db.run("DELETE FROM uploads WHERE clip_id=? AND status IN ('queued','held','waiting')", clip_id)
     db.log(f"Clip {clip_id} rejected{': ' + reason if reason else ''}.", clip_id=clip_id)
+    if c["state"] != "rejected":
+        from clipper import selftune
+        selftune.record("rejected", clip_id=clip_id, reason=(reason or "")[:200])
     _job_rollup(c["job_id"])
     return f"Clip {clip_id} rejected."
 

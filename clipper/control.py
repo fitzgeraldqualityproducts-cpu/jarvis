@@ -47,6 +47,12 @@ def _run(intent, a):
         return jobs.resume(), None
     if intent == "status":
         return status.say_status(), None
+    if intent == "lessons":
+        from clipper import selftune
+        return selftune.report("main"), None
+    if intent == "unlearn":
+        from clipper import selftune
+        return selftune.forget("main"), None
     if intent == "report":
         return status.today_report(), None
     if intent == "show":

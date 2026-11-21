@@ -339,6 +339,17 @@ captions, writes titles and descriptions, checks the quality, and (once you allo
 - **Approvals, Analytics** (predicted score vs. real results, kept separate) and **Settings**.
 You can also drop video files into `clipper_data/inbox` and they're picked up automatically.
 
+**Learns from you and from its mistakes:** it watches what you approve, reject (and why), regenerate,
+delete and change in the editor. Once it sees the same thing a few times it adjusts: your caption style,
+layout and editing switches, clip length, starting right on the hook, spellings you keep fixing (also given
+to Whisper), and which kinds of moment you keep. Analytics › "What I've learned from you" lists every
+lesson with its evidence and an Undo; changing a setting yourself always wins. A clip that fails a fixable
+quality check is rendered once more with a safer setting, and the rest of that video's clips start with it.
+Crashes in the clipper's own code go to Jarvis's self-repair mechanic (checked and reversible). It also
+times every step: re-renders from the editor reuse the face analysis, and the encoder speed is picked from
+how fast your computer really is (same quality setting). Say "what has the clipper learned" or "forget
+what the clipper learned".
+
 **Caption styles:** Clean, Bold Viral, Minimal White, Gaming, Podcast, Highlighted Keywords, Animated
 Pop, Cinematic, plus Kinetic, Educational and Premium. Auto picks one to suit the moment. Keywords
 (numbers, emphasised words, names, reactions) are highlighted on purpose, never at random.

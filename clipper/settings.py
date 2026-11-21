@@ -36,7 +36,7 @@ GLOBAL_DEFAULTS = {
     "transcriber": "auto",        # auto | whisper | parakeet
     "llm_model": "",              # Claude model for analysis ("" = Claude Code's default)
     "fps": 30,
-    "x264_preset": "veryfast",
+    "x264_preset": "auto",          # auto = chosen from how fast this computer renders
     "crf": 20,
     "allow_platform_download": True,   # yt-dlp, only ever for AUTHORIZED YouTube/Twitch sources
     "max_video_hours": 12,
@@ -90,6 +90,7 @@ CHANNEL_DEFAULTS = {
     "credit_sources": True,           # add "Source: ..." for videos that aren't yours
     "permissions": PERMISSION_DEFAULTS,
     "learned": {},                    # filled in by learning.py
+    "tuned": {},                      # lessons from your own edits and choices (selftune.py)
 }
 
 STYLES = ["clean", "bold", "minimal", "gaming", "podcast", "highlight", "pop", "cinematic", "kinetic", "educational", "premium"]
@@ -176,6 +177,17 @@ def update_channel(cid="main", **changes):
     _validate(current)
     db.run("UPDATE channels SET settings=? WHERE id=?", json.dumps(current), cid)
     return channel(cid)
+
+
+def replace_channel_value(cid, key, value):
+    """Sets one channel setting to exactly this value (no merging: removed parts stay removed)."""
+    ensure_default_channel()
+    row = db.one("SELECT settings FROM channels WHERE id=?", cid)
+    if not row:
+        raise KeyError(f"no clipper channel called {cid}")
+    current = db.loads(row["settings"])
+    current[key] = value
+    db.run("UPDATE channels SET settings=? WHERE id=?", json.dumps(current), cid)
 
 
 def add_channel(cid, name):
