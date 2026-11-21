@@ -25,6 +25,20 @@ def clipper_status():
     return status.say_status()
 
 
+@tool("How much disk space is free, what's in Jarvis's folder, and how much Jarvis could safely clear.")
+def disk_space():
+    from clipper import disk
+    return disk.say()
+
+
+@tool("Free up disk space: deletes old downloaded VODs/videos, half-finished downloads and renders, rejected "
+      "clips and old setup backups, only inside Jarvis's folder. Never deletes clips waiting for review, approved "
+      "or on YouTube. Use when the user asks to free up or clean up space.")
+def free_up_disk_space():
+    from clipper import disk
+    return disk.say_clean(disk.clean(urgent=True, by="voice"))
+
+
 @tool("The clipper's report for the last 24 hours (videos found, clips made, uploads, failures).")
 def clipper_report():
     from clipper import status

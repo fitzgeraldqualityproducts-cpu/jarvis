@@ -359,6 +359,14 @@ times every step: re-renders from the editor reuse the face analysis, and the en
 how fast your computer really is (same quality setting). Say "what has the clipper learned" or "forget
 what the clipper learned".
 
+**Keeps your disk from filling up:** every 6 hours, and straight away when free space gets close to the
+4 GB the clipper needs, Jarvis clears old downloaded VODs and audio (3 days after a project finishes),
+half-finished downloads and renders, rejected clips (after 7 days), old setup backups that Upgrade Jarvis
+leaves behind, and trims huge logs. It only ever deletes inside Jarvis's own folder. Clips waiting for your
+review, approved clips, anything on YouTube and your own video files are never deleted, and projects you're
+still reviewing keep their video so you can edit them. The dashboard's **Disk space** card shows what's
+using space with a **Clean up now** button, or say "free up some disk space" / "how much disk space do I have".
+
 **Caption styles:** Clean, Bold Viral, Minimal White, Gaming, Podcast, Highlighted Keywords, Animated
 Pop, Cinematic, plus Kinetic, Educational and Premium. Auto picks one to suit the moment. Keywords
 (numbers, emphasised words, names, reactions) are highlighted on purpose, never at random.

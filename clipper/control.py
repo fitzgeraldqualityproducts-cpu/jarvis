@@ -47,6 +47,12 @@ def _run(intent, a):
         return jobs.resume(), None
     if intent == "status":
         return status.say_status(), None
+    if intent == "disk":
+        from clipper import disk
+        return disk.say(), None
+    if intent == "disk_clean":
+        from clipper import disk
+        return disk.say_clean(disk.clean(urgent=True, by="voice")), None
     if intent == "lessons":
         from clipper import selftune
         return selftune.report("main"), None

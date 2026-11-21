@@ -262,7 +262,7 @@ def cleanup(folder, keep=("source.json", "transcript.json", "candidates.json", "
     freed = 0
     src = media.load(folder / "source.json") or {}
     for f in folder.iterdir() if folder.exists() else []:
-        if f.name in keep or f.is_dir():
+        if f.name in keep or f.is_dir() or f.suffix in (".json", ".log"):
             continue
         if src.get("mode") == "full" and not src.get("downloaded") and str(f) == src.get("video"):
             continue                                     # never delete the owner's own file
