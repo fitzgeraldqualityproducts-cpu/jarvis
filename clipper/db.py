@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY, t REAL, level TEXT, job_id INTEGER, clip_id INTEGER, msg TEXT,
     told INTEGER DEFAULT 1);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY, t REAL, channel TEXT, clip_id INTEGER, job_id INTEGER, kind TEXT,
+    detail TEXT DEFAULT '{}');
+CREATE INDEX IF NOT EXISTS feedback_kind ON feedback(channel, kind);
 CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state);
 CREATE INDEX IF NOT EXISTS clips_state ON clips(state);
 CREATE INDEX IF NOT EXISTS events_t ON events(t);

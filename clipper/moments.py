@@ -236,6 +236,8 @@ def _ask_claude(tr, channel, video, want, signals, progress):
     chunks.append((start, len(sents)))
     pri = channel.get("priorities") or {}
     pri_text = ("Priorities from the owner: " + ", ".join(f"weigh {k} x{v}" for k, v in pri.items()) + ".") if pri else ""
+    if channel.get("lessons"):                      # learned from the owner's own edits and rejections
+        pri_text = (pri_text + "\n" + "\n".join(channel["lessons"])).strip()
     per = min(12, max(4, int(want * 2 / len(chunks)) + 2))
     out = []
     for k, (a, b) in enumerate(chunks):

@@ -13,8 +13,9 @@ import shutil
 import sys
 import time
 import traceback
+from pathlib import Path
 
-from clipper import acquire, captions, crop, data_dir, db, media, metadata, moments, qa, render, settings, transcribe
+from clipper import acquire, captions, crop, data_dir, db, media, metadata, moments, qa, render, selftune, settings, transcribe
 
 OK, RETRY, FATAL, STOPPED = 0, 1, 2, 3
 
@@ -110,7 +111,7 @@ def run_job(job_id):
     except KeyError:
         db.set_job(job_id, state="failed", error="its channel no longer exists", finished=time.time())
         return FATAL
-    ch = moments.with_lengths(ch, (job.get("options") or {}).get("length"))
+    ch = selftune.apply(moments.with_lengths(ch, (job.get("options") or {}).get("length")))
     folder = folder_for(job_id)
     try:
         return _run(job, video, ch, folder)
@@ -119,6 +120,7 @@ def run_job(job_id):
         db.log("Stopped safely; it'll carry on when you resume.", job_id=job_id)
         return STOPPED
     except (Fatal, acquire.NotPermitted) as e:
+        selftune.record("job_failed", job_id=job_id, channel=job["channel"], why=selftune.classify(e), error=str(e)[:300])
         db.set_job(job_id, state="failed", error=str(e)[:500], finished=time.time(), pid=None)
         db.log(f"Job failed: {e}", "error", job_id=job_id, tell=True)
         return FATAL
@@ -131,6 +133,7 @@ def run_job(job_id):
         return _retry(job_id, attempts, e)
     except Exception as e:
         traceback.print_exc()
+        selftune.bug("job", job_id=job_id)
         return _retry(job_id, (job.get("attempts") or 0) + 1, e)
 
 
@@ -138,6 +141,7 @@ def _retry(job_id, attempts, e):
     limit = int(settings.general().get("max_attempts", 3))
     detail = f"{type(e).__name__}: {e}"[:500]
     if attempts >= limit:
+        selftune.record("job_failed", job_id=job_id, why=selftune.classify(detail), error=detail[:300])
         db.set_job(job_id, state="failed", attempts=attempts, error=detail, finished=time.time(), pid=None)
         db.log(f"Job failed after {attempts} tries: {detail}", "error", job_id=job_id, tell=True)
         return FATAL
@@ -174,7 +178,9 @@ def _run(job, video, ch, folder):
     if not tr:
         p = _stage(jid, "transcribing", "listening to every word")
         names = ", ".join(ch.get("names") or [])
+        t0 = time.time()
         tr = transcribe.transcribe(src["audio"], p, prompt=f"Names: {names}." if names else "", language=ch.get("language", "en"))
+        selftune.speed("transcribe", time.time() - t0, float(tr.get("duration") or video.get("duration") or 0))
         media.dump(tr, tpath)
         _cache(video, "transcript.json", tr)
         db.log(f"Transcribed {len(tr['words'])} words ({tr['engine']}, {tr['speakers']} voice"
@@ -194,6 +200,7 @@ def _run(job, video, ch, folder):
             learned = learning.preferences(ch["id"])
         except Exception:
             learned = {}
+        learned = selftune.merge_prefs(learned, selftune.preferences(ch["id"]))   # plus what Connor keeps / throws away
         rep = {}
         cands, method = moments.find(tr, ch, video, max_clips=job["max_clips"] * 2, learned=learned, progress=p, report=rep)
         _stage(jid, "selecting", f"ranking {len(cands)} moments")
@@ -269,6 +276,9 @@ def _render_all(jid, video, ch, folder, src, tr, cands, want, g):
         old = db.clip(rid)
         if old and old["job_id"] == jid:
             db.set_clip(rid, state="rejected", note="replaced by a regenerated clip")
+    # a clip left half-made (the render stopped or crashed before it finished) is made again
+    db.run("DELETE FROM clips WHERE job_id=? AND (path IS NULL OR path='') AND (state='rendered' OR "
+           "(state='qa_failed' AND note LIKE 'the render failed%'))", jid)
     existing = db.clips("job_id=?", jid, limit=500)
     used = {c["rank"] for c in existing}
     good = [c for c in existing if c["state"] not in ("qa_failed", "rejected", "regenerate", "deleted")]
@@ -276,6 +286,7 @@ def _render_all(jid, video, ch, folder, src, tr, cands, want, g):
     todo = picked + [c for c in cands if c["rank"] not in used and c["rank"] not in picks]
     need = max(want - len(good), 0) + len(picked)
     total, made, k = max(1, min(need, len(todo))), 0, 0
+    errors = []
     for c in todo:
         if need <= 0:
             break
@@ -286,13 +297,18 @@ def _render_all(jid, video, ch, folder, src, tr, cands, want, g):
             raise
         except Exception as e:                       # one bad clip never sinks the whole job
             traceback.print_exc()
+            selftune.bug("clip", job_id=jid)
             db.log(f"Couldn't make the clip at {c['start']:.0f}s ({type(e).__name__}: {str(e)[:200]}); moving on.",
                    "warn", job_id=jid)
+            errors.append(f"{type(e).__name__}: {str(e)[:200]}")
             ok = False
         if ok:
             made += 1
             need -= 1
         k += 1
+    if errors and not made and not good:
+        # nothing could be made at all: that's a failure to show (and retry), not "0 clips ready"
+        raise RuntimeError(f"none of the clips could be made ({errors[-1]})")
     if regen:
         if need > 0:
             db.log("There were no other strong moments left in that video for a replacement.", job_id=jid, tell=True)
@@ -316,8 +332,28 @@ def _rerender_all(jid, video, ch, folder, src, tr, edits_by_clip, g):
             raise
         except Exception as e:
             traceback.print_exc()
+            selftune.bug("edit", job_id=jid, clip_id=int(cid))
             db.log(f"Couldn't apply the edits to clip {cid}: {type(e).__name__}: {str(e)[:200]}", "warn", job_id=jid, clip_id=cid, tell=True)
     return made
+
+
+def _analysis(folder, path, start, dur, progress):
+    """Face/motion analysis for a stretch of the source, reused when an edit only changes things
+    inside a stretch already analysed (re-renders from the editor skip the slow part)."""
+    store = Path(folder) / "analysis"
+    store.mkdir(exist_ok=True)
+    for f in sorted(store.glob("*.json")):
+        a = media.load(f) or {}
+        if a.get("path") == str(path) and a["start"] <= start + 0.02 and a["end"] >= start + dur - 0.02:
+            shift = start - a["start"]
+            samples = [dict(x, t=round(x["t"] - shift, 3)) for x in a["analysis"]["samples"] if -0.01 <= x["t"] - shift <= dur + 0.01]
+            if samples:
+                return dict(a["analysis"], samples=samples)
+    t0 = time.time()
+    an = crop.analyze(path, start, dur, progress)
+    selftune.speed("analyze", time.time() - t0, dur)
+    media.dump({"path": str(path), "start": start, "end": start + dur, "analysis": an}, store / f"{start:.2f}_{start + dur:.2f}.json")
+    return an
 
 
 def snap(tr, start, end):
@@ -392,37 +428,66 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
         path, offset = acquire.section(src, folder, clip["start"], clip["end"])
         info = media.probe(path)
         dur = clip["end"] - clip["start"]
-        analysis = crop.analyze(path, max(0.0, clip["start"] - offset), dur,
-                                lambda f, d="": p((k + f * 0.15) / total, f"clip {k + 1}/{total}: {d}"))
+        analysis = _analysis(folder, path, max(0.0, clip["start"] - offset), dur,
+                             lambda f, d="": p((k + f * 0.15) / total, f"clip {k + 1}/{total}: {d}"))
         ws = [dict(w, s=w["s"] - clip["start"], e=w["e"] - clip["start"]) for w in tr["words"] if clip["start"] <= w["s"] <= clip["end"]]
         learned = learning.preferences(ch["id"])
-        e = clip["edits"]
-        manual = e.get("crop") if isinstance(e.get("crop"), dict) else None
-        layout_pref = e.get("layout") or (ch.get("layout") if ch.get("layout") not in (None, "auto") else learned.get("layout"))
-        plan = crop.plan(analysis, dur, ws, info["width"], info["height"], prefer=layout_pref, manual=manual)
-        if manual and manual.get("zoom") and plan.get("layout") == "track" and not plan.get("manual"):
-            plan["zoom"] = float(manual["zoom"])
-        media.dump(plan, folder / f"plan_{cid}.json")
-        run_ch = dict(ch, **{k2: e[k2] for k2 in ("jump_cuts", "remove_fillers", "zooms", "punch_ins", "noise_reduction",
-                                                  "music_volume", "sound_effects", "hook_overlay", "color_correction", "sharpen")
-                             if k2 in e})
-        if e.get("music") is False:
-            run_ch["music_folder"] = ""
-        style_name = e.get("caption_style") or captions.choose_style(ch, c.get("caption_style"), learned, c.get("category"))
-        style = captions.resolve(style_name, ch, e.get("caption") or {})
-        db.set_clip(cid, layout=plan["layout"] if not plan.get("gameplay") else "gameplay", caption_style=style["name"])
-        p((k + 0.15) / total, f"rendering clip {k + 1}/{total}")
-        _mark(jid, "rendering")
-        rep = render.render(folder, clip, tr["words"], plan, (path, offset), run_ch, style, g,
-                            progress=lambda f, d="": p((k + 0.15 + f * 0.75) / total, f"clip {k + 1}/{total}: {d}"))
-        _mark(jid, "quality_check")
-        visible = crop.visible_share(plan, analysis)
-        qa_ch = ch if not existing else dict(ch, clip_min=min(float(ch["clip_min"]), 5.0),
-                                             clip_hard_max=max(float(ch["clip_hard_max"]), min(178.0, rep["duration"])))
-        result = qa.check(rep["path"], db.clip(cid), rep, video, qa_ch, plan, visible)
-        if not result["passed"] and qa.autofix(rep["path"], result):
+        fb = {} if existing else dict(selftune.job_fallback(jid))     # what fixed an earlier clip of this video
+        g2 = dict(g, x264_preset=selftune.preset(g))
+        first_fail = None
+        for attempt in range(2):
+            e = dict(fb, **clip["edits"])
+            if fb.get("caption"):
+                e["caption"] = {**fb["caption"], **(clip["edits"].get("caption") or {})}
+            manual = e.get("crop") if isinstance(e.get("crop"), dict) else None
+            layout_pref = e.get("layout") or (ch.get("layout") if ch.get("layout") not in (None, "auto") else learned.get("layout"))
+            plan = crop.plan(analysis, dur, ws, info["width"], info["height"], prefer=layout_pref, manual=manual)
+            if manual and manual.get("zoom") and plan.get("layout") == "track" and not plan.get("manual"):
+                plan["zoom"] = float(manual["zoom"])
+            media.dump(plan, folder / f"plan_{cid}.json")
+            run_ch = dict(ch, **{k2: e[k2] for k2 in ("jump_cuts", "remove_fillers", "zooms", "punch_ins", "noise_reduction",
+                                                      "music_volume", "sound_effects", "hook_overlay", "color_correction", "sharpen")
+                                 if k2 in e})
+            if e.get("music") is False:
+                run_ch["music_folder"] = ""
+            style_name = e.get("caption_style") or captions.choose_style(ch, c.get("caption_style"), learned, c.get("category"))
+            style = captions.resolve(style_name, ch, e.get("caption") or {})
+            db.set_clip(cid, layout=plan["layout"] if not plan.get("gameplay") else "gameplay", caption_style=style["name"])
+            p((k + 0.15) / total, f"rendering clip {k + 1}/{total}" + (" (safer settings)" if attempt else ""))
+            _mark(jid, "rendering")
+            t0 = time.time()
+            rep = render.render(folder, clip, tr["words"], plan, (path, offset), run_ch, style, g2,
+                                progress=lambda f, d="": p((k + 0.15 + f * 0.75) / total, f"clip {k + 1}/{total}: {d}"))
+            selftune.speed("render", time.time() - t0, rep["duration"])
+            _mark(jid, "quality_check")
+            visible = crop.visible_share(plan, analysis)
+            qa_ch = ch if not existing else dict(ch, clip_min=min(float(ch["clip_min"]), 5.0),
+                                                 clip_hard_max=max(float(ch["clip_hard_max"]), min(178.0, rep["duration"])))
             result = qa.check(rep["path"], db.clip(cid), rep, video, qa_ch, plan, visible)
-            result["autofixed"] = True
+            if not result["passed"] and qa.autofix(rep["path"], result):
+                result = qa.check(rep["path"], db.clip(cid), rep, video, qa_ch, plan, visible)
+                result["autofixed"] = True
+            if result["passed"] or attempt or existing:
+                break
+            more = selftune.fallback_for(result)
+            if not more or all(fb.get(k2) == v for k2, v in more.items()):
+                break
+            first_fail = result                       # learn from the mistake: one more try, safer
+            db.log(f"Clip {cid} failed the quality check ({qa.describe(result)}); trying once more with a safer setting.",
+                   "warn", job_id=jid, clip_id=cid)
+            try:
+                os.remove(rep["path"])
+            except OSError:
+                pass
+            fb = dict(fb, **more)
+        if result["passed"] and first_fail:
+            selftune.remember_fallback(jid, fb)
+            selftune.record("qa_recovered", clip_id=cid, job_id=jid, checks=first_fail["critical"], fix=fb)
+            db.log(f"The safer setting worked for clip {cid}; the rest of this video's clips will use it from the start.",
+                   job_id=jid, clip_id=cid)
+        elif not result["passed"]:
+            selftune.record("qa_failed", clip_id=cid, job_id=jid, critical=result["critical"], layout=plan["layout"],
+                            edit=bool(existing))
         db.merge_extra(cid, enhancements=rep.get("enhancements", []), render={k2: rep.get(k2) for k2 in
                        ("fps", "cuts", "punches", "picture", "noise_floor_db", "speech_db", "caption_pages")}, plan_reason=plan.get("reason"))
         if not result["passed"]:
@@ -470,9 +535,11 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
         db.log(f"Clip {cid} ready: \"{clip['title']}\" ({rep['duration']:.0f}s, {rep['layout']}, {rep['style']} captions).",
                job_id=jid, clip_id=cid)
         return True
-    except Exception:
+    except Exception as err:
         if restore:                                   # a failed edit leaves the clip as it was
             db.set_clip(cid, **restore)
+        elif not isinstance(err, (Stop, Fatal)):      # never leave a clip "rendering" forever
+            db.set_clip(cid, state="qa_failed", note=f"the render failed: {type(err).__name__}: {str(err)[:200]}")
         raise
 
 
@@ -492,6 +559,8 @@ def edit(clip_id, edits):
         return "Saved." if quick else "Nothing to change."
     if quick:
         clean.update(quick)
+    from clipper import selftune
+    selftune.edited(c, clean)
     job = db.job(c["job_id"])
     opts = job["options"]
     opts.setdefault("rerender", {})[str(clip_id)] = clean
@@ -595,6 +664,8 @@ def regenerate(clip_id):
     job = db.job(c["job_id"])
     opts = job["options"]
     opts["regenerate"] = sorted(set(opts.get("regenerate", [])) | {clip_id})
+    from clipper import selftune
+    selftune.record("regenerated", clip_id=clip_id)
     db.set_clip(clip_id, state="regenerate")
     db.set_job(job["id"], state="queued", options=opts, held=0, not_before=0, attempts=0)
     db.log(f"Making a replacement for clip {clip_id}.", job_id=job["id"], clip_id=clip_id)

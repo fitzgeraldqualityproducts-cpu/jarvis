@@ -124,6 +124,13 @@ def clipper_settings(caption_style: str = "", min_seconds: int = 0, max_seconds:
     return "Clipper settings updated: " + ", ".join(f"{k} = {v}" for k, v in changes.items()) + "."
 
 
+
+@tool("What the clipper has learned from the user's own edits, approvals and rejections (and its quality-check "
+      "mistakes), or forget it all. Only reports real lessons with their evidence.",
+      forget="true to forget everything it learned (only if the user asked)")
+def clipper_lessons(forget: bool = False):
+    from clipper import selftune
+    return selftune.forget("main") if forget else selftune.report("main")
 @tool("Check the user's approved sources (their Twitch VODs, approved channels, inbox folder) for new videos now.")
 def find_new_videos():
     from clipper import control

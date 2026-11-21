@@ -378,6 +378,11 @@ def plan_punches(ow, plan, channel, intervals, min_gap=3.5):
     return kept
 
 
+def _preset(settings_global):
+    from clipper import selftune
+    return selftune.preset(settings_global)
+
+
 def pick_fps(settings_global, src_fps):
     want = settings_global.get("fps", "auto")
     if want not in ("auto", None, ""):
@@ -438,7 +443,7 @@ def render(job_folder, clip, words, plan, source, channel, style, settings_globa
     report["enhancements"] += why
     report["picture"] = needs
     out = Path(out_path or job_folder / f"{name}.part.mp4")
-    writer = media.FrameWriter(out, OUT_W, OUT_H, fps, audio, settings_global.get("x264_preset", "veryfast"),
+    writer = media.FrameWriter(out, OUT_W, OUT_H, fps, audio, _preset(settings_global),
                                int(settings_global.get("crf", 20)), vf=vf)
     total = int(round(dur * fps))
     thumb = job_folder / f"{name}.jpg"

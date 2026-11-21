@@ -44,7 +44,7 @@ _server = {}
 TYPES = {str: "string", int: "integer", float: "number", bool: "boolean", list: "array", dict: "object"}
 
 
-def tool(description, owner_only=True, **arg_help):
+def tool(description, /, owner_only=True, **arg_help):
     """Marks a function as a tool Jarvis's brain can use."""
     def wrap(fn):
         props, required = {}, []

@@ -127,7 +127,11 @@ def _clipper():
                      "    import cv2, PIL, yt_dlp\n"
                      "    from clipper import media, pipeline, jobs, youtube, api, intents\n"
                      "    media.ffmpeg()\n"
-                     "    print('@@' + json.dumps([True, 'video tools and modules load']))\n"
+                     "    from clipper import acquire, selftune\n"
+                     "    acquire.ffmpeg_on_path()\n"
+                     "    from yt_dlp.downloader.external import FFmpegFD\n"
+                     "    assert FFmpegFD.available(), 'yt-dlp cannot find ffmpeg to cut clip sections'\n"
+                     "    print('@@' + json.dumps([True, 'video tools and modules load, yt-dlp can cut sections']))\n"
                      "except Exception as e:\n"
                      "    print('@@' + json.dumps([False, f'{type(e).__name__}: {e}'[:200]]))", 90)
     return ok, detail, []

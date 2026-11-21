@@ -61,6 +61,12 @@ def parse(t, original=""):
     m = re.search(r"\b(?:redo|regenerate|remake|replace) clip (?:number )?(\d+)\b", t)
     if m:
         return "regenerate", {"clip": int(m.group(1))}
+    if re.search(r"\b(?:forget|reset|undo) (?:everything |all |what )?(?:the )?clipper(?: has)? (?:learned|learnt)|"
+                 r"\bforget what (?:the clipper|you) learned (?:about|from) my (?:clips|edits)\b", t):
+        return "unlearn", {}
+    if re.search(r"\bwhat (?:has|did) (?:the )?clipper (?:learned|learnt|learn)\b|\bwhat have you learned (?:about|from) my "
+                 r"(?:clips|edits|shorts)\b|\bclipper lessons\b", t):
+        return "lessons", {}
     if re.search(r"\b(?:today'?s|daily|the) (?:processing|clipping|clipper|shorts) report\b|\bclipping report\b|"
                  r"\bhow did (?:the )?clipping go\b", t):
         return "report", {}

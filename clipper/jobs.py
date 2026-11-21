@@ -63,6 +63,12 @@ def recover():
         _end_orphan((db.job(j["id"]) or {}).get("pid"))
         db.set_job(j["id"], state="queued", pid=None, detail=f"resuming after a restart (was {j['state']})")
         db.log(f"Resuming after a restart (was {j['state'].replace('_', ' ')}).", job_id=j["id"])
+    # clips stuck half-made by an older version (no file, job already finished): make them again
+    for j in db.q("SELECT DISTINCT c.job_id AS id FROM clips c JOIN jobs j ON j.id=c.job_id WHERE c.state='rendered' "
+                  "AND (c.path IS NULL OR c.path='') AND j.state IN ('awaiting_approval','done','failed')"):
+        db.set_job(j["id"], state="queued", attempts=0, not_before=0, error=None, held=0, finished=None,
+                   detail="finishing clips that didn't render")
+        db.log("Some clips didn't finish rendering last time; making them again.", job_id=j["id"])
     n = db.run("UPDATE uploads SET status='queued' WHERE status='uploading'")
     if n:
         db.log(f"{n} interrupted upload{'s' if n != 1 else ''} will resume.")
@@ -173,9 +179,22 @@ def _worker_loop(busy):
                 continue
             db.log("Starting.", job_id=jid)
             run_child(jid)
+            _self_repair()
         except Exception as e:
             print(f"(clipper worker error: {e})")
             _stop.wait(15)
+
+
+def _self_repair():
+    """A crash in the clipper's own code goes to Jarvis's self-repair mechanic (in the background)."""
+    if db.one("SELECT id FROM feedback WHERE kind='bug' AND t>?", time.time() - 600) is None:
+        return
+    if "clipper-repair" in _threads and _threads["clipper-repair"].is_alive():
+        return
+    from clipper import selftune
+    t = threading.Thread(target=selftune.repair_pending, daemon=True, name="clipper-repair")
+    _threads["clipper-repair"] = t
+    t.start()
 
 
 # ---------- the scheduler ----------
