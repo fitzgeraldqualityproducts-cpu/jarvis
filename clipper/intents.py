@@ -8,9 +8,10 @@ NUM = {"one": 1, "a": 1, "an": 1, "two": 2, "three": 3, "four": 4, "five": 5, "s
        "nine": 9, "ten": 10, "a couple": 2, "a few": 3, "couple": 2, "few": 3}
 CLIP = r"(?:shorts?|clips?|youtube shorts?|tik ?toks?|reels?|highlights?|best (?:moments|parts|bits))"
 SOURCE = r"(?:this|that|the|my) (?:podcast|video|vod|stream|episode|interview|link|file|clip)"
-STYLE = {"premium": "premium", "minimal": "clean", "minimalist": "clean", "clean": "clean", "bold": "bold",
-         "podcast": "bold", "kinetic": "kinetic", "gaming": "kinetic", "educational": "educational",
-         "high contrast": "educational", "high-contrast": "educational"}
+STYLE = {"premium": "premium", "minimal": "minimal", "minimalist": "minimal", "clean": "clean", "bold": "bold",
+         "podcast": "podcast", "kinetic": "kinetic", "gaming": "gaming", "educational": "educational",
+         "high contrast": "educational", "high-contrast": "educational", "cinematic": "cinematic", "pop": "pop",
+         "animated": "pop", "highlighted": "highlight", "highlight": "highlight", "viral": "bold", "professional": "clean"}
 URL = re.compile(r"(https?://\S+|(?:www\.)?(?:youtube\.com|youtu\.be|twitch\.tv)/\S+)", re.I)
 
 
@@ -71,8 +72,9 @@ def parse(t, original=""):
         return "analyze", {"last": n}
     if re.search(r"\buse (?:the )?(?:highest|best|top)[- ]performing (?:editing |caption )?style\b", t):
         return "best_style", {}
-    m = re.search(r"\buse (?:my |the )?(premium|minimal(?:ist)?|clean|bold|kinetic|educational|high[- ]contrast|podcast|gaming)"
-                  r"(?: podcast)? (?:caption|subtitle)s?(?: style)?\b", t)
+    m = re.search(r"\buse (?:my |the )?(premium|minimal(?:ist)?|clean|bold|kinetic|educational|high[- ]contrast|podcast|gaming|"
+                  r"cinematic|pop|animated|highlight(?:ed)?|viral|professional)"
+                  r"(?: podcast| keyword| pop| white| viral| professional)? (?:caption|subtitle)s?(?: style)?\b", t)
     if m:
         return "style", {"style": STYLE[m.group(1).replace("minimalist", "minimal")]}
     m = re.search(r"\bprioriti[sz]e (?:clips (?:with|that have) )?(?:strong |good |great )?(?:opening )?(hooks?|stories|"

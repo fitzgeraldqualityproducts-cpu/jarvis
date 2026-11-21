@@ -4,304 +4,866 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jarvis Clipper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --cyan:#4fd8ff; --cyan2:#a8f0ff; --cyanDim:rgba(79,216,255,.32); --gold:#f2b84b; --red:#ff6b6b; --green:#5ee6a0;
-    --bg:#03070d; --panel:rgba(6,22,34,.72); --text:#dff6ff; --dim:#7fa3b3; --line:rgba(79,216,255,.18);
-    --hfont:"Orbitron","Avenir Next","Segoe UI",sans-serif; --bfont:"Rajdhani","Avenir Next","Segoe UI",-apple-system,sans-serif;
-  }
-  * { box-sizing:border-box; }
-  html,body { margin:0; color:var(--text); font-family:var(--bfont); font-size:16px;
-    background:radial-gradient(ellipse at 50% 0%, #0b2233 0%, #050d16 55%, var(--bg) 100%) fixed; min-height:100%; }
-  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:16px 20px 8px; }
-  h1 { font-family:var(--hfont); font-size:18px; letter-spacing:.3em; color:var(--cyan); margin:0; font-weight:600; }
-  h1 small { color:var(--dim); letter-spacing:.15em; font-size:11px; margin-left:10px; }
-  h2 { font-family:var(--hfont); font-size:11px; letter-spacing:.28em; text-transform:uppercase; color:var(--cyan); margin:0 0 12px; font-weight:500; }
-  nav { display:flex; flex-wrap:wrap; gap:4px; padding:0 20px 12px; border-bottom:1px solid var(--line); }
-  nav button { background:none; border:1px solid transparent; color:var(--dim); font-family:var(--hfont); font-size:11px;
-    letter-spacing:.18em; padding:8px 12px; cursor:pointer; text-transform:uppercase; border-radius:2px; }
-  nav button.on { color:var(--cyan); border-color:var(--cyanDim); background:rgba(79,216,255,.06); }
-  nav button .n { color:var(--gold); margin-left:6px; }
-  main { padding:18px 20px 60px; max-width:1400px; margin:0 auto; }
-  .panel { background:var(--panel); border:1px solid var(--cyanDim); padding:16px; position:relative; margin-bottom:16px; }
-  .panel::before { content:""; position:absolute; top:0; left:0; width:30%; height:2px; background:var(--cyan); box-shadow:0 0 10px var(--cyan); }
-  .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); }
-  .tile { border:1px solid var(--line); padding:12px; }
-  .tile b { display:block; font-family:var(--hfont); font-size:28px; font-weight:500; font-variant-numeric:tabular-nums; }
-  .tile span { color:var(--dim); font-size:14px; }
-  .btn { background:rgba(79,216,255,.08); border:1px solid var(--cyanDim); color:var(--cyan2); padding:7px 12px; cursor:pointer;
-    font-family:var(--bfont); font-size:15px; font-weight:600; border-radius:2px; }
-  .btn:hover { background:rgba(79,216,255,.18); }
-  .btn.warn { color:#ffd0d0; border-color:rgba(255,107,107,.5); background:rgba(255,107,107,.1); }
-  .btn.good { color:#cffff0; border-color:rgba(94,230,160,.5); background:rgba(94,230,160,.1); }
-  .btn:disabled { opacity:.4; cursor:default; }
-  input, select, textarea { background:rgba(0,0,0,.35); border:1px solid var(--line); color:var(--text); padding:8px; font:inherit; border-radius:2px; }
-  textarea { width:100%; min-height:80px; }
-  input[type=color] { padding:2px; width:46px; height:36px; }
-  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-  .row input[type=text] { flex:1 1 260px; min-width:0; }
-  table { width:100%; border-collapse:collapse; font-size:15px; }
-  th { text-align:left; color:var(--dim); font-weight:500; font-size:13px; letter-spacing:.06em; padding:6px 8px; border-bottom:1px solid var(--line); }
-  td { padding:8px; border-bottom:1px solid rgba(79,216,255,.07); vertical-align:top; }
-  .scroll { overflow-x:auto; }
-  .state { font-family:var(--hfont); font-size:10px; letter-spacing:.12em; text-transform:uppercase; padding:3px 6px; border:1px solid var(--line); white-space:nowrap; }
-  .s-failed,.s-qa_failed,.s-upload_failed { color:var(--red); border-color:rgba(255,107,107,.5); }
-  .s-awaiting_approval,.s-awaiting_authorization { color:var(--gold); border-color:rgba(242,184,75,.5); }
-  .s-published,.s-uploaded,.s-scheduled,.s-done,.s-approved { color:var(--green); border-color:rgba(94,230,160,.4); }
-  .bar { height:4px; background:var(--line); margin-top:6px; } .bar i { display:block; height:100%; background:var(--cyan); }
-  .cards { display:grid; gap:14px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
-  .card { border:1px solid var(--line); background:rgba(0,0,0,.25); display:flex; flex-direction:column; }
-  .card video, .card img { width:100%; aspect-ratio:9/16; object-fit:cover; background:#000; display:block; }
-  .card .body { padding:10px 12px; display:flex; flex-direction:column; gap:6px; flex:1; }
-  .card .title { font-weight:700; font-size:17px; line-height:1.2; }
-  .meta { color:var(--dim); font-size:14px; }
-  .score { font-family:var(--hfont); color:var(--cyan); font-size:13px; }
-  .banner { padding:10px 14px; border:1px solid rgba(255,107,107,.6); color:#ffd0d0; background:rgba(255,107,107,.1); margin-bottom:14px; }
-  .note { padding:10px 14px; border:1px solid rgba(242,184,75,.5); color:#ffe3b0; background:rgba(242,184,75,.08); margin-bottom:14px; }
-  .log { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; max-height:340px; overflow:auto; }
-  .log div { padding:3px 0; border-bottom:1px solid rgba(79,216,255,.05); }
-  .lv-warn { color:var(--gold); } .lv-error { color:var(--red); }
-  .hbar { display:grid; grid-template-columns:140px 1fr 70px; gap:8px; align-items:center; margin:6px 0; font-size:14px; }
-  .hbar .track { position:relative; height:14px; }
-  .hbar .track .zero { position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background:var(--dim); opacity:.6; }
-  .hbar .track i { position:absolute; top:2px; height:10px; background:var(--cyan); border-radius:0 4px 4px 0; }
-  .hbar .track i.neg { border-radius:4px 0 0 4px; background:var(--cyan); opacity:.55; }
-  .hbar .v { text-align:right; font-variant-numeric:tabular-nums; color:var(--text); }
-  .muted { color:var(--dim); }
-  .toast { position:fixed; right:16px; bottom:16px; max-width:min(420px,calc(100% - 32px)); background:#071a26; border:1px solid var(--cyan);
-    padding:12px 14px; display:none; z-index:10; }
-  .ask { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:9; padding:16px; }
-  .ask .panel { max-width:460px; width:100%; }
-  .hide { display:none !important; }
-  label.ck { display:flex; gap:8px; align-items:center; margin:6px 0; }
-  @media (max-width:600px) { header, nav, main { padding-left:16px; padding-right:16px; } .hbar { grid-template-columns:90px 1fr 56px; } }
+:root {
+  --bg:#0a0a0f; --bg2:#0f0f16; --panel:#13131b; --panel2:#181822; --raise:#1e1e2a;
+  --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.12);
+  --text:#ececf1; --muted:#a1a1b3; --faint:#6e6e80;
+  --accent:#7c5cff; --accent2:#4f8cff; --accentSoft:rgba(124,92,255,.14); --blueSoft:rgba(79,140,255,.12);
+  --good:#34d399; --goodSoft:rgba(52,211,153,.12); --warn:#fbbf24; --warnSoft:rgba(251,191,36,.12);
+  --bad:#f87171; --badSoft:rgba(248,113,113,.12);
+  --r:12px; --r2:8px;
+  --font:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+* { box-sizing:border-box; }
+html, body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased; }
+body { min-height:100vh; background:
+  radial-gradient(900px 500px at 0% -10%, rgba(124,92,255,.10), transparent 60%),
+  radial-gradient(800px 500px at 100% 0%, rgba(79,140,255,.06), transparent 60%), var(--bg); background-attachment:fixed; }
+a { color:inherit; }
+button, input, select, textarea { font:inherit; color:inherit; }
+svg.i { width:16px; height:16px; flex:none; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+
+/* shell */
+.shell { display:grid; grid-template-columns:232px minmax(0,1fr); min-height:100vh; }
+.shell > div { min-width:0; }
+aside { border-right:1px solid var(--line); padding:18px 12px; position:sticky; top:0; height:100vh; display:flex; flex-direction:column; gap:4px;
+  background:rgba(10,10,15,.6); backdrop-filter:blur(12px); }
+.brand { display:flex; align-items:center; gap:10px; padding:4px 10px 18px; font-weight:600; letter-spacing:-.01em; }
+.logo { width:28px; height:28px; border-radius:8px; background:linear-gradient(135deg,var(--accent),var(--accent2)); display:grid; place-items:center;
+  box-shadow:0 4px 18px rgba(124,92,255,.35); }
+.logo svg { width:15px; height:15px; stroke:#fff; }
+.nav a { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:var(--r2); color:var(--muted); text-decoration:none; font-weight:500; }
+.nav a:hover { background:var(--panel); color:var(--text); }
+.nav a.on { background:var(--panel2); color:var(--text); box-shadow:inset 0 0 0 1px var(--line); }
+.nav .count { margin-left:auto; font-size:11px; background:var(--accentSoft); color:#c9bcff; padding:1px 7px; border-radius:99px; font-weight:600; }
+.side-foot { margin-top:auto; display:flex; flex-direction:column; gap:8px; padding:10px; }
+.statuspill { display:inline-flex; align-items:center; gap:7px; font-size:12px; color:var(--muted); }
+.dot { width:7px; height:7px; border-radius:50%; background:var(--faint); }
+.dot.live { background:var(--good); box-shadow:0 0 0 3px rgba(52,211,153,.18); }
+.dot.warn { background:var(--warn); } .dot.bad { background:var(--bad); }
+main { min-width:0; padding:28px 36px 80px; max-width:1320px; width:100%; }
+.topbar { display:none; }
+@media (max-width:860px) {
+  .shell { grid-template-columns:minmax(0,1fr); }
+  aside { display:none; }
+  .topbar { display:flex; position:sticky; top:0; z-index:5; align-items:center; gap:8px; padding:10px 16px; border-bottom:1px solid var(--line);
+    background:rgba(10,10,15,.85); backdrop-filter:blur(12px); overflow-x:auto; }
+  .topbar a { white-space:nowrap; padding:6px 10px; border-radius:99px; color:var(--muted); text-decoration:none; font-weight:500; font-size:13px; }
+  .topbar a.on { background:var(--panel2); color:var(--text); }
+  main { padding:18px 16px 70px; }
+}
+
+/* type */
+h1 { font-size:24px; letter-spacing:-.02em; margin:0; font-weight:650; }
+h2 { font-size:15px; margin:0; font-weight:600; letter-spacing:-.01em; }
+h3 { font-size:13px; margin:0; font-weight:600; color:var(--muted); }
+.sub { color:var(--muted); margin:4px 0 0; }
+.muted { color:var(--muted); } .faint { color:var(--faint); } .small { font-size:12px; } .mono { font-family:var(--mono); font-size:12px; }
+.pagehead { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:22px; }
+.row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.between { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.stack { display:flex; flex-direction:column; gap:12px; }
+.grid2 { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+@media (max-width:1000px) { .grid2 { grid-template-columns:1fr; } }
+
+/* surfaces */
+.card { background:linear-gradient(180deg,var(--panel),rgba(19,19,27,.92)); border:1px solid var(--line); border-radius:var(--r); padding:18px; }
+.card + .card { margin-top:16px; }
+.card .head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
+.sep { height:1px; background:var(--line); margin:14px 0; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:12px; }
+.tile { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px; }
+.tile .v { font-size:24px; font-weight:650; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+.tile .k { color:var(--muted); font-size:12px; margin-top:2px; }
+
+/* controls */
+.btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; height:34px; padding:0 13px; border-radius:var(--r2);
+  border:1px solid var(--line2); background:var(--panel2); color:var(--text); font-weight:500; cursor:pointer; text-decoration:none; white-space:nowrap;
+  transition:background .15s, border-color .15s, transform .05s; }
+.btn:hover { background:var(--raise); border-color:rgba(255,255,255,.18); }
+.btn:active { transform:translateY(1px); }
+.btn.primary { background:linear-gradient(180deg,#8a6dff,var(--accent)); border-color:rgba(255,255,255,.14); color:#fff; box-shadow:0 1px 0 rgba(255,255,255,.2) inset, 0 6px 20px rgba(124,92,255,.25); }
+.btn.primary:hover { background:linear-gradient(180deg,#977dff,#8466ff); }
+.btn.ghost { background:transparent; border-color:transparent; color:var(--muted); }
+.btn.ghost:hover { background:var(--panel2); color:var(--text); }
+.btn.danger { color:#fecaca; border-color:rgba(248,113,113,.35); background:rgba(248,113,113,.08); }
+.btn.danger:hover { background:rgba(248,113,113,.16); }
+.btn.good { color:#bbf7d0; border-color:rgba(52,211,153,.35); background:rgba(52,211,153,.08); }
+.btn.sm { height:28px; padding:0 10px; font-size:12.5px; }
+.btn.icon { width:34px; padding:0; } .btn.sm.icon { width:28px; }
+.btn:disabled { opacity:.45; cursor:default; }
+input[type=text], input[type=number], select, textarea { background:var(--bg2); border:1px solid var(--line2); border-radius:var(--r2); height:36px; padding:0 11px; outline:none;
+  transition:border-color .15s, box-shadow .15s; min-width:0; }
+textarea { height:auto; min-height:84px; padding:9px 11px; resize:vertical; width:100%; line-height:1.45; }
+input:focus, select:focus, textarea:focus { border-color:rgba(124,92,255,.6); box-shadow:0 0 0 3px rgba(124,92,255,.15); }
+input[type=color] { width:36px; height:36px; border:1px solid var(--line2); border-radius:var(--r2); background:var(--bg2); padding:3px; }
+input[type=range] { accent-color:var(--accent); width:100%; }
+input[type=checkbox] { accent-color:var(--accent); width:16px; height:16px; }
+label.f { display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--muted); font-weight:500; min-width:0; }
+.fields { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px; }
+.switch { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--line); }
+.switch:last-child { border-bottom:0; }
+.switch .t { font-weight:500; } .switch .d { color:var(--faint); font-size:12px; }
+.seg { display:inline-flex; flex-wrap:wrap; max-width:100%; background:var(--bg2); border:1px solid var(--line2); border-radius:var(--r2); padding:2px; gap:2px; }
+.seg button { border:0; background:transparent; color:var(--muted); height:28px; padding:0 10px; border-radius:6px; cursor:pointer; font-size:12.5px; font-weight:500; }
+.seg button.on { background:var(--raise); color:var(--text); box-shadow:0 0 0 1px var(--line2); }
+.chip { display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 8px; border-radius:99px; font-size:11.5px; font-weight:500;
+  background:var(--panel2); border:1px solid var(--line); color:var(--muted); white-space:nowrap; }
+.chip.accent { background:var(--accentSoft); color:#cfc3ff; border-color:rgba(124,92,255,.25); }
+.chip.blue { background:var(--blueSoft); color:#bcd3ff; border-color:rgba(79,140,255,.25); }
+.chip.good { background:var(--goodSoft); color:#a7f3d0; border-color:rgba(52,211,153,.25); }
+.chip.warn { background:var(--warnSoft); color:#fde68a; border-color:rgba(251,191,36,.25); }
+.chip.bad { background:var(--badSoft); color:#fecaca; border-color:rgba(248,113,113,.25); }
+
+/* new video */
+.hero { position:relative; overflow:hidden; }
+.hero::after { content:""; position:absolute; inset:-1px; border-radius:inherit; pointer-events:none;
+  background:linear-gradient(120deg, rgba(124,92,255,.35), transparent 30%, transparent 70%, rgba(79,140,255,.25)); opacity:.35;
+  -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude; padding:1px; }
+.inputrow { display:flex; gap:8px; flex-wrap:wrap; }
+.inputrow input[type=text] { flex:1 1 320px; height:42px; font-size:15px; }
+.inputrow select, .inputrow .btn { height:42px; }
+.drop { margin-top:12px; border:1.5px dashed var(--line2); border-radius:var(--r); padding:18px; display:flex; align-items:center; gap:14px; color:var(--muted);
+  cursor:pointer; transition:border-color .15s, background .15s; }
+.drop:hover, .drop.over { border-color:rgba(124,92,255,.6); background:rgba(124,92,255,.05); color:var(--text); }
+.drop .ic { width:38px; height:38px; border-radius:10px; background:var(--panel2); display:grid; place-items:center; flex:none; }
+.preview { display:flex; gap:12px; align-items:center; margin-top:12px; }
+.preview img, .preview video { width:132px; aspect-ratio:16/9; object-fit:cover; border-radius:var(--r2); background:#000; border:1px solid var(--line); }
+.valid { font-size:12.5px; margin-top:8px; min-height:18px; }
+.valid.ok { color:#a7f3d0; } .valid.no { color:#fecaca; }
+.progressbar { height:6px; border-radius:99px; background:var(--bg2); overflow:hidden; margin-top:10px; }
+.progressbar i { display:block; height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); border-radius:99px; transition:width .3s; }
+
+/* jobs */
+.jobs { display:flex; flex-direction:column; }
+.job { display:grid; grid-template-columns:minmax(0,1fr) 220px auto; gap:16px; align-items:center; padding:12px 4px; border-bottom:1px solid var(--line); }
+.job:last-child { border-bottom:0; }
+.job .title { font-weight:550; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.job a.title { text-decoration:none; } .job a.title:hover { color:#cfc3ff; }
+@media (max-width:700px) { .job { grid-template-columns:1fr; gap:8px; } }
+.ministeps { display:flex; gap:3px; }
+.ministeps i { flex:1; height:4px; border-radius:99px; background:var(--raise); }
+.ministeps i.done { background:var(--accent); } .ministeps i.running { background:linear-gradient(90deg,var(--accent2),var(--accent)); animation:pulse 1.4s ease-in-out infinite; }
+.ministeps i.stopped { background:var(--warn); }
+@keyframes pulse { 50% { opacity:.45; } }
+
+/* stepper */
+.steps { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:8px; }
+@media (max-width:900px) { .steps { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.step { background:var(--bg2); border:1px solid var(--line); border-radius:var(--r2); padding:10px; min-width:0; }
+.step .n { width:22px; height:22px; border-radius:50%; display:grid; place-items:center; font-size:11px; font-weight:600; background:var(--raise); color:var(--muted); margin-bottom:8px; }
+.step.done .n { background:var(--accent); color:#fff; }
+.step.running { border-color:rgba(124,92,255,.5); box-shadow:0 0 0 3px rgba(124,92,255,.1); }
+.step.running .n { background:transparent; border:2px solid var(--accent); border-top-color:transparent; animation:spin 1s linear infinite; color:transparent; }
+.step.stopped { border-color:rgba(251,191,36,.4); }
+.step .l { font-size:12px; font-weight:550; line-height:1.3; }
+.step .s { font-size:11px; color:var(--faint); margin-top:2px; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* moments */
+.moment { display:grid; grid-template-columns:36px 64px minmax(0,1fr) auto; gap:14px; align-items:start; padding:14px 4px; border-bottom:1px solid var(--line); }
+.moment:last-child { border-bottom:0; }
+.moment .rank { color:var(--faint); font-weight:600; font-variant-numeric:tabular-nums; padding-top:14px; text-align:center; }
+.moment .t { font-weight:600; }
+.moment .why { color:var(--muted); margin-top:4px; }
+.bars { display:grid; grid-template-columns:repeat(3,minmax(0,110px)); gap:10px; margin-top:8px; }
+.bar { font-size:11px; color:var(--faint); } .bar b { color:var(--muted); font-weight:600; float:right; }
+.bar .tr { height:4px; border-radius:99px; background:var(--raise); margin-top:3px; overflow:hidden; } .bar .tr i { display:block; height:100%; background:var(--accent2); border-radius:99px; }
+@media (max-width:700px) { .moment { grid-template-columns:52px minmax(0,1fr); } .moment .rank { display:none; } .moment .act { grid-column:1 / -1; } .bars { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+.ring { --v:0; width:56px; height:56px; border-radius:50%; display:grid; place-items:center; position:relative;
+  background:conic-gradient(var(--c,var(--accent)) calc(var(--v)*1%), var(--raise) 0); }
+.ring::before { content:""; position:absolute; inset:4px; border-radius:50%; background:var(--panel); }
+.ring span { position:relative; font-weight:650; font-size:15px; font-variant-numeric:tabular-nums; }
+.ring small { position:relative; display:block; font-size:9px; color:var(--faint); text-align:center; margin-top:-3px; }
+
+/* clips grid */
+.toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+.clips { display:grid; grid-template-columns:repeat(auto-fill,minmax(232px,1fr)); gap:16px; }
+.clip { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); overflow:hidden; display:flex; flex-direction:column; position:relative;
+  transition:border-color .15s, transform .15s; }
+.clip:hover { border-color:var(--line2); }
+.clip.sel { border-color:rgba(124,92,255,.7); box-shadow:0 0 0 3px rgba(124,92,255,.15); }
+.clip .media { position:relative; aspect-ratio:9/16; background:#000; }
+.clip video, .clip img { width:100%; height:100%; object-fit:cover; display:block; }
+.clip .badge { position:absolute; top:8px; right:8px; background:rgba(10,10,15,.75); backdrop-filter:blur(8px); border:1px solid var(--line2);
+  border-radius:99px; padding:2px 9px; font-weight:650; font-size:12px; font-variant-numeric:tabular-nums; }
+.clip .pick { position:absolute; top:8px; left:8px; background:rgba(10,10,15,.75); border-radius:6px; padding:4px; display:flex; }
+.clip .dur { position:absolute; bottom:8px; right:8px; background:rgba(10,10,15,.75); border-radius:6px; padding:1px 7px; font-size:11.5px; font-variant-numeric:tabular-nums; }
+.clip .body { padding:12px 12px 10px; display:flex; flex-direction:column; gap:7px; flex:1; }
+.clip .title { font-weight:600; line-height:1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.clip .acts { display:flex; gap:4px; margin-top:auto; padding-top:4px; }
+.clip .acts .btn { flex:1; }
+.bulk { position:sticky; bottom:16px; z-index:4; margin-top:18px; display:none; align-items:center; gap:10px; padding:10px 14px; border-radius:var(--r);
+  background:rgba(24,24,34,.92); backdrop-filter:blur(12px); border:1px solid var(--line2); box-shadow:0 12px 40px rgba(0,0,0,.45); flex-wrap:wrap; }
+.bulk.show { display:flex; }
+
+/* editor */
+.editor { display:grid; grid-template-columns:minmax(260px,360px) minmax(0,1fr); gap:20px; align-items:start; }
+.editor.approve { grid-template-columns:minmax(200px,260px) minmax(0,1fr); }
+@media (max-width:900px) { .editor, .editor.approve { grid-template-columns:minmax(0,1fr); } .player { position:static; max-width:360px; } }
+.player { position:sticky; top:20px; }
+.player video { width:100%; aspect-ratio:9/16; background:#000; border-radius:var(--r); border:1px solid var(--line); display:block; }
+.tabs { display:flex; gap:2px; border-bottom:1px solid var(--line); margin-bottom:16px; overflow-x:auto; }
+.tabs button { background:none; border:0; color:var(--muted); padding:9px 12px; cursor:pointer; font-weight:500; border-bottom:2px solid transparent; margin-bottom:-1px; white-space:nowrap; }
+.tabs button.on { color:var(--text); border-bottom-color:var(--accent); }
+.timeline { position:relative; height:58px; border-radius:var(--r2); background:var(--bg2); border:1px solid var(--line); margin-top:8px; user-select:none; touch-action:none; overflow:hidden; }
+.timeline .w { position:absolute; bottom:8px; width:2px; border-radius:1px; background:rgba(255,255,255,.18); }
+.timeline .selr { position:absolute; top:0; bottom:0; background:rgba(124,92,255,.16); border-left:2px solid var(--accent); border-right:2px solid var(--accent); }
+.timeline .h { position:absolute; top:0; bottom:0; width:16px; margin-left:-8px; cursor:ew-resize; display:grid; place-items:center; }
+.timeline .h::after { content:""; width:6px; height:26px; border-radius:3px; background:#fff; box-shadow:0 2px 8px rgba(0,0,0,.5); }
+.words { display:flex; flex-wrap:wrap; gap:4px; max-height:260px; overflow:auto; padding:2px; }
+.words span { padding:2px 6px; border-radius:6px; background:var(--bg2); border:1px solid var(--line); cursor:pointer; font-size:13px; }
+.words span.in { background:var(--accentSoft); border-color:rgba(124,92,255,.3); }
+.words span.edited { border-color:var(--warn); }
+.words span.hidden { text-decoration:line-through; opacity:.55; }
+.framebox { position:relative; width:100%; aspect-ratio:16/9; background:#000; border-radius:var(--r2); overflow:hidden; border:1px solid var(--line); }
+.framebox img { width:100%; height:100%; object-fit:contain; display:block; }
+.framebox .win { position:absolute; top:0; bottom:0; border:2px solid var(--accent); box-shadow:0 0 0 9999px rgba(0,0,0,.55); border-radius:4px; }
+
+/* misc */
+.empty { text-align:center; color:var(--muted); padding:36px 16px; }
+.empty .ic { width:44px; height:44px; border-radius:12px; display:grid; place-items:center; background:var(--panel2); margin:0 auto 12px; }
+.banner { display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:var(--r); margin-bottom:18px; flex-wrap:wrap; }
+.banner.bad { background:var(--badSoft); border:1px solid rgba(248,113,113,.3); color:#fecaca; }
+.banner.warn { background:var(--warnSoft); border:1px solid rgba(251,191,36,.3); color:#fde68a; }
+.banner.info { background:var(--blueSoft); border:1px solid rgba(79,140,255,.3); color:#cfe0ff; }
+.log { font-family:var(--mono); font-size:12px; max-height:300px; overflow:auto; }
+.log div { padding:5px 0; border-bottom:1px solid var(--line); color:var(--muted); }
+.log .warn { color:#fde68a; } .log .error { color:#fecaca; }
+table { width:100%; border-collapse:collapse; }
+th { text-align:left; color:var(--faint); font-weight:500; font-size:12px; padding:8px; border-bottom:1px solid var(--line); }
+td { padding:9px 8px; border-bottom:1px solid var(--line); }
+.scroll { overflow-x:auto; }
+.hbar { display:grid; grid-template-columns:150px 1fr 60px; gap:10px; align-items:center; margin:6px 0; font-size:13px; }
+.hbar .track { position:relative; height:12px; }
+.hbar .zero { position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background:var(--faint); }
+.hbar .track i { position:absolute; top:1px; height:10px; background:var(--accent2); border-radius:0 4px 4px 0; }
+.hbar .track i.neg { border-radius:4px 0 0 4px; opacity:.6; }
+.hbar .v { text-align:right; font-variant-numeric:tabular-nums; }
+@media (max-width:600px) { .hbar { grid-template-columns:96px 1fr 50px; } }
+.toast { position:fixed; right:18px; bottom:18px; z-index:20; max-width:min(440px,calc(100% - 36px)); background:var(--raise); border:1px solid var(--line2);
+  border-radius:var(--r); padding:12px 14px; box-shadow:0 16px 50px rgba(0,0,0,.5); display:none; }
+.modal { position:fixed; inset:0; z-index:15; background:rgba(5,5,8,.7); backdrop-filter:blur(4px); display:none; align-items:center; justify-content:center; padding:16px; }
+.modal .card { max-width:460px; width:100%; }
+.hide { display:none !important; }
+details summary { cursor:pointer; color:var(--muted); font-weight:500; }
+.fade-in { animation:fadein .25s ease; } @keyframes fadein { from { opacity:0; transform:translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }
 </style>
 </head>
 <body>
-<header>
-  <h1>CLIPPER<small id="sub">SHORTS AGENT · CONNECTING</small></h1>
-  <div class="row">
-    <button class="btn" data-act="discover">Check sources</button>
-    <button class="btn" id="pausebtn" data-act="pause">Pause</button>
-    <button class="btn warn" id="stopbtn" data-act="stop">Emergency stop</button>
-  </div>
-</header>
-<nav id="tabs"></nav>
-<main>
-  <div id="stopbanner" class="banner hide">Emergency stop is on: no new jobs and no uploads. <button class="btn" data-act="resume">Resume clipping</button></div>
-
-  <section data-tab="overview">
-    <div class="panel"><h2>Add a video</h2>
-      <div class="row"><input type="text" id="addurl" placeholder="YouTube or Twitch link, or a file path on this computer">
-        <select id="addcount"><option value="">Default count</option><option>1</option><option>2</option><option>3</option><option>5</option><option>8</option></select>
-        <button class="btn good" id="addbtn">Clip it</button></div>
-      <p class="muted">Only videos you're allowed to use are processed: your own Twitch VODs and channel, files you add, Creative Commons, or creators you have permission from.</p>
+<div class="shell">
+  <aside>
+    <div class="brand"><div class="logo"><svg class="i" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></div>Clipper</div>
+    <nav class="nav" id="nav"></nav>
+    <div class="side-foot">
+      <span class="statuspill" id="statuspill"><span class="dot"></span>Connecting</span>
+      <div class="row"><button class="btn sm" id="pausebtn" data-act="pause">Pause</button><button class="btn sm danger" data-act="stop">Emergency stop</button></div>
     </div>
-    <div class="panel"><h2>Overview</h2><div class="grid" id="tiles"></div></div>
-    <div class="panel"><h2>Needs your OK to clip</h2><div id="authlist"></div></div>
-    <div class="panel"><h2>What I've been doing</h2><div class="log" id="log"></div></div>
-  </section>
-
-  <section data-tab="queue"><div class="panel"><h2>Processing queue</h2><div class="scroll"><table id="jobs"></table></div></div></section>
-  <section data-tab="approvals"><div class="panel"><h2>Approval center</h2><div class="cards" id="approvals"></div></div></section>
-  <section data-tab="library"><div class="panel"><h2>Clip library</h2>
-    <div class="row" style="margin-bottom:12px"><select id="libfilter"><option value="">All clips</option><option value="awaiting_approval">Awaiting approval</option>
-      <option value="approved">Approved</option><option value="published,uploaded,scheduled">On YouTube</option><option value="qa_failed,upload_failed">Problems</option><option value="rejected">Rejected</option></select></div>
-    <div class="cards" id="library"></div></div></section>
-  <section data-tab="analytics">
-    <div class="panel"><h2>Results</h2><div id="anasummary" class="muted"></div><div class="grid" id="anatiles" style="margin-top:12px"></div></div>
-    <div class="panel"><h2>What's working</h2><p class="muted">Bars show how clips with each choice did compared with your typical clip (0 = typical). Labels say whether the gap is likely real. These are patterns, not proof.</p><div id="anafeatures"></div></div>
-    <div class="panel"><h2>Published clips</h2><div class="scroll"><table id="anatable"></table></div></div>
-  </section>
-  <section data-tab="settings">
-    <div class="panel"><h2>YouTube</h2><div id="ytbox"></div></div>
-    <div class="panel"><h2>Publishing permissions</h2><div id="perms"></div></div>
-    <div class="panel"><h2>Clips</h2><div id="clipset"></div></div>
-    <div class="panel"><h2>Approved sources</h2><div id="sources"></div>
-      <div class="row" style="margin-top:10px"><select id="srckind"><option value="twitch_channel">Twitch channel</option><option value="youtube_channel">YouTube channel</option>
-        <option value="youtube_search">Niche search (Creative Commons only)</option><option value="folder">Folder of my videos</option></select>
-        <input type="text" id="srcval" placeholder="channel name, @handle, search words or folder path">
-        <label class="ck"><input type="checkbox" id="srcok"> I own it or have permission</label>
-        <button class="btn" id="srcadd">Add</button></div></div>
-  </section>
-</main>
-<div class="ask" id="ask"><div class="panel"><h2>Please confirm</h2><p id="asktext"></p><div class="row"><button class="btn good" id="askyes">Yes</button><button class="btn" id="askno">Cancel</button></div></div></div>
+  </aside>
+  <div>
+    <div class="topbar" id="topnav"></div>
+    <main id="main"></main>
+  </div>
+</div>
+<div class="modal" id="ask"><div class="card"><h2 id="asktitle">Please confirm</h2><p class="muted" id="asktext"></p>
+  <div class="row" style="justify-content:flex-end"><button class="btn" id="askno">Cancel</button><button class="btn primary" id="askyes">Yes</button></div></div></div>
 <div class="toast" id="toast"></div>
 <script>
 (function () {
-  const TABS = [["overview","Overview"],["queue","Queue"],["approvals","Approvals"],["library","Library"],["analytics","Analytics"],["settings","Settings"]];
-  let S = null, token = "", tab = (location.hash || "#overview").slice(1), playing = new Set();
+  "use strict";
+  // ---------- helpers ----------
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const words = (s) => String(s || "").replace(/_/g, " ");
-  const ago = (t) => { const d = Math.max(0, (Date.now() / 1000) - t); return d < 90 ? Math.round(d) + "s ago" : d < 5400 ? Math.round(d / 60) + " min ago" : d < 129600 ? Math.round(d / 3600) + " h ago" : Math.round(d / 86400) + " days ago"; };
+  const fmt = (t) => { t = Math.max(0, Math.floor(t || 0)); const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0"); };
+  const fmtp = (t) => (Math.round((t || 0) * 10) / 10).toFixed(1) + "s";
+  const ago = (t) => { const d = Math.max(0, Date.now() / 1000 - t); return d < 90 ? "just now" : d < 5400 ? Math.round(d / 60) + " min ago" : d < 129600 ? Math.round(d / 3600) + " h ago" : Math.round(d / 86400) + " days ago"; };
+  const secs = (s) => s == null ? "" : s < 90 ? Math.round(s) + "s" : Math.round(s / 60) + " min";
+  const ICONS = {
+    home:'<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/>', folder:'<path d="M3 6h6l2 2h10v11H3z"/>', film:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4"/>',
+    check:'<path d="m5 12 5 5 9-10"/>', chart:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+    plus:'<path d="M12 5v14M5 12h14"/>', upload:'<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>', download:'<path d="M12 4v12M7 11l5 5 5-5M4 20h16"/>', edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+    refresh:'<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>', trash:'<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>', x:'<path d="M6 6l12 12M18 6 6 18"/>', play:'<path d="M7 4v16l13-8z"/>',
+    spark:'<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>', clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    back:'<path d="M15 6l-6 6 6 6"/>', yt:'<rect x="2" y="5" width="20" height="14" rx="4"/><path d="m10 9 5 3-5 3z"/>', ext:'<path d="M14 4h6v6M20 4l-9 9M19 14v6H4V5h6"/>',
+  };
+  const icon = (n) => `<svg class="i" viewBox="0 0 24 24">${ICONS[n] || ""}</svg>`;
+  const scoreColor = (v) => v >= 75 ? "#a78bfa" : v >= 55 ? "var(--accent2)" : "var(--faint)";
+  const ring = (v, label) => `<div class="ring" style="--v:${Math.round(v || 0)};--c:${scoreColor(v)}"><div><span>${Math.round(v || 0)}</span>${label ? `<small>${label}</small>` : ""}</div></div>`;
+  const STATE = { awaiting_approval:["Needs review","warn"], approved:["Approved","good"], ready:["Ready","good"], rendered:["Rendering","blue"], qa_failed:["Failed QA","bad"],
+    rejected:["Rejected",""], uploading:["Uploading","blue"], uploaded:["On YouTube","good"], scheduled:["Scheduled","good"], published:["Published","good"], upload_failed:["Upload failed","bad"] };
+  const JOBSTATE = { queued:["Queued",""], acquiring:["Getting video","blue"], transcribing:["Transcribing","blue"], analyzing:["Analyzing","blue"], selecting:["Ranking","blue"],
+    editing:["Editing","blue"], rendering:["Rendering","blue"], quality_check:["Checking","blue"], awaiting_approval:["Clips ready","good"], done:["Done","good"],
+    failed:["Failed","bad"], cancelled:["Cancelled",""], awaiting_authorization:["Needs permission","warn"], published:["Published","good"], uploading:["Uploading","blue"] };
+  const chip = (pair) => `<span class="chip ${pair[1]}">${esc(pair[0])}</span>`;
 
-  function toast(msg) { const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", 6000); }
-  function confirmBox(text) { return new Promise(res => { $("asktext").textContent = text; $("ask").style.display = "flex";
+  let S = null, token = "", page = null, route = parseRoute(), detail = null, detailFor = null, selected = new Set(), filter = { state: "", sort: "new" }, msort = "viral";
+  let editor = null;
+
+  function parseRoute() { const h = (location.hash || "#dashboard").slice(1).split("/"); return { view: h[0] || "dashboard", id: h[1] ? +h[1] : null }; }
+  function toast(msg) { const t = $("toast"); t.textContent = msg; t.style.display = "block"; t.classList.remove("fade-in"); void t.offsetWidth; t.classList.add("fade-in"); clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", 6000); }
+  function confirmBox(text, title) { return new Promise(res => { $("asktitle").textContent = title || "Please confirm"; $("asktext").textContent = text; $("ask").style.display = "flex";
     $("askyes").onclick = () => { $("ask").style.display = "none"; res(true); }; $("askno").onclick = () => { $("ask").style.display = "none"; res(false); }; }); }
-
-  async function act(body) {
+  async function act(body, quiet) {
     try {
       const r = await fetch("/clipper/action", { method: "POST", headers: { "Content-Type": "application/json", "X-Jarvis-Token": token }, body: JSON.stringify(body) });
-      const j = await r.json(); toast(j.message || (j.ok ? "Done." : "That didn't work.")); load(); return j;
-    } catch (e) { toast("Jarvis isn't answering: " + e); }
+      if (r.status === 403) { toast("This page is out of date. Reloading..."); setTimeout(() => location.reload(), 800); return {}; }
+      const j = await r.json(); if (!quiet) toast(j.message || (j.ok ? "Done." : "That didn't work.")); load(); if (detailFor) loadDetail(true); return j;
+    } catch (e) { toast("Jarvis isn't answering. Is he running?"); return {}; }
+  }
+  const busy = () => { const a = document.activeElement; return (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.closest("main")) || [...document.querySelectorAll("main video")].some(v => !v.paused); };
+
+  // ---------- navigation ----------
+  const NAV = [["dashboard","Dashboard","home"],["projects","Projects","folder"],["clips","Clips","film"],["approvals","Approvals","check"],["analytics","Analytics","chart"],["settings","Settings","gear"]];
+  function nav() {
+    const pend = S ? S.overview.pending : 0, active = S ? S.overview.active + S.overview.queued : 0;
+    const v = route.view === "project" ? "projects" : route.view === "edit" ? "clips" : route.view;
+    const html = (cls) => NAV.map(([k, label, ic]) => `<a href="#${k}" class="${k === v ? "on" : ""}">${cls ? "" : icon(ic)}${label}${!cls && k === "approvals" && pend ? `<span class="count">${pend}</span>` : ""}${!cls && k === "projects" && active ? `<span class="count">${active}</span>` : ""}</a>`).join("");
+    $("nav").innerHTML = html(false); $("topnav").innerHTML = html(true);
+    if (!S) return;
+    const o = S.overview, p = $("statuspill");
+    p.innerHTML = o.stopped ? `<span class="dot bad"></span>Emergency stop` : o.paused ? `<span class="dot warn"></span>Paused` : o.active ? `<span class="dot live"></span>Working` : `<span class="dot live"></span>Ready`;
+    const pb = $("pausebtn"); pb.textContent = o.paused ? "Resume" : "Pause"; pb.dataset.act = o.paused ? "resume" : "pause";
   }
 
-  function tabs() {
-    const n = S ? S.overview.pending : 0;
-    $("tabs").innerHTML = TABS.map(([k, v]) => `<button class="${k === tab ? "on" : ""}" data-tab="${k}">${v}${k === "approvals" && n ? `<span class="n">${n}</span>` : ""}</button>`).join("");
-    document.querySelectorAll("section[data-tab]").forEach(s => s.classList.toggle("hide", s.dataset.tab !== tab));
+  // ---------- views ----------
+  function render(force) {
+    nav();
+    if (!S) return;
+    if (!force && busy()) return;
+    const v = route.view, m = $("main");
+    const banner = S.overview.stopped ? `<div class="banner bad">${icon("x")}<span>Emergency stop is on: no new jobs and no uploads.</span><button class="btn sm" data-act="resume">Resume clipping</button></div>` : "";
+    let html = "";
+    if (v === "dashboard") html = dashboard();
+    else if (v === "projects") html = projects();
+    else if (v === "project") html = project();
+    else if (v === "clips") html = clipsView();
+    else if (v === "approvals") html = approvals();
+    else if (v === "analytics") html = analytics();
+    else if (v === "settings") html = settingsView();
+    else if (v === "edit") { if (!editor || editor.id !== route.id) return openEditor(route.id); return; }
+    m.innerHTML = banner + html;
+    afterRender();
   }
 
-  function clipCard(c, approve) {
-    const vid = c.has_file ? `<video preload="none" controls playsinline poster="/clipper/thumb/${c.id}.jpg" src="/clipper/media/${c.id}.mp4"></video>` : `<img alt="" src="/clipper/thumb/${c.id}.jpg" onerror="this.style.visibility='hidden'">`;
-    const qa = c.qa && c.qa.checks ? (c.qa.passed ? "Quality check passed" + (c.qa.warnings.length ? " (notes: " + c.qa.warnings.map(words).join(", ") + ")" : "") : "Quality check failed: " + c.qa.critical.map(words).join(", ")) : "";
-    const yt = c.youtube_id ? `<a class="btn" target="_blank" rel="noopener" href="https://youtu.be/${esc(c.youtube_id)}">Open on YouTube</a>` : "";
-    const m = c.metrics ? `<div class="meta">${c.metrics.views} views · ${Math.round(c.metrics.avg_view_pct || 0)}% watched · ${c.metrics.likes} likes</div>` : "";
-    const edit = approve ? `<input type="text" value="${esc(c.title)}" data-title="${c.id}" maxlength="100" aria-label="Title">
-       <select data-titles="${c.id}" aria-label="Other titles"><option value="">Other title ideas...</option>${(c.titles || []).map(t => `<option>${esc(t)}</option>`).join("")}</select>
-       <textarea data-desc="${c.id}" aria-label="Description">${esc(c.description)}</textarea>` : `<div class="title">${esc(c.title)}</div>`;
-    const buttons = approve ? `<div class="row"><button class="btn good" data-clip="${c.id}" data-do="approve">Approve</button>
-       <button class="btn" data-clip="${c.id}" data-do="regenerate">Make another</button><button class="btn warn" data-clip="${c.id}" data-do="reject">Reject</button></div>`
-      : (c.state === "approved" || c.state === "ready" || c.state === "upload_failed") ? `<div class="row"><button class="btn good" data-clip="${c.id}" data-do="upload">Upload</button>${yt}</div>` : (yt ? `<div class="row">${yt}</div>` : "");
-    return `<div class="card">${vid}<div class="body">
-      <div class="row"><span class="state s-${esc(c.state)}">${words(c.state)}</span><span class="score">SCORE ${Number(c.score || 0).toFixed(1)}</span><span class="meta">#${c.id} · ${Math.round(c.duration || 0)}s · ${esc(c.layout || "")} · ${esc(c.caption_style || "")}</span></div>
-      ${edit}
-      <div class="meta">${esc(c.hook_type ? words(c.hook_type) + " opening. " : "")}${esc(c.reason || "")}</div>
-      <div class="meta">From "${esc((c.source || {}).title)}" at ${fmt(c.start)}–${fmt(c.end)} · ${esc((c.source || {}).basis || "")}</div>
-      ${c.note ? `<div class="meta">${esc(c.note)}</div>` : ""}<div class="meta">${esc(qa)}</div>${m}${buttons}</div></div>`;
+  function newVideoCard() {
+    const lens = [["auto","Auto length"],["15_30","15–30s"],["30_45","30–45s"],["45_60","45–60s"],["60_90","60–90s"]];
+    return `<div class="card hero"><div class="head"><div><h2>New video or VOD</h2><div class="muted small">Paste a YouTube or Twitch link, a file path, or drop a video file.</div></div></div>
+      <div class="inputrow"><input type="text" id="addurl" placeholder="https://youtube.com/watch?v=…  or  twitch.tv/videos/…" autocomplete="off" spellcheck="false">
+        <select id="addlen" aria-label="Clip length">${lens.map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
+        <select id="addcount" aria-label="How many clips"><option value="">Default count</option>${[1,2,3,5,8,10].map(n => `<option>${n}</option>`).join("")}</select>
+        <button class="btn primary" id="addbtn">${icon("spark")}Find clips</button></div>
+      <div class="valid" id="valid"></div><div id="linkprev"></div>
+      <label class="drop" id="drop"><input type="file" id="file" accept="video/*,.mkv,.mov,.mp4,.webm,.m4v,.avi,.ts" hidden>
+        <div class="ic">${icon("upload")}</div><div><div style="font-weight:550;color:var(--text)">Drop a video file here</div><div class="small">or click to choose one. MP4, MOV, MKV, WebM.</div></div></label>
+      <div id="upl"></div>
+      <div class="faint small" style="margin-top:12px">Only videos you're allowed to use are clipped: your own videos and Twitch VODs, Creative Commons, or creators who gave permission.</div></div>`;
   }
-  const fmt = (t) => { t = Math.floor(t || 0); const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0"); };
 
-  function render() {
-    tabs();
-    const o = S.overview;
-    $("sub").textContent = "SHORTS AGENT · " + (o.stopped ? "EMERGENCY STOP" : o.paused ? "PAUSED" : o.active ? "WORKING" : "IDLE");
-    $("stopbanner").classList.toggle("hide", !o.stopped);
-    $("pausebtn").textContent = o.paused ? "Resume" : "Pause"; $("pausebtn").dataset.act = o.paused ? "resume" : "pause";
-    $("tiles").innerHTML = [["videos","Videos discovered"],["processed","Videos processed"],["clips","Clips made"],["published","On YouTube"],["active","Running now"],["queued","Queued"],["failed","Failed jobs"],["pending","Awaiting approval"]]
-      .map(([k, v]) => `<div class="tile"><b>${o[k]}</b><span>${v}</span></div>`).join("");
-    $("authlist").innerHTML = S.awaiting_auth.length ? S.awaiting_auth.map(a => `<div class="row" style="margin:6px 0"><span>"${esc(a.title)}" by ${esc(a.creator || "unknown")} <span class="muted">(${esc(a.auth_basis)})</span></span>
-      <button class="btn" data-grant="${a.video_id}" data-name="${esc(a.title)}">I have permission</button><button class="btn warn" data-cancel="${a.job_id}">Drop</button></div>`).join("") : `<div class="muted">Nothing waiting.</div>`;
-    $("log").innerHTML = S.events.map(e => `<div class="lv-${esc(e.level)}">${new Date(e.t * 1000).toLocaleString()} · ${e.job_id ? "job " + e.job_id + " · " : ""}${esc(e.msg)}</div>`).join("") || `<div class="muted">Nothing yet.</div>`;
-    $("jobs").innerHTML = `<tr><th>Job</th><th>Video</th><th>Stage</th><th>Progress</th><th>Notes</th><th></th></tr>` + S.jobs.map(j => {
-      const pct = Math.round((j.progress || 0) * 100), eta = j.eta ? ` · about ${Math.ceil(j.eta / 60)} min left` : "";
-      const btn = ["failed","cancelled"].includes(j.state) ? `<button class="btn" data-retry="${j.id}">Retry</button>` : !["done","published"].includes(j.state) ? `<button class="btn warn" data-cancel="${j.id}">Cancel</button>` : "";
-      return `<tr><td>${j.id}</td><td>${esc(j.title)}<div class="meta">${esc(j.platform)} · ${j.duration ? fmt(j.duration) : ""} · ${esc(j.auth_basis || "")}</div></td>
-        <td><span class="state s-${esc(j.state)}">${words(j.state)}</span></td><td style="min-width:120px">${pct}%${eta}<div class="bar"><i style="width:${pct}%"></i></div><div class="meta">${esc(j.detail || "")}</div></td>
-        <td class="meta">${esc(j.error || "")}${j.attempts ? " (try " + (j.attempts + 1) + ")" : ""}</td><td>${btn}</td></tr>`; }).join("");
+  function jobRow(j) {
+    const st = JOBSTATE[j.state] || [words(j.state), ""];
+    const steps = (j.steps || []).map(s => `<i class="${s.state}" title="${esc(s.label)}: ${esc(s.state)}"></i>`).join("");
+    const pct = Math.round((j.progress || 0) * 100);
+    const btn = j.waiting_retry ? `<button class="btn sm" data-retry="${j.id}">${icon("refresh")}Retry now</button><button class="btn sm ghost" data-cancel="${j.id}">Cancel</button>`
+      : ["failed","cancelled"].includes(j.state) ? `<button class="btn sm" data-retry="${j.id}">${icon("refresh")}Retry</button>`
+      : ["done","published","awaiting_approval"].includes(j.state) ? `<a class="btn sm" href="#project/${j.id}">Open</a>` : `<button class="btn sm ghost" data-cancel="${j.id}">Cancel</button>`;
+    const sub = j.error ? `<span style="color:#fecaca">${esc(j.error)}</span>${j.waiting_retry ? ` · will try again${j.attempts ? " (try " + (j.attempts + 1) + ")" : ""}` : ""}` :
+      esc(j.detail || "") + (j.eta ? ` · about ${Math.ceil(j.eta / 60)} min left` : "");
+    return `<div class="job"><div style="min-width:0"><div class="row" style="flex-wrap:nowrap"><a class="title" href="#project/${j.id}">${esc(j.title || "Untitled video")}</a>${chip(st)}</div>
+      <div class="small muted" style="margin-top:2px">${esc(words(j.platform))}${j.duration ? " · " + fmt(j.duration) : ""}${j.clip_count ? ` · ${j.clip_count} clip${j.clip_count === 1 ? "" : "s"}` : ""} · ${sub}</div></div>
+      <div><div class="ministeps">${steps}</div><div class="small faint" style="margin-top:5px">${["done","awaiting_approval","published","failed","cancelled"].includes(j.state) ? (j.finished ? ago(j.finished) : "") : pct + "% of this step"}</div></div>
+      <div class="row" style="justify-content:flex-end">${btn}</div></div>`;
+  }
+
+  function dashboard() {
+    const o = S.overview, st = S.stats, hour = new Date().getHours();
+    const hi = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+    const active = S.jobs.filter(j => !["done","published","awaiting_approval","failed","cancelled"].includes(j.state) || j.waiting_retry);
+    const recent = S.jobs.filter(j => !active.includes(j)).slice(0, 6);
+    const latest = S.clips.filter(c => c.has_file && !["rejected","qa_failed"].includes(c.state)).slice(0, 8);
+    const tiles = [[o.clips, "Clips made"], [st.clips_week, "This week"], [st.avg_score ? st.avg_score : "–", "Average score"], [st.qa_pass != null ? st.qa_pass + "%" : "–", "Pass quality check"],
+      [st.avg_job_minutes != null ? st.avg_job_minutes + " min" : "–", "Per video"], [o.published, "On YouTube"]];
+    return `<div class="pagehead"><div><h1>${hi}</h1><p class="sub">${o.pending ? `${o.pending} clip${o.pending === 1 ? " is" : "s are"} waiting for your review.` : active.length ? "Working on your videos." : "Drop in a video and I'll find the moments worth posting."}</p></div>
+      <div class="row"><button class="btn" data-act="discover">${icon("refresh")}Check sources</button>${o.pending ? `<a class="btn primary" href="#approvals">${icon("check")}Review clips</a>` : ""}</div></div>
+      ${newVideoCard()}
+      <div class="tiles" style="margin-top:16px">${tiles.map(([v, k]) => `<div class="tile"><div class="v">${esc(v)}</div><div class="k">${k}</div></div>`).join("")}</div>
+      ${S.awaiting_auth.length ? `<div class="card" style="margin-top:16px"><div class="head"><h2>Needs your OK before clipping</h2></div>${S.awaiting_auth.map(a => `<div class="between" style="padding:8px 0;border-bottom:1px solid var(--line)"><div><div style="font-weight:550">${esc(a.title)}</div><div class="small muted">${esc(a.creator || "unknown")} · ${esc(a.auth_basis)}</div></div>
+        <div class="row"><button class="btn sm" data-grant="${a.video_id}" data-name="${esc(a.title)}">I have permission</button><button class="btn sm ghost" data-cancel="${a.job_id}">Skip</button></div></div>`).join("")}</div>` : ""}
+      <div class="grid2" style="margin-top:16px">
+        <div class="card" style="margin:0"><div class="head"><h2>Processing</h2><a class="small muted" href="#projects">All projects</a></div>${active.length ? `<div class="jobs">${active.map(jobRow).join("")}</div>` : `<div class="empty small">${icon("clock")}<div style="margin-top:6px">Nothing processing right now.</div></div>`}</div>
+        <div class="card" style="margin:0"><div class="head"><h2>Recent projects</h2></div>${recent.length ? `<div class="jobs">${recent.map(jobRow).join("")}</div>` : `<div class="empty small">No projects yet.</div>`}</div>
+      </div>
+      <div class="card" style="margin-top:16px"><div class="head"><h2>Latest clips</h2><a class="small muted" href="#clips">All clips</a></div>${latest.length ? `<div class="clips">${latest.map(c => clipCard(c)).join("")}</div>` : `<div class="empty"><div class="ic">${icon("film")}</div>Your finished clips will show up here.</div>`}</div>
+      <div class="card"><div class="head"><h2>Activity</h2></div><div class="log">${S.events.slice(0, 40).map(e => `<div class="${esc(e.level)}">${new Date(e.t * 1000).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})} · ${e.job_id ? "project " + e.job_id + " · " : ""}${esc(e.msg)}</div>`).join("") || "<div>Nothing yet.</div>"}</div></div>`;
+  }
+
+  function projects() {
+    return `<div class="pagehead"><div><h1>Projects</h1><p class="sub">Every video you've given me, and where it's up to.</p></div></div>
+      <div class="card">${S.jobs.length ? `<div class="jobs">${S.jobs.map(jobRow).join("")}</div>` : `<div class="empty"><div class="ic">${icon("folder")}</div>No projects yet. Add a video on the dashboard.</div>`}</div>`;
+  }
+
+  function project() {
+    if (!detail || detailFor !== route.id) { loadDetail(); return `<div class="muted">Loading…</div>`; }
+    const d = detail, j = d.job, st = JOBSTATE[j.state] || [words(j.state), ""];
+    const running = !["done","published","awaiting_approval","failed","cancelled"].includes(j.state);
+    const steps = (j.steps || []).map((s, i) => `<div class="step ${s.state}"><div class="n">${s.state === "done" ? "✓" : i + 1}</div><div class="l">${esc(s.label)}</div>
+      <div class="s">${s.state === "running" ? (j.state === s.key ? Math.round((j.progress || 0) * 100) + "% · " : "") + (s.seconds != null ? secs(s.seconds) : "") : s.state === "done" ? (s.seconds != null ? secs(s.seconds) : "done") : s.state === "skipped" ? "not needed" : s.state === "stopped" ? "paused" : "waiting"}</div></div>`).join("");
+    const cands = sortMoments(d.candidates.slice());
+    const sel = selected;
+    const sorts = [["viral","Viral potential"],["funny","Funniest"],["entertaining","Most entertaining"],["emotional","Most emotional"],["interesting","Most interesting"],["story","Best storytelling"],["shortest","Shortest"],["longest","Longest"]];
+    return `<div class="pagehead"><div><a class="small muted" href="#projects" style="text-decoration:none">${icon("back")} Projects</a><h1 style="margin-top:6px">${esc(d.video.title || "Video")}</h1>
+        <p class="sub">${esc(words(d.video.platform))}${d.video.duration ? " · " + fmt(d.video.duration) : ""} · ${esc(d.video.auth_basis || "")} ${chip(st)}</p></div>
+      <div class="row">${j.waiting_retry ? `<button class="btn" data-retry="${j.id}">${icon("refresh")}Retry now</button>` : ["failed","cancelled"].includes(j.state) ? `<button class="btn" data-retry="${j.id}">${icon("refresh")}Retry</button>` : ""}
+        ${running ? `<button class="btn ghost" data-cancel="${j.id}">Cancel</button>` : ""}${d.video.url && /^https?:/.test(d.video.url) ? `<a class="btn ghost" target="_blank" rel="noopener" href="${esc(d.video.url)}">${icon("ext")}Source</a>` : ""}</div></div>
+      ${j.error ? `<div class="banner ${j.state === "failed" ? "bad" : "warn"}">${icon("x")}<span>${esc(j.error)}${j.waiting_retry ? " It will try again by itself, or press Retry now." : ""}</span></div>` : ""}
+      ${d.llm_error ? `<div class="banner warn">Claude wasn't available for this video, so moments were picked by simpler rules (${esc(d.llm_error)}).</div>` : ""}
+      <div class="card"><div class="head"><h2>Progress</h2><span class="small muted">${esc(j.detail || "")}</span></div><div class="steps">${steps}</div>
+        ${running ? `<div class="progressbar"><i style="width:${Math.round((j.progress || 0) * 100)}%"></i></div>` : ""}</div>
+      ${d.clips.length ? `<div class="card"><div class="head"><h2>Clips from this video</h2><span class="small muted">${d.clips.length}</span></div><div class="clips">${d.clips.map(c => clipCard(c)).join("")}</div></div>` : ""}
+      <div class="card"><div class="head"><div><h2>Moments, ranked</h2><div class="small muted">${cands.length ? `${cands.length} candidates${d.method === "rules" ? " (rule-based)" : ""}. Scores estimate engagement from what's in the clip; they don't predict views.` : running ? "Moments show up here once the video has been analyzed." : "No strong moments were found."}</div></div>
+        ${cands.length ? `<div class="row"><select id="msort">${sorts.map(([k, l]) => `<option value="${k}" ${msort === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+          <button class="btn primary sm" id="makesel" ${[...sel].length ? "" : "disabled"}>${icon("spark")}Make selected</button></div>` : ""}</div>
+        ${cands.map(c => momentRow(c, j.id)).join("")}
+        ${d.rejected && d.rejected.length ? `<div class="sep"></div><details><summary>${d.rejected.length} turned down, and why</summary><div style="margin-top:10px">${d.rejected.map(r => `<div class="small" style="padding:5px 0;border-bottom:1px solid var(--line)"><span class="muted">${r.start != null ? fmt(r.start) + "–" + fmt(r.end) : ""}</span> ${esc(r.title || "")} <span class="faint">· ${esc(r.why)}</span></div>`).join("")}</div></details>` : ""}
+      </div>`;
+  }
+  function sortMoments(list) {
+    const S2 = { viral: c => c.score, funny: c => (c.scores || {}).entertainment + (["funny","one_liner","fail"].includes(c.category) ? 3 : 0), entertaining: c => (c.scores || {}).entertainment + (c.scores || {}).replay * .3,
+      emotional: c => (c.scores || {}).emotion + (c.category === "emotional" ? 2 : 0), interesting: c => (c.scores || {}).curiosity + (c.scores || {}).uniqueness * .5,
+      story: c => (c.scores || {}).story + (c.scores || {}).payoff * .3, shortest: c => -c.duration, longest: c => c.duration };
+    const f = S2[msort] || S2.viral; return list.sort((a, b) => f(b) - f(a));
+  }
+  function momentRow(c, jid) {
+    const p = c.parts || {}, bar = (k, v) => `<div class="bar">${k}<b>${Math.round(v || 0)}</b><div class="tr"><i style="width:${Math.max(2, Math.min(100, v || 0))}%"></i></div></div>`;
+    const action = c.clip_id ? `<a class="btn sm" href="#edit/${c.clip_id}">${icon("edit")}Open clip</a>` :
+      `<label class="row small muted" style="gap:6px;cursor:pointer"><input type="checkbox" data-pickrank="${c.rank}" ${selected.has(c.rank) ? "checked" : ""}>Make this</label>`;
+    return `<div class="moment"><div class="rank">#${c.rank}</div>${ring(c.score, "score")}
+      <div style="min-width:0"><div class="t">${esc(c.title || c.hook || "Moment")}</div>
+        <div class="row small muted" style="margin-top:3px">${fmt(c.start)}–${fmt(c.end)} · ${Math.round(c.duration)}s ${c.category ? chip([words(c.category), "accent"]) : ""}${c.verified ? chip(["context checked","good"]) : ""}${c.weak ? chip(["best of a weak set","warn"]) : ""}</div>
+        <div class="why">${esc(c.reason || "")}${c.check ? ` <span class="faint">Check: ${esc(c.check)}</span>` : ""}</div>
+        <div class="bars">${bar("Hook", p.hook)}${bar("Entertainment", p.entertainment)}${bar("Context", p.context)}</div>
+        ${c.similar && c.similar.length ? `<div class="small faint" style="margin-top:6px">${c.similar.length} overlapping take${c.similar.length === 1 ? "" : "s"} of this moment merged into it.</div>` : ""}</div>
+      <div class="act">${action}</div></div>`;
+  }
+
+  function clipCard(c, opts) {
+    opts = opts || {};
+    const st = STATE[c.state] || [words(c.state), ""];
+    const media = c.has_file ? `<video preload="none" playsinline poster="/clipper/thumb/${c.id}.jpg?v=${c.version || 1}" src="/clipper/media/${c.id}.mp4?v=${c.version || 1}"></video>` : `<img alt="" src="/clipper/thumb/${c.id}.jpg" onerror="this.style.visibility='hidden'">`;
+    const yt = c.youtube_id ? `<a class="btn sm icon" title="Open on YouTube" target="_blank" rel="noopener" href="https://youtu.be/${esc(c.youtube_id)}">${icon("yt")}</a>` : "";
+    return `<div class="clip ${selected.has("c" + c.id) ? "sel" : ""}" data-card="${c.id}"><div class="media">${media}
+        ${opts.select ? `<label class="pick"><input type="checkbox" data-selclip="${c.id}" ${selected.has("c" + c.id) ? "checked" : ""} aria-label="Select clip"></label>` : ""}
+        <span class="badge" style="color:${scoreColor(c.score)}">${Math.round(c.score || 0)}</span><span class="dur">${Math.round(c.duration || 0)}s</span></div>
+      <div class="body"><div class="title">${esc(c.title)}</div>
+        <div class="row small muted">${chip(st)}${c.category ? `<span>${esc(words(c.category))}</span>` : ""}<span>${esc(words(c.caption_style || ""))} captions</span></div>
+        <div class="small faint">${fmt(c.start)}–${fmt(c.end)}${(c.source || {}).title ? ` of "${esc(c.source.title.slice(0, 40))}"` : ""}</div>
+        ${c.metrics ? `<div class="small muted">${c.metrics.views} views · ${Math.round(c.metrics.avg_view_pct || 0)}% watched</div>` : ""}
+        ${c.state === "qa_failed" && c.note ? `<div class="small" style="color:#fecaca">${esc(c.note)}</div>` : ""}
+        <div class="acts">${c.has_file ? `<a class="btn sm icon" title="Download" href="/clipper/media/${c.id}.mp4?download=1">${icon("download")}</a>` : ""}
+          <a class="btn sm" href="#edit/${c.id}">${icon("edit")}Edit</a>
+          <button class="btn sm icon" title="Make another from this video" data-clip="${c.id}" data-do="regenerate">${icon("refresh")}</button>${yt}
+          <button class="btn sm icon" title="Delete" data-clip="${c.id}" data-do="delete">${icon("trash")}</button></div></div></div>`;
+  }
+
+  function clipsView() {
+    const states = [["","All"],["awaiting_approval","Needs review"],["approved,ready","Approved"],["uploaded,published,scheduled","On YouTube"],["qa_failed,upload_failed","Problems"],["rejected","Rejected"]];
+    const f = filter.state.split(",").filter(Boolean);
+    let list = S.clips.filter(c => !f.length || f.includes(c.state));
+    const sorts = { new: (a, b) => b.id - a.id, score: (a, b) => b.score - a.score, short: (a, b) => a.duration - b.duration, long: (a, b) => b.duration - a.duration };
+    list.sort(sorts[filter.sort] || sorts.new);
+    const n = [...selected].filter(x => String(x).startsWith("c")).length;
+    return `<div class="pagehead"><div><h1>Clips</h1><p class="sub">Preview, edit, export or post. Select several to export or approve them together.</p></div>
+      <div class="row"><button class="btn" data-act="open_exports">${icon("folder")}Export folder</button></div></div>
+      <div class="toolbar"><div class="seg">${states.map(([k, l]) => `<button data-filter="${k}" class="${filter.state === k ? "on" : ""}">${l}</button>`).join("")}</div>
+        <select id="csort"><option value="new" ${filter.sort === "new" ? "selected" : ""}>Newest</option><option value="score" ${filter.sort === "score" ? "selected" : ""}>Highest score</option>
+          <option value="short" ${filter.sort === "short" ? "selected" : ""}>Shortest</option><option value="long" ${filter.sort === "long" ? "selected" : ""}>Longest</option></select>
+        <button class="btn ghost sm" id="selall">Select all</button></div>
+      ${list.length ? `<div class="clips">${list.map(c => clipCard(c, { select: true })).join("")}</div>` : `<div class="card empty"><div class="ic">${icon("film")}</div>No clips here yet.</div>`}
+      <div class="bulk ${n ? "show" : ""}" id="bulk"><b>${n} selected</b><span class="faint small">Export copies them to ${esc(S.export_dir)}</span><span style="flex:1"></span>
+        <button class="btn sm" id="bexport">${icon("download")}Export</button><button class="btn sm good" id="bapprove">${icon("check")}Approve</button>
+        <button class="btn sm danger" id="bdelete">${icon("trash")}Delete</button><button class="btn sm ghost" id="bclear">Clear</button></div>`;
+  }
+
+  function approvals() {
     const pend = S.clips.filter(c => c.state === "awaiting_approval");
-    if (!document.activeElement || !document.activeElement.closest || !document.activeElement.closest("#approvals")) {
-      if (!playing.size) $("approvals").innerHTML = pend.length ? pend.map(c => clipCard(c, true)).join("") : `<div class="muted">No clips waiting for approval.</div>`;
-    }
-    const f = $("libfilter").value.split(",").filter(Boolean);
-    const lib = S.clips.filter(c => !f.length || f.includes(c.state));
-    if (!playing.size) $("library").innerHTML = lib.map(c => clipCard(c, false)).join("") || `<div class="muted">No clips yet.</div>`;
-    analytics(); settingsTab();
+    return `<div class="pagehead"><div><h1>Approvals</h1><p class="sub">Nothing goes to YouTube until you approve it${S.channel.permissions.upload_private ? "" : " and switch uploads on in Settings"}.</p></div>
+      ${pend.length > 1 ? `<button class="btn good" id="approveall">${icon("check")}Approve all ${pend.length}</button>` : ""}</div>
+      ${pend.length ? `<div class="stack">${pend.map(approvalRow).join("")}</div>` : `<div class="card empty"><div class="ic">${icon("check")}</div>You're all caught up.</div>`}`;
+  }
+  function approvalRow(c) {
+    const ex = c.extra || {}, titles = c.titles || [], descs = ex.descriptions || [];
+    return `<div class="card" style="margin:0"><div class="editor approve">
+      <div>${c.has_file ? `<video controls playsinline preload="none" poster="/clipper/thumb/${c.id}.jpg?v=${c.version || 1}" src="/clipper/media/${c.id}.mp4?v=${c.version || 1}" style="width:100%;aspect-ratio:9/16;border-radius:10px;background:#000"></video>` : ""}</div>
+      <div class="stack"><div class="row">${ring(c.score, "score")}<div><div class="row small muted">${Math.round(c.duration)}s · ${fmt(c.start)}–${fmt(c.end)} ${c.category ? chip([words(c.category), "accent"]) : ""}</div><div class="small muted" style="margin-top:4px">${esc(c.reason || "")}</div></div></div>
+        <label class="f">Title<input type="text" maxlength="100" value="${esc(c.title)}" data-title="${c.id}"></label>
+        ${titles.length > 1 ? `<div class="row">${titles.map(t => `<button class="chip" data-usetitle="${c.id}" data-text="${esc(t)}" style="cursor:pointer;height:auto;padding:4px 9px;white-space:normal;text-align:left">${esc(t)}</button>`).join("")}</div>` : ""}
+        <label class="f">Description<textarea data-desc="${c.id}">${esc(c.description)}</textarea></label>
+        ${descs.length > 1 ? `<details><summary class="small">Other descriptions</summary>${descs.map(dd => `<div class="row" style="margin-top:6px;align-items:flex-start"><div class="small muted" style="flex:1;white-space:pre-wrap">${esc(dd.split("\n\n")[0])}</div><button class="btn sm" data-usedesc="${c.id}" data-text="${esc(dd)}">Use</button></div>`).join("")}</details>` : ""}
+        ${c.pinned_comment ? `<div class="small muted">Pinned comment idea: ${esc(c.pinned_comment)}</div>` : ""}
+        <div class="small faint">${esc(c.qa && c.qa.passed ? "Passed the quality check" + (c.qa.warnings && c.qa.warnings.length ? " (notes: " + c.qa.warnings.map(words).join(", ") + ")" : "") : "")}</div>
+        <div class="row"><button class="btn good" data-clip="${c.id}" data-do="approve">${icon("check")}Approve</button><a class="btn" href="#edit/${c.id}">${icon("edit")}Edit</a>
+          <button class="btn ghost" data-clip="${c.id}" data-do="regenerate">${icon("refresh")}Make another</button><button class="btn ghost" data-clip="${c.id}" data-do="reject">Reject</button></div></div></div></div>`;
   }
 
   function analytics() {
-    const a = S.analysis || { n: 0 };
-    const pub = S.clips.filter(c => c.youtube_id);
-    $("anasummary").textContent = a.n ? `Based on ${a.n} published clips with YouTube numbers.` : (S.youtube.connected ? "No numbers yet: they appear a day or so after clips are published." : "Connect YouTube to see how your clips perform.");
+    const a = S.analysis || { n: 0 }, pub = S.clips.filter(c => c.youtube_id);
     const sum = (k) => pub.reduce((t, c) => t + ((c.metrics || {})[k] || 0), 0);
-    $("anatiles").innerHTML = pub.length ? [["views","Views"],["likes","Likes"],["shares","Shares"],["subs_gained","Subscribers gained"]].map(([k, v]) => `<div class="tile"><b>${sum(k)}</b><span>${v}</span></div>`).join("") : "";
-    const names = { hook_type: "Opening type", caption_style: "Caption style", duration: "Length", layout: "Framing", hour: "Upload time", topic: "Topic" };
-    $("anafeatures").innerHTML = a.n ? Object.entries(names).map(([k, label]) => {
-      const t = Object.entries((a.features || {})[k] || {}).filter(([n]) => n !== "unknown");
-      if (t.length < 2) return "";
-      const max = Math.max(0.5, ...t.map(([, v]) => Math.abs(v.effect)));
-      return `<h2 style="margin-top:14px">${label}</h2>` + t.sort((x, y) => y[1].effect - x[1].effect).map(([n, v]) => {
-        const w = Math.abs(v.effect) / max * 50, left = v.effect >= 0 ? 50 : 50 - w;
-        return `<div class="hbar" title="${esc(words(n))}: ${v.effect.toFixed(2)} vs typical, ${v.n} clips, ${v.label}"><span>${esc(words(n))}</span>
-          <div class="track"><span class="zero"></span><i class="${v.effect < 0 ? "neg" : ""}" style="left:${left}%;width:${Math.max(1, w)}%"></i></div><span class="v">${v.effect >= 0 ? "+" : ""}${v.effect.toFixed(2)}</span></div>
-          <div class="meta" style="margin:-4px 0 6px 148px">${v.n} clips · ${esc(v.label)}</div>`; }).join("");
-    }).join("") : `<div class="muted">Not enough data yet.</div>`;
-    $("anatable").innerHTML = `<tr><th>Clip</th><th>Views</th><th>% watched</th><th>Likes</th><th>Shares</th><th>Subs</th><th>Style</th></tr>` + pub.map(c => {
-      const m = c.metrics || {}; return `<tr><td><a style="color:var(--cyan2)" target="_blank" rel="noopener" href="https://youtu.be/${esc(c.youtube_id)}">${esc(c.title)}</a></td><td>${m.views ?? "–"}</td><td>${m.avg_view_pct != null ? Math.round(m.avg_view_pct) + "%" : "–"}</td><td>${m.likes ?? "–"}</td><td>${m.shares ?? "–"}</td><td>${m.subs_gained ?? "–"}</td><td>${esc(c.caption_style)}</td></tr>`; }).join("");
+    const names = { hook_type: "Opening type", category: "Kind of moment", caption_style: "Caption style", duration: "Length", layout: "Framing", hour: "Upload time", topic: "Topic" };
+    const pred = a.prediction || {};
+    return `<div class="pagehead"><div><h1>Analytics</h1><p class="sub">${a.n ? `Based on ${a.n} published clips with YouTube numbers.` : S.youtube.connected ? "Numbers appear a day or so after clips are published." : "Connect YouTube in Settings to see how your clips do."}</p></div></div>
+      ${pub.length ? `<div class="tiles">${[["views","Views"],["likes","Likes"],["comments","Comments"],["shares","Shares"],["subs_gained","Subscribers gained"]].map(([k, v]) => `<div class="tile"><div class="v">${sum(k).toLocaleString()}</div><div class="k">${v}</div></div>`).join("")}</div>` : ""}
+      <div class="card" style="margin-top:16px"><div class="head"><h2>Predicted vs. real</h2></div><div class="muted">${pred.correlation != null ? `Across ${pred.n} clips, my scores and real results line up at ${pred.correlation} (1 = perfectly, 0 = not at all). Scores are estimates; the numbers below are what actually happened.` : "Once at least 5 clips have real numbers, I'll show how well my scores matched what really happened. Until then, scores are only estimates."}</div></div>
+      <div class="card"><div class="head"><h2>What's working</h2><span class="small faint">Patterns, not proof</span></div><p class="small muted" style="margin-top:-6px">Bars show how clips with each choice did compared with your typical clip (0 = typical). Labels say whether the gap is likely real.</p>
+        ${a.n ? Object.entries(names).map(([k, label]) => { const t = Object.entries((a.features || {})[k] || {}).filter(([n]) => n !== "unknown"); if (t.length < 2) return "";
+          const max = Math.max(0.5, ...t.map(([, v]) => Math.abs(v.effect)));
+          return `<h3 style="margin:16px 0 6px">${label}</h3>` + t.sort((x, y) => y[1].effect - x[1].effect).map(([n, v]) => { const w = Math.abs(v.effect) / max * 50, left = v.effect >= 0 ? 50 : 50 - w;
+            return `<div class="hbar" title="${esc(words(n))}: ${v.effect.toFixed(2)} vs typical, ${v.n} clips, ${v.label}"><span>${esc(words(n))}</span><div class="track"><span class="zero"></span><i class="${v.effect < 0 ? "neg" : ""}" style="left:${left}%;width:${Math.max(1, w)}%"></i></div><span class="v">${v.effect >= 0 ? "+" : ""}${v.effect.toFixed(2)}</span></div>
+              <div class="small faint" style="margin:-4px 0 6px 160px">${v.n} clips · ${esc(v.label)}</div>`; }).join(""); }).join("") : `<div class="muted">Not enough data yet.</div>`}</div>
+      <div class="card"><div class="head"><h2>Published clips</h2></div><div class="scroll"><table><tr><th>Clip</th><th>Score</th><th>Views</th><th>% watched</th><th>Likes</th><th>Shares</th><th>Subs</th></tr>
+        ${pub.map(c => { const m = c.metrics || {}; return `<tr><td><a target="_blank" rel="noopener" href="https://youtu.be/${esc(c.youtube_id)}">${esc(c.title)}</a></td><td>${Math.round(c.score || 0)}</td><td>${m.views ?? "–"}</td><td>${m.avg_view_pct != null ? Math.round(m.avg_view_pct) + "%" : "–"}</td><td>${m.likes ?? "–"}</td><td>${m.shares ?? "–"}</td><td>${m.subs_gained ?? "–"}</td></tr>`; }).join("") || `<tr><td colspan="7" class="muted">None yet.</td></tr>`}</table></div>
+        <p class="small faint">YouTube's API doesn't report "viewed vs. swiped away" for Shorts, so it isn't shown.</p></div>`;
   }
 
-  let settingsDrawn = false;
-  function settingsTab() {
+  function settingsView() {
     const ch = S.channel, yt = S.youtube, p = ch.permissions;
-    $("ytbox").innerHTML = yt.connected ? `<div>Connected to <b>${esc(yt.title || "your channel")}</b>. API quota used today: ${yt.quota_used} of ${yt.quota}.</div>`
-      : `<div class="note">YouTube isn't connected. Double-click <b>Connect YouTube</b> in Jarvis's folder${yt.client ? "" : " (it walks you through the one-time Google setup)"}. Until then, clips are saved here and nothing is uploaded.</div>`;
-    if (settingsDrawn && document.activeElement && document.activeElement.closest && document.activeElement.closest("section[data-tab=settings]")) return;
-    settingsDrawn = true;
-    const perm = [["discover","Look for new videos from my approved sources"],["process","Process authorized videos"],["render","Make clips"],["save","Keep finished clips"],
-      ["upload_private","Upload clips to YouTube as private"],["schedule_public","Schedule approved clips to go public"],["publish_public","Publish approved clips publicly"],
-      ["require_approval","Clips wait for my approval before any upload"],["delete_files","Delete downloaded source videos after a few days"],["auto_process","Start clipping new videos from sources automatically"]];
-    $("perms").innerHTML = perm.map(([k, v]) => `<label class="ck"><input type="checkbox" data-perm="${k}" ${p[k] ? "checked" : ""}> ${v}</label>`).join("") +
-      `<div class="row" style="margin-top:8px">Upload as <select id="privacy">${["draft","private","unlisted","scheduled","public"].map(x => `<option ${ch.privacy === x ? "selected" : ""}>${x}</option>`).join("")}</select>
-       <span class="muted">Public and scheduled still need their switches above.</span></div>`;
-    $("clipset").innerHTML = `<div class="row">Caption style <select id="cstyle">${["auto"].concat(S.styles).map(x => `<option ${ch.caption_style === x ? "selected" : ""}>${x}</option>`).join("")}</select>
-      Length <input type="number" id="cmin" value="${ch.clip_min}" min="5" max="170" style="width:70px"> to <input type="number" id="cmax" value="${ch.clip_max}" min="10" max="180" style="width:70px"> seconds
-      Clips per video <input type="number" id="cper" value="${ch.max_clips_per_video}" min="1" max="30" style="width:60px">
-      Posting times <input type="text" id="ctimes" value="${esc((ch.publish_times || []).join(", "))}" style="width:140px">
-      Max uploads a day <input type="number" id="cday" value="${ch.max_uploads_per_day}" min="1" max="20" style="width:60px"></div>
-      <div class="row" style="margin-top:8px">Niches <input type="text" id="cniche" value="${esc((ch.niches || []).join(", "))}"></div>
-      <div class="row" style="margin-top:8px"><label class="ck"><input type="checkbox" id="cjump" ${ch.jump_cuts ? "checked" : ""}> Jump cuts (remove dead air)</label>
-      <label class="ck"><input type="checkbox" id="czoom" ${ch.zooms ? "checked" : ""}> Subtle zooms</label><label class="ck"><input type="checkbox" id="chook" ${ch.hook_overlay ? "checked" : ""}> Opening title text</label>
-      <label class="ck"><input type="checkbox" id="cnoise" ${ch.noise_reduction ? "checked" : ""}> Noise reduction</label></div>
-      <div class="row" style="margin-top:8px">Brand colour <input type="color" id="cbrand" value="${esc(ch.brand.color)}"> Highlight <input type="color" id="chl" value="${esc(ch.brand.highlight)}">
-      Licensed music folder <input type="text" id="cmusic" value="${esc(ch.music_folder || "")}" placeholder="empty = no music"></div>
-      <div class="row" style="margin-top:10px"><button class="btn good" id="savesettings">Save</button></div>`;
-    $("sources").innerHTML = S.sources.filter(s => s.enabled).map(s => `<div class="row" style="margin:4px 0"><span>${esc(words(s.kind))}: <b>${esc(s.label || s.value)}</b> <span class="muted">${s.authorized ? esc(s.auth_basis) : "needs your OK per video"}</span></span>
-      <button class="btn" data-rmsrc="${s.id}">Remove</button></div>`).join("") || `<div class="muted">No sources yet. Your Twitch channel is added automatically once stream mode knows it.</div>`;
+    const tri = (id, v) => `<select id="${id}"><option value="auto" ${v === "auto" ? "selected" : ""}>Auto</option><option value="on" ${v === true ? "selected" : ""}>On</option><option value="off" ${v === false ? "selected" : ""}>Off</option></select>`;
+    const sw = (id, title, desc, on) => `<label class="switch"><div><div class="t">${title}</div>${desc ? `<div class="d">${desc}</div>` : ""}</div><input type="checkbox" id="${id}" ${on ? "checked" : ""}></label>`;
+    const perm = [["upload_private","Upload approved clips to YouTube","As private (or unlisted)"],["schedule_public","Schedule approved clips to go public",""],["publish_public","Publish approved clips publicly","Off unless you switch it on"],
+      ["require_approval","Clips wait for my approval","Before any upload"],["discover","Look for new videos from my sources",""],["auto_process","Start clipping new source videos automatically",""],
+      ["process","Process authorized videos",""],["render","Make clips",""],["save","Keep finished clips",""],["delete_files","Delete downloaded videos after a few days","Saves disk space"]];
+    return `<div class="pagehead"><div><h1>Settings</h1><p class="sub">How clips are found, edited and posted.</p></div><button class="btn primary" id="savesettings">Save changes</button></div>
+      <div class="card"><div class="head"><h2>YouTube</h2></div>${yt.connected ? `<div>Connected to <b>${esc(yt.title || "your channel")}</b>. API quota used today: ${yt.quota_used} of ${yt.quota}.</div>`
+        : `<div class="banner info" style="margin:0">YouTube isn't connected. Double-click <b>Connect YouTube</b> in Jarvis's folder${yt.client ? "" : " (it walks you through the one-time Google setup)"}. Until then, clips are saved here and nothing is uploaded.</div>`}</div>
+      <div class="grid2" style="margin-top:16px">
+        <div class="card" style="margin:0"><div class="head"><h2>Finding clips</h2></div><div class="fields">
+          <label class="f">Clip length<select id="slen">${[["auto","Auto (let the moment decide)"],["15_30","15–30 seconds"],["30_45","30–45 seconds"],["45_60","45–60 seconds"],["60_90","60–90 seconds"],["custom","Custom"]].map(([k, l]) => `<option value="${k}" ${ch.length_mode === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+          <label class="f">Custom shortest (s)<input type="number" id="cmin" value="${ch.clip_min}" min="5" max="170"></label>
+          <label class="f">Custom longest (s)<input type="number" id="cmax" value="${ch.clip_max}" min="10" max="180"></label>
+          <label class="f">Clips per video<input type="number" id="cper" value="${ch.max_clips_per_video}" min="1" max="30"></label>
+          <label class="f">Minimum score (0–100)<input type="number" id="cminscore" value="${Math.round(ch.min_score <= 10 ? ch.min_score * 10 : ch.min_score)}" min="0" max="100"></label>
+          <label class="f">Niches<input type="text" id="cniche" value="${esc((ch.niches || []).join(", "))}"></label></div></div>
+        <div class="card" style="margin:0"><div class="head"><h2>Look</h2></div><div class="fields">
+          <label class="f">Caption style<select id="cstyle"><option value="auto">Auto (by content)</option>${S.styles.map(s => `<option value="${s.id}" ${ch.caption_style === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
+          <label class="f">Layout<select id="clayout">${[["auto","Auto"],["track","Follow the speaker"],["podcast","Speaker close-up"],["split","Two people, stacked"],["stack","Facecam + gameplay"],["gameplay","Follow the action"],["fit","Whole picture"],["full","Centre crop"]].map(([k, l]) => `<option value="${k}" ${ch.layout === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+          <label class="f">Brand colour<input type="color" id="cbrand" value="${esc(ch.brand.color)}"></label><label class="f">Highlight colour<input type="color" id="chl" value="${esc(ch.brand.highlight)}"></label></div>
+          <div class="sep"></div>${sw("chook", "Opening text", "A short, accurate line over the first seconds", ch.hook_overlay)}</div>
+      </div>
+      <div class="grid2" style="margin-top:16px">
+        <div class="card" style="margin:0"><div class="head"><h2>Editing</h2></div>
+          ${sw("cjump", "Remove dead air", "Jump cuts on long pauses", ch.jump_cuts)}${sw("cfill", "Remove “um” and “uh”", "From the sound and the captions", ch.remove_fillers)}
+          ${sw("czoom", "Subtle zooms", "A gentle settle and alternating framing on cuts", ch.zooms)}${sw("cpunch", "Punch-ins", "On emphasised words and big reactions", ch.punch_ins)}
+          ${sw("ctrans", "Smooth speaker changes", "A short push instead of a hard jump", ch.transitions)}${sw("csfx", "Sound effects", "Soft whoosh and pop, made by the clipper", ch.sound_effects)}
+          <div class="fields" style="margin-top:12px"><label class="f">Noise reduction${tri("cnoise", ch.noise_reduction)}</label><label class="f">Colour correction${tri("ccolor", ch.color_correction)}</label><label class="f">Sharpening${tri("csharp", ch.sharpen)}</label></div>
+          <div class="fields" style="margin-top:12px"><label class="f">Licensed music folder<input type="text" id="cmusic" value="${esc(ch.music_folder || "")}" placeholder="Empty = no music"></label>
+            <label class="f">Music level (ducks under speech)<input type="range" id="cmvol" min="0" max="0.3" step="0.01" value="${ch.music_volume}"></label></div></div>
+        <div class="card" style="margin:0"><div class="head"><h2>Publishing</h2></div>${perm.map(([k, t, d2]) => sw("perm_" + k, t, d2, p[k])).join("")}
+          <div class="fields" style="margin-top:12px"><label class="f">Upload as<select id="privacy">${["private","unlisted","scheduled","public"].map(x => `<option ${ch.privacy === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
+            <label class="f">Posting times<input type="text" id="ctimes" value="${esc((ch.publish_times || []).join(", "))}"></label><label class="f">Max uploads a day<input type="number" id="cday" value="${ch.max_uploads_per_day}" min="1" max="20"></label></div>
+          <p class="small faint">Public and scheduled uploads also need their switches on.</p></div>
+      </div>
+      <div class="card" style="margin-top:16px"><div class="head"><h2>Approved sources</h2></div>
+        ${S.sources.filter(s => s.enabled).map(s => `<div class="between" style="padding:8px 0;border-bottom:1px solid var(--line)"><div><b>${esc(s.label || s.value)}</b> <span class="small muted">${esc(words(s.kind))} · ${s.authorized ? esc(s.auth_basis) : "needs your OK per video"}</span></div><button class="btn sm ghost" data-rmsrc="${s.id}">Remove</button></div>`).join("") || `<div class="muted">No sources yet. Your Twitch channel is added automatically once stream mode knows it.</div>`}
+        <div class="inputrow" style="margin-top:12px"><select id="srckind"><option value="twitch_channel">Twitch channel</option><option value="youtube_channel">YouTube channel</option><option value="youtube_search">Niche search (Creative Commons only)</option><option value="folder">Folder of my videos</option></select>
+          <input type="text" id="srcval" placeholder="channel name, @handle, search words or folder path"><label class="row small muted"><input type="checkbox" id="srcok">I own it or have permission</label><button class="btn" id="srcadd">${icon("plus")}Add</button></div></div>`;
   }
 
-  document.addEventListener("click", async (e) => {
-    const t = e.target.closest("button, [data-tab]"); if (!t) return;
-    if (t.parentElement && t.parentElement.id === "tabs") { tab = t.dataset.tab; location.hash = tab; render(); return; }
+  // ---------- editor ----------
+  async function openEditor(id) {
+    $("main").innerHTML = `<div class="muted">Loading the editor…</div>`;
+    let c;
+    try { c = await (await fetch("/clipper/clip/" + id, { cache: "no-store" })).json(); } catch (e) { $("main").innerHTML = `<div class="banner bad">Couldn't load that clip.</div>`; return; }
+    if (c.error) { $("main").innerHTML = `<div class="banner bad">${esc(c.error)}</div>`; return; }
+    const ex = c.extra || {}, ed = ex.edits || {};
+    editor = { id, c, tab: editor && editor.id === id ? editor.tab : "trim", start: c.start, end: c.end, words: Object.assign({}, ed.words || {}),
+      style: ed.caption_style || c.caption_style || "bold", cap: Object.assign({}, ed.caption || {}), layout: ed.layout || "auto",
+      crop: Object.assign({ x: c.x != null ? c.x : 0.5, zoom: (c.plan || {}).zoom || 1 }, ed.crop || {}), manual: !!(ed.crop && ed.crop.x != null),
+      fx: Object.assign({}, ed), hook: ed.hook_text != null ? ed.hook_text : (ex.hook_text || ""), version: c.version };
+    drawEditor();
+  }
+  function edField(k, def) { return editor.fx[k] != null ? editor.fx[k] : def; }
+  function drawEditor() {
+    const e = editor, c = e.c, ch = S.channel, ex = c.extra || {};
+    const tabs = [["trim","Trim"],["captions","Captions"],["framing","Framing"],["audio","Audio"],["effects","Effects"],["details","Details"],["export","Export"]];
+    const st = S.styles.find(s => s.id === e.style) || S.styles[0];
+    const capv = (k) => e.cap[k] != null ? e.cap[k] : st[k];
+    let body = "";
+    if (e.tab === "trim") {
+      body = `<div class="between"><div><div style="font-weight:600">Start ${fmtp(e.start)} · End ${fmtp(e.end)} · <span style="color:#cfc3ff">${fmtp(e.end - e.start)}</span></div>
+        <div class="small muted">Drag the handles. Edges snap to the nearest word so nothing gets cut off mid-word.</div></div>
+        <div class="row"><button class="btn sm" data-nudge="start:-0.5">Start −0.5s</button><button class="btn sm" data-nudge="start:0.5">Start +0.5s</button><button class="btn sm" data-nudge="end:-0.5">End −0.5s</button><button class="btn sm" data-nudge="end:0.5">End +0.5s</button><button class="btn sm ghost" id="trimreset">Reset</button></div></div>
+        <div class="timeline" id="tl"></div><div class="row small faint" style="justify-content:space-between;margin-top:4px"><span>${fmt(c.window[0])}</span><span>${fmt(c.window[1])}</span></div>
+        <h3 style="margin:16px 0 8px">Transcript around the clip</h3><div class="small muted" style="margin-bottom:8px">Click a word to start the clip there, Shift+click to end it there.</div><div class="words" id="trimwords"></div>`;
+    } else if (e.tab === "captions") {
+      body = `<div class="fields"><label class="f">Style<select id="e_style">${S.styles.map(s => `<option value="${s.id}" ${e.style === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
+          <label class="f">Font<select id="e_font">${S.fonts.map(f => `<option ${capv("font") === f ? "selected" : ""}>${f}</option>`).join("")}</select></label>
+          <label class="f">Size<input type="number" id="e_size" min="44" max="180" value="${capv("size")}"></label>
+          <label class="f">Words per line<input type="number" id="e_wpl" min="1" max="6" value="${capv("words_per_line")}"></label>
+          <label class="f">Text colour<input type="color" id="e_color" value="${/^#[0-9a-f]{6}$/i.test(capv("color")) ? capv("color") : "#ffffff"}"></label>
+          <label class="f">Highlight colour<input type="color" id="e_active" value="${/^#[0-9a-f]{6}$/i.test(e.cap.active || "") ? e.cap.active : (ch.brand.highlight || "#facc15")}"></label>
+          <label class="f">Outline<input type="range" id="e_stroke" min="0" max="16" value="${capv("stroke")}"></label>
+          <label class="f">Shadow<input type="range" id="e_shadow" min="0" max="1" step="0.05" value="${capv("shadow")}"></label>
+          <label class="f">Position<select id="e_pos">${[["","Style default"],["top","Top"],["middle","Middle"],["lower","Lower third"],["bottom","Bottom"]].map(([k, l]) => `<option value="${k}" ${(e.cap.position || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+          <label class="f">Animation<select id="e_anim">${S.animations.map(a => `<option ${capv("animation") === a ? "selected" : ""}>${a}</option>`).join("")}</select></label></div>
+        <h3 style="margin:18px 0 8px">Fix caption words</h3><div class="small muted" style="margin-bottom:8px">Click a word to correct its spelling or hide it. Only the captions change; nothing is reworded.</div><div class="words" id="capwords"></div>`;
+    } else if (e.tab === "framing") {
+      body = `<div class="fields"><label class="f">Layout<select id="e_layout">${[["auto","Auto"],["track","Follow the speaker"],["podcast","Speaker close-up"],["split","Two people, stacked"],["stack","Facecam + gameplay"],["gameplay","Follow the action"],["fit","Whole picture"],["full","Centre crop"]].map(([k, l]) => `<option value="${k}" ${e.layout === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+        <div class="small muted" style="margin:8px 0">Now: ${esc((c.plan || {}).reason || "")}</div>
+        <label class="switch"><div><div class="t">Frame it by hand</div><div class="d">Fix the crop where you put it instead of following people</div></div><input type="checkbox" id="e_manual" ${e.manual ? "checked" : ""}></label>
+        <div class="${e.manual ? "" : "hide"}" id="manualbox"><div class="framebox" id="fbox">${c.has_source ? `<img alt="Source frame" src="/clipper/frame/${c.id}.jpg?t=${(c.start + 1).toFixed(1)}">` : `<div class="empty small">The source video has been cleaned up, so there's no preview. Positioning still works.</div>`}<div class="win" id="fwin"></div></div>
+          <div class="fields" style="margin-top:10px"><label class="f">Left ↔ right<input type="range" id="e_cx" min="0" max="1" step="0.005" value="${e.crop.x}"></label><label class="f">Zoom<input type="range" id="e_zoom" min="1" max="2" step="0.05" value="${e.crop.zoom || 1}"></label></div></div>`;
+    } else if (e.tab === "audio") {
+      const tri = (k, v) => `<select id="e_${k}"><option value="auto" ${v === "auto" ? "selected" : ""}>Auto</option><option value="on" ${v === true ? "selected" : ""}>On</option><option value="off" ${v === false ? "selected" : ""}>Off</option></select>`;
+      body = `${swE("jump_cuts", "Remove dead air", edField("jump_cuts", ch.jump_cuts))}${swE("remove_fillers", "Remove “um” and “uh”", edField("remove_fillers", ch.remove_fillers))}
+        <div class="fields" style="margin-top:12px"><label class="f">Noise reduction${tri("noise_reduction", edField("noise_reduction", ch.noise_reduction))}</label></div>
+        ${ch.music_folder ? `${swE("music", "Background music", edField("music", true))}<label class="f" style="margin-top:10px">Music level (ducks under speech)<input type="range" id="e_music_volume" min="0" max="0.3" step="0.01" value="${edField("music_volume", ch.music_volume)}"></label>` : `<p class="small muted">Add a folder of licensed music in Settings to use background music.</p>`}
+        ${swE("sound_effects", "Sound effects", edField("sound_effects", ch.sound_effects))}
+        <p class="small faint">Speech is always normalised to YouTube's loudness and kept clear of clipping.</p>`;
+    } else if (e.tab === "effects") {
+      const tri = (k, v) => `<select id="e_${k}"><option value="auto" ${v === "auto" ? "selected" : ""}>Auto</option><option value="on" ${v === true ? "selected" : ""}>On</option><option value="off" ${v === false ? "selected" : ""}>Off</option></select>`;
+      body = `${swE("zooms", "Subtle zooms", edField("zooms", ch.zooms))}${swE("punch_ins", "Punch-ins on big moments", edField("punch_ins", ch.punch_ins))}${swE("hook_overlay", "Opening text", edField("hook_overlay", ch.hook_overlay))}
+        <label class="f" style="margin-top:10px">Opening text (2–6 words, must match the clip)<input type="text" id="e_hook" maxlength="40" value="${esc(e.hook)}"></label>
+        ${(ex.hook_texts || []).length ? `<div class="row" style="margin-top:6px">${ex.hook_texts.map(h => `<button class="chip" data-usehook="${esc(h)}" style="cursor:pointer">${esc(h)}</button>`).join("")}</div>` : ""}
+        <div class="fields" style="margin-top:12px"><label class="f">Colour correction${tri("color_correction", edField("color_correction", ch.color_correction))}</label><label class="f">Sharpening${tri("sharpen", edField("sharpen", ch.sharpen))}</label></div>
+        ${(ex.enhancements || []).length ? `<p class="small muted" style="margin-top:12px">Last render used: ${ex.enhancements.map(esc).join(", ")}.</p>` : ""}`;
+    } else if (e.tab === "details") {
+      body = `<label class="f">Title<input type="text" id="e_title" maxlength="100" value="${esc(c.title)}"></label>
+        ${(c.titles || []).length > 1 ? `<div class="row" style="margin-top:6px">${c.titles.map(t => `<button class="chip" data-usetitle2="${esc(t)}" style="cursor:pointer;height:auto;padding:4px 9px;white-space:normal;text-align:left">${esc(t)}</button>`).join("")}</div>` : ""}
+        <label class="f" style="margin-top:12px">Description<textarea id="e_desc" style="min-height:120px">${esc(c.description)}</textarea></label>
+        ${(ex.descriptions || []).length > 1 ? `<details style="margin-top:8px"><summary class="small">Other descriptions</summary>${ex.descriptions.map(dd => `<div class="row" style="margin-top:6px;align-items:flex-start"><div class="small muted" style="flex:1;white-space:pre-wrap">${esc(dd.split("\n\n")[0])}</div><button class="btn sm" data-usedesc2="${esc(dd)}">Use</button></div>`).join("")}</details>` : ""}
+        <label class="f" style="margin-top:12px">Pinned comment<input type="text" id="e_pin" maxlength="500" value="${esc(c.pinned_comment || "")}"></label>
+        ${(ex.pinned_ideas || []).length > 1 ? `<div class="small muted" style="margin-top:6px">Ideas: ${ex.pinned_ideas.map(esc).join(" · ")}</div>` : ""}
+        <div class="row small muted" style="margin-top:12px">Hashtags: ${(c.hashtags || []).map(esc).join(" ") || "none"}</div><div class="row small faint">Keywords: ${(c.tags || []).map(esc).join(", ")}</div>
+        <div class="row" style="margin-top:14px"><button class="btn" id="savemeta">Save details</button></div>`;
+    } else if (e.tab === "export") {
+      body = `<p class="muted">The clip is 1080×1920 (9:16), H.264 video with AAC sound, ${esc((ex.render || {}).fps || 30)} fps, loudness-matched for YouTube.</p>
+        <div class="row">${c.has_file ? `<a class="btn primary" href="/clipper/media/${c.id}.mp4?download=1">${icon("download")}Download MP4</a><button class="btn" id="exportone">${icon("folder")}Copy to export folder</button>` : `<span class="muted">There's no finished file yet.</span>`}
+          ${c.state === "approved" || c.state === "ready" || c.state === "upload_failed" ? `<button class="btn good" data-clip="${c.id}" data-do="upload">${icon("yt")}Upload to YouTube</button>` : ""}</div>
+        <p class="small faint">Export folder: ${esc(S.export_dir)}</p>`;
+    }
+    const st2 = STATE[c.state] || [words(c.state), ""];
+    $("main").innerHTML = `<div class="pagehead"><div><a class="small muted" href="#project/${c.job_id}" style="text-decoration:none">${icon("back")} Project</a><h1 style="margin-top:6px">${esc(c.title)}</h1>
+        <p class="sub row">${chip(st2)} <span>${Math.round(c.duration)}s · version ${c.version || 1} · ${esc(words(c.layout || ""))} · ${esc(words(c.caption_style || ""))} captions</span></p></div>
+        <div class="row"><span class="small muted" id="edstatus"></span><button class="btn primary" id="rerender">${icon("refresh")}Re-render with changes</button></div></div>
+      <div class="editor"><div class="player">${c.has_file ? `<video id="pv" controls playsinline poster="/clipper/thumb/${c.id}.jpg?v=${c.version}" src="/clipper/media/${c.id}.mp4?v=${c.version}"></video>` : `<div class="card empty">No file yet.</div>`}
+          <div class="row" style="margin-top:10px">${ring(c.score, "score")}<div class="small muted" style="flex:1">${esc(c.reason || "")}</div></div></div>
+        <div class="card" style="margin:0"><div class="tabs">${tabs.map(([k, l]) => `<button data-etab="${k}" class="${e.tab === k ? "on" : ""}">${l}</button>`).join("")}</div><div id="ebody">${body}</div></div></div>`;
+    if (e.tab === "trim") drawTimeline();
+    if (e.tab === "captions") drawCapWords();
+    if (e.tab === "framing") drawWin();
+  }
+  function swE(k, title, on) { return `<label class="switch"><div class="t">${title}</div><input type="checkbox" data-efx="${k}" ${on ? "checked" : ""}></label>`; }
+  function snapStart(t) { const ws = editor.c.words; let best = null; for (const w of ws) { if (best == null || Math.abs(w.s - t) < Math.abs(best.s - t)) best = w; } return best ? Math.max(0, best.s - 0.1) : t; }
+  function snapEnd(t) { const ws = editor.c.words; let best = null; for (const w of ws) { if (best == null || Math.abs(w.e - t) < Math.abs(best.e - t)) best = w; } return best ? best.e + 0.2 : t; }
+  function drawTimeline() {
+    const e = editor, [a, b] = e.c.window, tl = $("tl"); if (!tl) return;
+    const pos = (t) => ((t - a) / (b - a) * 100).toFixed(3) + "%";
+    tl.innerHTML = e.c.words.map(w => `<span class="w" style="left:${pos(w.s)};height:${10 + Math.min(18, (w.e - w.s) * 40)}px"></span>`).join("") +
+      `<div class="selr" style="left:${pos(e.start)};width:calc(${pos(e.end)} - ${pos(e.start)})"></div><div class="h" data-h="start" style="left:${pos(e.start)}"></div><div class="h" data-h="end" style="left:${pos(e.end)}"></div>`;
+    const tw = $("trimwords");
+    if (tw) tw.innerHTML = e.c.words.map((w, i) => `<span data-wi="${i}" class="${w.s >= e.start - 0.05 && w.s <= e.end ? "in" : ""}">${esc(w.w)}</span>`).join("");
+    const head = document.querySelector("#ebody > .between > div > div");
+    if (head) head.innerHTML = `Start ${fmtp(e.start)} · End ${fmtp(e.end)} · <span style="color:#cfc3ff">${fmtp(e.end - e.start)}</span>`;
+  }
+  function drawCapWords() {
+    const e = editor, el = $("capwords"); if (!el) return;
+    el.innerHTML = e.c.words.filter(w => w.s >= e.start - 0.05 && w.s <= e.end).map(w => { const k = w.s.toFixed(3), v = e.words[k];
+      return `<span data-cw="${k}" class="${v != null ? (String(v).trim() ? "edited" : "hidden") : ""}" title="${v != null ? "was: " + esc(w.w) : ""}">${esc(v != null && String(v).trim() ? v : w.w)}</span>`; }).join("");
+  }
+  function drawWin() {
+    const e = editor, win = $("fwin"); if (!win) return;
+    const cw = Math.min(1, (9 / 16) / (16 / 9) / (e.crop.zoom || 1)), x = Math.min(1 - cw / 2, Math.max(cw / 2, e.crop.x));
+    win.style.left = ((x - cw / 2) * 100) + "%"; win.style.width = (cw * 100) + "%";
+    const zh = 1 / (e.crop.zoom || 1); win.style.top = ((1 - zh) / 2 * 100) + "%"; win.style.bottom = ((1 - zh) / 2 * 100) + "%";
+  }
+  function collectEdits() {
+    const e = editor, out = {}, c = e.c;
+    if (Math.abs(e.start - c.start) > 0.02 || Math.abs(e.end - c.end) > 0.02) { out.start = e.start; out.end = e.end; }
+    if (e.style !== c.caption_style || Object.keys(e.cap).length) { out.caption_style = e.style; if (Object.keys(e.cap).length) out.caption = e.cap; }
+    if (Object.keys(e.words).length) out.words = e.words;
+    if (e.layout !== "auto") out.layout = e.layout;
+    if (e.manual) out.crop = { x: e.crop.x, zoom: e.crop.zoom || 1 }; else if (e.crop.zoom && e.crop.zoom !== 1 && e.layout !== "auto") out.crop = { zoom: e.crop.zoom };
+    for (const k of ["jump_cuts","remove_fillers","zooms","punch_ins","sound_effects","hook_overlay","music","music_volume","noise_reduction","color_correction","sharpen"]) if (e.fx[k] != null) out[k] = e.fx[k];
+    if (e.hook !== ((c.extra || {}).hook_text || "")) out.hook_text = e.hook;
+    return out;
+  }
+
+  // ---------- events ----------
+  function afterRender() {
+    const u = $("addurl");
+    if (u) { u.addEventListener("input", () => { clearTimeout(u.h); u.h = setTimeout(checkLink, 350); }); u.addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("addbtn").click(); }); }
+    const drop = $("drop");
+    if (drop) {
+      ["dragenter","dragover"].forEach(t => drop.addEventListener(t, (ev) => { ev.preventDefault(); drop.classList.add("over"); }));
+      ["dragleave","drop"].forEach(t => drop.addEventListener(t, (ev) => { ev.preventDefault(); drop.classList.remove("over"); }));
+      drop.addEventListener("drop", (ev) => { const f = ev.dataTransfer.files[0]; if (f) uploadFile(f); });
+      $("file").addEventListener("change", (ev) => { const f = ev.target.files[0]; if (f) uploadFile(f); });
+    }
+  }
+  async function checkLink() {
+    const u = $("addurl"), v = $("valid"), p = $("linkprev"); if (!u) return;
+    const val = u.value.trim(); if (!val) { v.textContent = ""; p.innerHTML = ""; return; }
+    const r = await act({ action: "check", url: val }, true);
+    if (!$("valid")) return;
+    v.className = "valid " + (r.ok ? "ok" : "no"); v.textContent = r.message || "";
+    p.innerHTML = r.ok && r.thumb ? `<div class="preview"><img alt="" src="${esc(r.thumb)}"><div class="small muted">${esc(r.url)}</div></div>` : "";
+  }
+  const VIDEO_EXT = /\.(mp4|mov|mkv|webm|m4v|avi|flv|ts|mts)$/i;
+  function uploadFile(f) {
+    const box = $("upl");
+    if (!VIDEO_EXT.test(f.name)) { toast(`"${f.name}" isn't a video file I can use.`); return; }
+    const url = URL.createObjectURL(f);
+    box.innerHTML = `<div class="preview"><video src="${url}" muted playsinline preload="metadata"></video><div style="flex:1;min-width:0"><div style="font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</div>
+      <div class="small muted" id="uplmsg">Uploading ${(f.size / 1048576).toFixed(0)} MB to Jarvis…</div><div class="progressbar"><i id="uplbar" style="width:0%"></i></div></div></div>`;
+    const x = new XMLHttpRequest();
+    x.open("POST", "/clipper/upload"); x.setRequestHeader("X-Jarvis-Token", token); x.setRequestHeader("X-File-Name", encodeURIComponent(f.name));
+    const cnt = $("addcount") && $("addcount").value, len = $("addlen") && $("addlen").value;
+    if (cnt) x.setRequestHeader("X-Clip-Count", cnt); if (len) x.setRequestHeader("X-Clip-Length", len);
+    x.upload.onprogress = (ev) => { if (ev.lengthComputable && $("uplbar")) $("uplbar").style.width = (ev.loaded / ev.total * 100).toFixed(1) + "%"; };
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (e) { j = { message: "Upload failed (" + x.status + ")" }; }
+      if ($("uplmsg")) $("uplmsg").textContent = j.message || ""; toast(j.message || "Done."); load(); if (j.job) location.hash = "#project/" + j.job; };
+    x.onerror = () => { if ($("uplmsg")) $("uplmsg").textContent = "The upload failed. Is Jarvis running?"; };
+    x.send(f);
+  }
+
+  document.addEventListener("click", async (ev) => {
+    const t = ev.target.closest("button, [data-cw], [data-wi], [data-etab]"); if (!t) return;
+    if (t.dataset.etab) { editor.tab = t.dataset.etab; drawEditor(); return; }
+    if (t.dataset.wi != null && editor) { const w = editor.c.words[+t.dataset.wi]; if (ev.shiftKey) { editor.end = Math.max(editor.start + 3, w.e + 0.2); } else { editor.start = Math.min(editor.end - 3, Math.max(0, w.s - 0.1)); } drawTimeline(); return; }
+    if (t.dataset.cw != null && editor) { const w = editor.c.words.find(x => x.s.toFixed(3) === t.dataset.cw); const cur = editor.words[t.dataset.cw];
+      const v = window.prompt(`Caption for "${w.w}" (leave empty to hide the word):`, cur != null ? cur : w.w); if (v == null) return;
+      if (v.trim() === w.w) delete editor.words[t.dataset.cw]; else editor.words[t.dataset.cw] = v.trim(); drawCapWords(); return; }
     if (t.dataset.act) {
-      if (t.dataset.act === "stop" && !(await confirmBox("Stop all clipping and uploads now? Running jobs stop safely and resume later."))) return;
+      if (t.dataset.act === "stop" && !(await confirmBox("Stop all clipping and uploads now? Running jobs stop safely and resume later.", "Emergency stop"))) return;
       return act({ action: t.dataset.act });
     }
     if (t.dataset.do) {
       const id = +t.dataset.clip;
       if (t.dataset.do === "approve") { const ti = document.querySelector(`[data-title="${id}"]`), de = document.querySelector(`[data-desc="${id}"]`);
         return act({ action: "approve", clip: id, title: ti && ti.value, description: de && de.value }); }
-      if (t.dataset.do === "upload" && !(await confirmBox(`Upload clip ${id} to YouTube (${S.channel.privacy})?`))) return;
+      if (t.dataset.do === "delete" && !(await confirmBox(`Delete clip ${id}? Its video file is removed from this computer.`, "Delete clip"))) return;
+      if (t.dataset.do === "upload" && !(await confirmBox(`Upload clip ${id} to YouTube (${S.channel.privacy})?`, "Upload"))) return;
+      if (t.dataset.do === "reject") { const r = await act({ action: "reject", clip: id }); return r; }
       return act({ action: t.dataset.do, clip: id });
     }
-    if (t.dataset.grant) { if (await confirmBox(`Confirm you own "${t.dataset.name}" or have the creator's permission to clip and re-post it?`)) act({ action: "grant", video: +t.dataset.grant }); return; }
+    if (t.dataset.usetitle) { const i = document.querySelector(`[data-title="${t.dataset.usetitle}"]`); if (i) i.value = t.dataset.text; return; }
+    if (t.dataset.usedesc) { const i = document.querySelector(`[data-desc="${t.dataset.usedesc}"]`); if (i) i.value = t.dataset.text; return; }
+    if (t.dataset.usetitle2) { $("e_title").value = t.dataset.usetitle2; return; }
+    if (t.dataset.usedesc2) { $("e_desc").value = t.dataset.usedesc2; return; }
+    if (t.dataset.usehook) { editor.hook = t.dataset.usehook; $("e_hook").value = editor.hook; return; }
+    if (t.dataset.nudge) { const [k, d] = t.dataset.nudge.split(":"); editor[k] = Math.round((editor[k] + +d) * 100) / 100; if (editor.end - editor.start < 3) editor[k] -= +d; drawTimeline(); return; }
+    if (t.id === "trimreset") { editor.start = editor.c.start; editor.end = editor.c.end; drawTimeline(); return; }
+    if (t.dataset.grant) { if (await confirmBox(`Confirm you own "${t.dataset.name}" or have the creator's permission to clip and re-post it?`, "Permission")) act({ action: "grant", video: +t.dataset.grant }); return; }
     if (t.dataset.cancel) return act({ action: "cancel", job: +t.dataset.cancel });
     if (t.dataset.retry) return act({ action: "retry", job: +t.dataset.retry });
     if (t.dataset.rmsrc) return act({ action: "remove_source", id: +t.dataset.rmsrc });
-    if (t.id === "addbtn") { const u = $("addurl").value.trim(); if (!u) return toast("Paste a link or file path first.");
-      const r = await act({ action: "add", url: u, count: +$("addcount").value || null }); if (r && r.ok) $("addurl").value = ""; return; }
+    if (t.dataset.filter != null) { filter.state = t.dataset.filter; render(true); return; }
+    if (t.id === "addbtn") { const u = $("addurl").value.trim(); if (!u) return toast("Paste a link or file path first, or drop a file below.");
+      const r = await act({ action: "add", url: u, count: +$("addcount").value || null, length: $("addlen").value });
+      if (r && r.ok) { $("addurl").value = ""; if (r.job) location.hash = "#project/" + r.job; } return; }
+    if (t.id === "makesel") { const ranks = [...selected].filter(x => typeof x === "number"); if (!ranks.length) return; const r = await act({ action: "pick", job: route.id, ranks }); selected.clear(); return r; }
+    if (t.id === "selall") { document.querySelectorAll("[data-selclip]").forEach(x => selected.add("c" + x.dataset.selclip)); render(true); return; }
+    if (t.id === "bclear") { selected.clear(); render(true); return; }
+    const ids = [...selected].filter(x => String(x).startsWith("c")).map(x => +String(x).slice(1));
+    if (t.id === "bexport") return act({ action: "export", clips: ids });
+    if (t.id === "bapprove") { await act({ action: "approve_many", clips: ids }); selected.clear(); return; }
+    if (t.id === "bdelete") { if (!(await confirmBox(`Delete ${ids.length} clip${ids.length === 1 ? "" : "s"}? Their files are removed from this computer.`, "Delete clips"))) return; await act({ action: "delete_many", clips: ids }); selected.clear(); return; }
+    if (t.id === "approveall") { if (!(await confirmBox("Approve every clip waiting for review?", "Approve all"))) return; return act({ action: "approve_many", clips: S.clips.filter(c => c.state === "awaiting_approval").map(c => c.id) }); }
+    if (t.id === "exportone") return act({ action: "export", clips: [editor.id] });
+    if (t.id === "savemeta") return act({ action: "save_meta", clip: editor.id, title: $("e_title").value, description: $("e_desc").value, pinned_comment: $("e_pin").value });
+    if (t.id === "rerender") { const edits = collectEdits(); if (!Object.keys(edits).length) return toast("Change something first, then re-render.");
+      const r = await act({ action: "rerender", clip: editor.id, edits }); if (r && r.ok) { $("edstatus").textContent = "Re-rendering… the new version appears here when it's done."; watchRerender(); } return; }
     if (t.id === "srcadd") { const v = $("srcval").value.trim(); if (!v) return; return act({ action: "add_source", kind: $("srckind").value, value: v, authorized: $("srcok").checked }); }
-    if (t.id === "savesettings") {
-      const perms = {}; document.querySelectorAll("[data-perm]").forEach(x => perms[x.dataset.perm] = x.checked);
-      const old = S.channel.permissions;
-      if ((perms.publish_public && !old.publish_public) || (perms.schedule_public && !old.schedule_public)) {
-        if (!(await confirmBox("Turn on public publishing? Approved clips will go public on YouTube without asking again. (Google keeps uploads from unaudited apps private until you pass its free API audit.)"))) return; }
-      const list = (s) => s.split(",").map(x => x.trim()).filter(Boolean);
-      act({ action: "settings", changes: { permissions: perms, privacy: $("privacy").value, caption_style: $("cstyle").value, clip_min: +$("cmin").value, clip_max: +$("cmax").value,
-        clip_hard_max: Math.max(+$("cmax").value, S.channel.clip_hard_max), max_clips_per_video: +$("cper").value, publish_times: list($("ctimes").value), max_uploads_per_day: +$("cday").value,
-        niches: list($("cniche").value), jump_cuts: $("cjump").checked, zooms: $("czoom").checked, hook_overlay: $("chook").checked, noise_reduction: $("cnoise").checked,
-        brand: { color: $("cbrand").value, highlight: $("chl").value }, music_folder: $("cmusic").value.trim() } });
-      settingsDrawn = false;
-    }
+    if (t.id === "savesettings") return saveSettings();
   });
-  document.addEventListener("change", (e) => {
-    if (e.target.dataset && e.target.dataset.titles && e.target.value) { const i = document.querySelector(`[data-title="${e.target.dataset.titles}"]`); if (i) i.value = e.target.value; }
-    if (e.target.id === "libfilter") render();
+  document.addEventListener("change", (ev) => {
+    const t = ev.target;
+    if (t.id === "msort") { msort = t.value; render(true); return; }
+    if (t.id === "csort") { filter.sort = t.value; render(true); return; }
+    if (t.dataset.pickrank) { const r = +t.dataset.pickrank; t.checked ? selected.add(r) : selected.delete(r); const b = $("makesel"); if (b) b.disabled = ![...selected].some(x => typeof x === "number"); return; }
+    if (t.dataset.selclip) { const k = "c" + t.dataset.selclip; t.checked ? selected.add(k) : selected.delete(k); render(true); return; }
+    if (!editor || route.view !== "edit") return;
+    const e = editor, num = (v) => +v;
+    const map = { e_style: () => { e.style = t.value; e.cap = {}; drawEditor(); }, e_font: () => e.cap.font = t.value, e_size: () => e.cap.size = num(t.value), e_wpl: () => e.cap.words_per_line = num(t.value),
+      e_color: () => e.cap.color = t.value, e_active: () => e.cap.active = t.value, e_stroke: () => e.cap.stroke = num(t.value), e_shadow: () => e.cap.shadow = num(t.value),
+      e_pos: () => { if (t.value) e.cap.position = t.value; else delete e.cap.position; }, e_anim: () => e.cap.animation = t.value, e_layout: () => e.layout = t.value,
+      e_manual: () => { e.manual = t.checked; $("manualbox").classList.toggle("hide", !t.checked); drawWin(); }, e_hook: () => e.hook = t.value,
+      e_music_volume: () => e.fx.music_volume = num(t.value), e_noise_reduction: () => e.fx.noise_reduction = tri(t.value), e_color_correction: () => e.fx.color_correction = tri(t.value), e_sharpen: () => e.fx.sharpen = tri(t.value) };
+    if (map[t.id]) map[t.id]();
+    if (t.dataset.efx) e.fx[t.dataset.efx] = t.checked;
   });
-  document.addEventListener("play", (e) => playing.add(e.target), true);
-  document.addEventListener("pause", (e) => playing.delete(e.target), true);
-  document.addEventListener("ended", (e) => playing.delete(e.target), true);
-  window.addEventListener("hashchange", () => { tab = (location.hash || "#overview").slice(1); if (S) render(); });
+  const tri = (v) => v === "on" ? true : v === "off" ? false : "auto";
+  document.addEventListener("input", (ev) => {
+    const t = ev.target; if (!editor) return;
+    if (t.id === "e_cx") { editor.crop.x = +t.value; drawWin(); }
+    if (t.id === "e_zoom") { editor.crop.zoom = +t.value; drawWin(); }
+  });
+  // timeline dragging (mouse and touch)
+  let drag = null;
+  document.addEventListener("pointerdown", (ev) => { const h = ev.target.closest(".timeline .h"); if (!h) return; drag = h.dataset.h; h.setPointerCapture(ev.pointerId); ev.preventDefault(); });
+  document.addEventListener("pointermove", (ev) => {
+    if (!drag || !editor) return; const tl = $("tl"); const r = tl.getBoundingClientRect(); const [a, b] = editor.c.window;
+    const t = a + Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * (b - a);
+    if (drag === "start") editor.start = Math.min(t, editor.end - 3); else editor.end = Math.max(t, editor.start + 3);
+    drawTimeline();
+  });
+  document.addEventListener("pointerup", () => { if (!drag || !editor) return; if (drag === "start") editor.start = Math.min(snapStart(editor.start), editor.end - 3); else editor.end = Math.max(snapEnd(editor.end), editor.start + 3); drag = null; drawTimeline(); });
 
-  let page = null;
+  async function watchRerender() {
+    const id = editor.id, v0 = editor.version;
+    let seenBusy = false;
+    for (let i = 0; i < 120; i++) {
+      await new Promise(r => setTimeout(r, 4000));
+      if (!editor || editor.id !== id || route.view !== "edit") return;
+      const c = await (await fetch("/clipper/clip/" + id, { cache: "no-store" })).json();
+      if ((c.version || 1) > v0) { toast("The new version is ready."); editor = null; return openEditor(id); }
+      const j = S && S.jobs.find(x => x.id === c.job_id);
+      if (j && j.state === "failed") { $("edstatus").textContent = "Re-render failed: " + (j.error || ""); return; }
+      const idle = !j || ["done","published","awaiting_approval","cancelled"].includes(j.state);
+      if (!idle) seenBusy = true;
+      if (idle && (seenBusy || i > 3)) { $("edstatus").textContent = "Those changes didn't make it through, so the previous version was kept. The Activity list on the dashboard says why."; return; }
+      if ($("edstatus") && j) $("edstatus").textContent = `Re-rendering… ${esc(j.detail || "")}`;
+    }
+  }
+
+  function saveSettings() {
+    const ch = S.channel, perms = {};
+    document.querySelectorAll("[id^=perm_]").forEach(x => perms[x.id.slice(5)] = x.checked);
+    const go = () => { const list = (s) => s.split(",").map(x => x.trim()).filter(Boolean);
+      act({ action: "settings", changes: { permissions: perms, privacy: $("privacy").value, caption_style: $("cstyle").value, layout: $("clayout").value, length_mode: $("slen").value,
+        clip_min: +$("cmin").value, clip_max: +$("cmax").value, clip_hard_max: Math.max(+$("cmax").value, ch.clip_hard_max), max_clips_per_video: +$("cper").value, min_score: +$("cminscore").value,
+        publish_times: list($("ctimes").value), max_uploads_per_day: +$("cday").value, niches: list($("cniche").value), jump_cuts: $("cjump").checked, remove_fillers: $("cfill").checked,
+        zooms: $("czoom").checked, punch_ins: $("cpunch").checked, transitions: $("ctrans").checked, sound_effects: $("csfx").checked, hook_overlay: $("chook").checked,
+        noise_reduction: tri($("cnoise").value), color_correction: tri($("ccolor").value), sharpen: tri($("csharp").value), music_folder: $("cmusic").value.trim(), music_volume: +$("cmvol").value,
+        brand: { color: $("cbrand").value, highlight: $("chl").value } } }); };
+    const old = ch.permissions;
+    if ((perms.publish_public && !old.publish_public) || (perms.schedule_public && !old.schedule_public)) {
+      confirmBox("Turn on public publishing? Approved clips will go public on YouTube without asking again. (Google keeps uploads from unaudited apps private until you pass its free API audit.)", "Public publishing").then(ok => ok && go());
+    } else go();
+  }
+
+  // ---------- data ----------
   async function load() {
     try {
-      const r = await fetch("/clipper/state", { cache: "no-store" }); S = await r.json();
-      if (S.error) { $("sub").textContent = "SHORTS AGENT · " + S.error; return; }
-      token = S.token; if (page && S.page !== page) location.reload(); page = S.page; render();
-    } catch (e) { $("sub").textContent = "SHORTS AGENT · JARVIS OFFLINE"; }
+      const r = await fetch("/clipper/state", { cache: "no-store" }); const j = await r.json();
+      if (j.error) { $("statuspill").innerHTML = `<span class="dot bad"></span>${esc(j.error)}`; return; }
+      S = j; token = S.token; if (page && S.page !== page) location.reload(); page = S.page;
+      render();
+    } catch (e) { $("statuspill").innerHTML = `<span class="dot bad"></span>Jarvis offline`; }
   }
-  tabs(); load(); setInterval(load, 4000);
+  async function loadDetail(silent) {
+    if (route.view !== "project") return;
+    const id = route.id;
+    try { const d = await (await fetch("/clipper/job/" + id, { cache: "no-store" })).json(); if (route.id !== id) return; detail = d; detailFor = id; if (!silent || !busy()) render(true); } catch (e) { /* shown on next poll */ }
+  }
+  window.addEventListener("hashchange", () => { route = parseRoute(); selected.clear(); if (route.view !== "edit") editor = null; if (route.view === "project") { detail = null; loadDetail(); } render(true); window.scrollTo(0, 0); });
+  nav(); load(); setInterval(load, 4000); setInterval(() => { if (route.view === "project") loadDetail(true); }, 2500);
+  if (route.view === "project") loadDetail();
 })();
 </script>
 </body>

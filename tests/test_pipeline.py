@@ -15,8 +15,10 @@ def setup(monkeypatch, tmp_path):
         return transcribe.build(words, duration=words[-1]["e"] + 0.5)
 
     def fake_llm(prompt, timeout):
-        if "checking Shorts clips" in prompt:
-            return json.dumps([{"clip": i, "accurate": True, "standalone": True, "verdict": "keep"} for i in range(5)])
+        if "checking YouTube Shorts clips" in prompt:
+            return json.dumps([{"clip": i, "accurate": True, "standalone": True, "verdict": "keep", "titles": [f"Title {i}"],
+                                "descriptions": ["About money habits."], "hashtags": ["#money", "#habits"],
+                                "keywords": ["money"], "pinned": ["Thoughts?"]} for i in range(5)])
         if "metadata" in prompt:
             return json.dumps([{"clip": i, "titles": [f"Title {i}"], "description": "About money habits.",
                                 "hashtags": ["#money", "#habits"], "keywords": ["money"], "pinned_comment": "Thoughts?"} for i in range(5)])

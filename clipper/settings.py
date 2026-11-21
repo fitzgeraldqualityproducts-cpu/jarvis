@@ -59,17 +59,26 @@ CHANNEL_DEFAULTS = {
     "language": "en",
     "brand": {"handle": "", "voice": "energetic, honest, never clickbait", "color": "#22d3ee",
               "highlight": "#facc15", "watermark": False},
-    "caption_style": "auto",          # auto | clean | bold | kinetic | educational | premium
-    "caption_overrides": {},          # font, size, colors, position, words_per_line...
+    "caption_style": "auto",          # auto or one of STYLES (see captions.py)
+    "caption_overrides": {},          # font, size, color, active, keyword, stroke, shadow, y, animation, words_per_line
     "hook_overlay": True,             # short accurate title text over the first seconds
-    "jump_cuts": True,                # remove dead air between words
+    "layout": "auto",                 # auto | track | podcast | split | stack | gameplay | fit | full
+    "jump_cuts": True,                # remove dead air between words (silence removal)
     "max_gap": 0.55,                  # pauses longer than this (seconds) get tightened
-    "zooms": True,                    # subtle punch-ins on cuts and big moments
-    "noise_reduction": False,
+    "remove_fillers": True,           # "um"/"uh" on their own are cut from the sound and the captions
+    "zooms": True,                    # a gentle settle at the start and alternate framing on jump cuts
+    "punch_ins": True,                # a quick, subtle push-in on emphasised words and big reactions
+    "transitions": True,              # a short push on speaker switches instead of a hard jump
+    "noise_reduction": "auto",        # auto (only when the sound is noisy) | True | False
+    "color_correction": "auto",       # auto (only when the picture is dull/flat) | True | False
+    "sharpen": "auto",                # auto (only when a small video is enlarged) | True | False
     "music_folder": "",               # licensed background music only (empty = none)
+    "music_volume": 0.08,             # music level under speech (0-0.3); it ducks further while someone talks
+    "sound_effects": False,           # soft whoosh/pop on the opening text and punch-ins (made by the clipper, no licences)
+    "length_mode": "auto",            # auto | 15_30 | 30_45 | 45_60 | 60_90 | custom (clip_min/clip_max below)
     "clip_min": 20, "clip_max": 60, "clip_hard_max": 90,
     "max_clips_per_video": 5,
-    "min_score": 6.0,                 # clips scoring under this (out of 10) are dropped
+    "min_score": 55,                  # clips scoring under this (out of 100) are dropped
     "priorities": {},                 # e.g. {"hook": 2.0} = weigh opening hooks double
     "names": [],                      # names/terms Whisper should spell right
     "fixes": {},                      # word fixes for captions, e.g. {"jarvis": "JARVIS"}
@@ -83,7 +92,9 @@ CHANNEL_DEFAULTS = {
     "learned": {},                    # filled in by learning.py
 }
 
-STYLES = ["clean", "bold", "kinetic", "educational", "premium"]
+STYLES = ["clean", "bold", "minimal", "gaming", "podcast", "highlight", "pop", "cinematic", "kinetic", "educational", "premium"]
+LAYOUTS = ["auto", "track", "podcast", "split", "stack", "gameplay", "fit", "full"]
+LENGTH_MODES = ["auto", "15_30", "30_45", "45_60", "60_90", "custom"]
 
 
 def _deep(base, over):
@@ -180,6 +191,14 @@ def add_channel(cid, name):
 def _validate(s):
     if s.get("caption_style", "auto") not in STYLES + ["auto"]:
         raise ValueError(f"caption style must be one of {', '.join(STYLES)} or auto")
+    if s.get("layout", "auto") not in LAYOUTS:
+        raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}")
+    if s.get("length_mode", "auto") not in LENGTH_MODES:
+        raise ValueError(f"clip length must be one of {', '.join(LENGTH_MODES)}")
+    if "music_volume" in s and not (0 <= float(s["music_volume"]) <= 0.3):
+        raise ValueError("music volume must be between 0 and 0.3 so it never drowns out speech")
+    if "min_score" in s and not (0 <= float(s["min_score"]) <= 100):
+        raise ValueError("the minimum score is out of 100")
     if s.get("privacy", "private") not in ("draft", "private", "unlisted", "scheduled", "public"):
         raise ValueError("privacy must be draft, private, unlisted, scheduled or public")
     lo, hi = float(s.get("clip_min", 20)), float(s.get("clip_max", 60))

@@ -275,11 +275,12 @@ def retry(job_id):
     j = db.job(job_id)
     if not j:
         return "There's no job with that number."
-    if j["state"] not in ("failed", "cancelled"):
+    waiting = j["state"] == "queued" and (j.get("error") or float(j.get("not_before") or 0) > time.time())
+    if j["state"] not in ("failed", "cancelled") and not waiting:
         return f"Job {job_id} is {j['state'].replace('_', ' ')}, not failed."
     db.set_job(job_id, state="queued", attempts=0, not_before=0, error=None, held=0, finished=None)
-    db.log("Retrying.", job_id=job_id)
-    return f"Job {job_id} is back in the queue."
+    db.log("Retrying now." if waiting else "Retrying.", job_id=job_id)
+    return f"Job {job_id} will try again now." if waiting else f"Job {job_id} is back in the queue."
 
 
 def emergency_stop():

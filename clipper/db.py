@@ -22,7 +22,7 @@ JOB_STATES = ["discovered", "awaiting_authorization", "queued", "acquiring", "tr
 ACTIVE_STATES = ["acquiring", "transcribing", "analyzing", "selecting", "editing", "rendering", "quality_check"]
 FINAL_STATES = ["published", "done", "failed", "cancelled"]
 CLIP_STATES = ["rendered", "qa_failed", "awaiting_approval", "approved", "rejected", "ready", "uploading",
-               "uploaded", "scheduled", "published", "upload_failed", "regenerate"]
+               "uploaded", "scheduled", "published", "upload_failed", "regenerate", "deleted"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS channels (
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS clips (
     hashtags TEXT DEFAULT '[]', tags TEXT DEFAULT '[]', category_id TEXT, audience TEXT, pinned_comment TEXT,
     caption_style TEXT, layout TEXT, path TEXT, thumb TEXT, qa TEXT DEFAULT '{}', state TEXT,
     fingerprint TEXT, youtube_id TEXT, privacy TEXT, publish_at TEXT, approved INTEGER DEFAULT 0,
-    note TEXT, created REAL, updated REAL);
+    note TEXT, created REAL, updated REAL, extra TEXT DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS uploads (
     id INTEGER PRIMARY KEY, clip_id INTEGER UNIQUE, channel TEXT, status TEXT, privacy TEXT,
     publish_at TEXT, session_url TEXT, youtube_id TEXT, attempts INTEGER DEFAULT 0, error TEXT,
@@ -86,8 +86,20 @@ def conn():
         c.execute("PRAGMA journal_mode=WAL")
         c.execute("PRAGMA busy_timeout=30000")
         c.executescript(SCHEMA)
+        _migrate(c)
         _conns[key] = c
     return c
+
+
+def _migrate(c):
+    """Brings an older clipper.db up to date without losing anything."""
+    cols = {r[1] for r in c.execute("PRAGMA table_info(clips)").fetchall()}
+    if "extra" not in cols:
+        c.execute("ALTER TABLE clips ADD COLUMN extra TEXT DEFAULT '{}'")
+    done = c.execute("SELECT value FROM kv WHERE key='score_scale'").fetchone()
+    if not done:                                   # scores used to be out of 10, now out of 100
+        c.execute("UPDATE clips SET score=score*10 WHERE score IS NOT NULL AND score<=10")
+        c.execute("INSERT OR REPLACE INTO kv(key, value) VALUES('score_scale', '100')")
 
 
 def reset_connections():
@@ -203,8 +215,8 @@ def clip(clip_id):
 
 
 def _clip_row(c):
-    for k in ("scores", "qa"):
-        c[k] = loads(c[k])
+    for k in ("scores", "qa", "extra"):
+        c[k] = loads(c.get(k))
     for k in ("titles", "hashtags", "tags"):
         c[k] = loads(c[k], [])
     return c
@@ -215,7 +227,7 @@ def clips(where="1=1", *args, limit=200):
 
 
 def set_clip(clip_id, **changes):
-    for k in ("scores", "qa", "titles", "hashtags", "tags"):
+    for k in ("scores", "qa", "titles", "hashtags", "tags", "extra"):
         if k in changes and not isinstance(changes[k], str):
             changes[k] = json.dumps(changes[k])
     if "state" in changes and changes["state"] not in CLIP_STATES:
@@ -226,7 +238,7 @@ def set_clip(clip_id, **changes):
 
 
 def add_clip(**fields):
-    for k in ("scores", "qa", "titles", "hashtags", "tags"):
+    for k in ("scores", "qa", "titles", "hashtags", "tags", "extra"):
         if k in fields and not isinstance(fields[k], str):
             fields[k] = json.dumps(fields[k])
     fields.setdefault("created", time.time())
@@ -237,3 +249,14 @@ def add_clip(**fields):
 
 def where_am_i():
     return str(home())
+
+
+def merge_extra(clip_id, **fields):
+    """Adds/changes keys in a clip's extra JSON (category, title options, edits...)."""
+    c = clip(clip_id)
+    if not c:
+        return None
+    extra = dict(c.get("extra") or {})
+    extra.update(fields)
+    set_clip(clip_id, extra=extra)
+    return extra
