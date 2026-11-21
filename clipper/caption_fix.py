@@ -62,6 +62,19 @@ def model_name(g=None):
     return "" if name.lower() in ("off", "none", "false", "0") else name
 
 
+def _room_for(name, folder):
+    """The careful model is downloaded once (about 1.6 GB); never fill the disk to do it."""
+    from clipper import acquire, transcribe
+    short = "large-v3-turbo" if name == "turbo" else name
+    if transcribe._whisper_available(short):
+        return
+    free = acquire.free_gb(folder)
+    need = float(settings.general().get("min_free_gb", 4)) + 2.0
+    if free < need:
+        raise RuntimeError(f"the careful caption model needs about 1.6 GB to download once and only "
+                           f"{free:.1f} GB is free")
+
+
 def _model(name):
     if name not in _models:
         from faster_whisper import WhisperModel
@@ -187,6 +200,97 @@ def agreement(a, b):
     return difflib.SequenceMatcher(None, x, y, autojunk=False).ratio()
 
 
+# ---------- combining the two listens ----------
+
+def _styled(word, like, case=True, tail=True):
+    """`word`'s text written the way the first transcript writes things: capital where it had one,
+    and its punctuation (the careful model sometimes writes everything lowercase, unpunctuated)."""
+    text = word["w"]
+    ref = like["w"]
+    core = text.strip(".,!?;:\"'")
+    if not core:
+        return ref
+    if case and ref[:1].isupper() and core[:1].islower():
+        core = core[:1].upper() + core[1:]
+    if core.lower() == "i" or core.lower().startswith("i'"):
+        core = "I" + core[1:]
+    end = re.search(r"[.,!?;:…\"')\]]*$", ref).group(0) if tail else re.search(r"[.,!?;:…\"')\]]*$", text).group(0)
+    return core + end
+
+
+def _add_new(out, n, nxt, sure):
+    """Adds a word only the careful listen heard, if it was sure and it fits in time."""
+    after = out[-1]["s"] + 0.1 if out else -1e9
+    if n.get("p", 0) >= max(sure, 0.6) and n["s"] >= after and n["e"] <= nxt + 0.05:
+        if out and out[-1]["e"] > n["s"]:
+            out[-1]["e"] = n["s"]                            # the word before was stretched over this one
+        out.append(dict(n, _n=True))
+
+
+def merge(old, new, sure=0.5):
+    """The best of both listens, word by word (aligned by what was said):
+    - words both heard keep the first transcript's spelling, punctuation and timing;
+    - where they disagree, the more confident one wins (the careful listen needs a clear margin);
+    - words only the first heard stay if it was fairly sure of them;
+    - words only the careful listen heard (endings the first one dropped) are added when it was sure
+      and they fit in time between the words around them; otherwise they're left out."""
+    ob, nb = [_bare(w) for w in old], [_bare(w) for w in new]
+    out = []
+    ops = difflib.SequenceMatcher(None, ob, nb, autojunk=False).get_opcodes()
+    for tag, i1, i2, j1, j2 in ops:
+        olds, news = old[i1:i2], new[j1:j2]
+        nxt = old[i2]["s"] if i2 < len(old) else 1e9
+        if tag == "equal":
+            for o, n in zip(olds, news):
+                out.append(dict(o, p=round(max(o.get("p", 0.9), n.get("p", 0.9)), 3)))
+        elif tag == "delete":
+            out += [dict(o) for o in olds if o.get("p", 0.9) >= sure]
+        elif tag == "insert":
+            for n in news:
+                _add_new(out, n, nxt, sure)
+        else:                                                    # replace
+            po = sum(o.get("p", 0.9) for o in olds) / len(olds)
+            pn = sum(n.get("p", 0.9) for n in news) / len(news)
+            wins = pn >= po + 0.15 and pn >= sure
+            same_slots = len(olds) == len(news) and all(abs(n["s"] - o["s"]) < 0.6 for o, n in zip(olds, news))
+            in_span = all(olds[0]["s"] - 0.3 <= n["s"] and n["e"] <= olds[-1]["e"] + 0.3 for n in news)
+            if wins and same_slots:
+                for o, n in zip(olds, news):                     # same slots: the first one's timing
+                    out.append(dict(o, w=_styled(n, o), p=n.get("p", 0.9), _n=True))
+            elif wins and in_span and (not out or news[0]["s"] >= out[-1]["s"] + 0.1):
+                for k, n in enumerate(news):
+                    like = olds[0] if k == 0 else olds[-1]
+                    out.append(dict(n, w=_styled(n, like, case=k == 0, tail=k == len(news) - 1), _n=True))
+            elif not same_slots and not in_span:
+                # the two listens put different words at different times: keep the first one's sure
+                # words, and add the careful one's sure words where nothing else was heard
+                for x in sorted([dict(o, _o=True) for o in olds if o.get("p", 0.9) >= sure or not wins] +
+                                [dict(n) for n in news], key=lambda x: x["s"]):
+                    if x.pop("_o", False):
+                        out.append(x)
+                    elif not any(o["s"] < x["e"] - 0.05 and o["e"] > x["s"] + 0.05 for o in olds):
+                        _add_new(out, x, nxt, sure)
+            else:
+                out += [dict(o) for o in olds]
+    vocab = {b: o["w"].strip(".,!?;:\"'") for o, b in zip(old, ob) if len(b) >= 4}
+    for k, w in enumerate(out):
+        if not w.pop("_n", False):
+            continue
+        b = _bare(w)
+        if b not in vocab and len(b) >= 4:                      # one spelling per clip ("huzz", not "hudz")
+            near = difflib.get_close_matches(b, list(vocab), n=1, cutoff=0.74)
+            if near and near[0][0] == b[0]:
+                w["w"] = vocab[near[0]] + re.search(r"[.,!?;:…\"')\]]*$", w["w"]).group(0)
+        if k == 0 or re.search(r"[.!?…][\"')\]]*$", out[k - 1]["w"]):
+            w["w"] = w["w"][:1].upper() + w["w"][1:]          # a sentence starts with a capital
+        if _bare(w) == "i" or _bare(w).startswith("i'"):
+            w["w"] = "I" + w["w"][1:]
+    for w in out:                                               # loud emphasis from the first pass
+        if "emph" not in w:
+            w["emph"] = any(o["s"] < w["e"] and o["e"] > w["s"] and o.get("emph") for o in old)
+    return out
+
+
 # ---------- spelling the clip's caption fixes ----------
 
 def clean_fixes(fixes, text):
@@ -253,6 +357,7 @@ def refine(tr, folder, audio_path, start, end, channel, log=lambda m: None):
     t0 = time.time()
     retry = False
     try:
+        _room_for(name, folder)
         got, segs = listen(_to16k(audio, rate), name, prompt=prompt.strip(), hotwords=vocab,
                            language=channel.get("language", "en"))
         try:
@@ -276,11 +381,7 @@ def refine(tr, folder, audio_path, start, end, channel, log=lambda m: None):
         new, used = [dict(w) for w in old], "first"
     else:
         used = name
-        for w in new:                            # carry loudness emphasis over from the first pass
-            for o in old:
-                if o["s"] < w["e"] and o["e"] > w["s"] and o.get("emph"):
-                    w["emph"] = True
-                    break
+        new = merge(old, new)
     new = tighten(new, audio, rate, offset=lo)
     changed = sum(1 for op in difflib.SequenceMatcher(None, [_bare(w) for w in old], [_bare(w) for w in new],
                                                      autojunk=False).get_opcodes() if op[0] != "equal")

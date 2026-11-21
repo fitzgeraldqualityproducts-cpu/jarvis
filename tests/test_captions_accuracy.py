@@ -135,3 +135,25 @@ def test_review_spelling_fixes_reach_the_clip(monkeypatch):
     out = moments.verify([c], tr, {"name": "x", "clip_min": 5})
     assert out[0]["caption_fixes"] == {"hoods": "huzz", "talking": "walking on"}
     assert "caption_fixes" in moments.REVIEW
+
+
+def test_merge_takes_the_best_of_both_listens():
+    """From Connor's real clip: the first listen dropped line endings and mistimed "This"; the
+    careful one wrote lowercase, misspelled the slang and put "this" 11 seconds early."""
+    old = [{"w": "the", "s": 10.0, "e": 10.3, "p": 0.98}, {"w": "huzz", "s": 10.3, "e": 10.8, "p": 0.6},
+           {"w": "talking", "s": 12.0, "e": 12.4, "p": 0.99}, {"w": "to", "s": 12.4, "e": 12.6, "p": 0.9},
+           {"w": "the", "s": 12.6, "e": 13.2, "p": 0.86},
+           {"w": "Whoa,", "s": 14.0, "e": 14.3, "p": 0.65}, {"w": "This", "s": 27.1, "e": 27.6, "p": 0.17},
+           {"w": "guy's", "s": 27.6, "e": 28.1, "p": 0.95}, {"w": "you", "s": 28.2, "e": 28.4, "p": 0.27},
+           {"w": "can't", "s": 28.4, "e": 28.7, "p": 0.99}]
+    new = [{"w": "the", "s": 10.0, "e": 10.3, "p": 0.9}, {"w": "hudz", "s": 10.3, "e": 10.8, "p": 0.7},
+           {"w": "talking", "s": 12.0, "e": 12.4, "p": 0.9}, {"w": "to", "s": 12.4, "e": 12.6, "p": 0.9},
+           {"w": "the", "s": 12.6, "e": 12.8, "p": 0.9}, {"w": "hudz", "s": 12.8, "e": 13.4, "p": 0.8},
+           {"w": "this", "s": 16.0, "e": 16.8, "p": 0.6}, {"w": "guy's", "s": 27.7, "e": 28.1, "p": 0.9},
+           {"w": "he", "s": 28.2, "e": 28.4, "p": 0.8}, {"w": "can't", "s": 28.4, "e": 28.7, "p": 0.9}]
+    got = caption_fix.merge(old, new)
+    assert [w["w"] for w in got] == ["the", "huzz", "talking", "to", "the", "huzz", "Whoa,", "This", "guy's", "he", "can't"]
+    this = next(w for w in got if w["w"] == "This")
+    assert this["s"] == 27.1                                      # the timing that matches the voice
+    the = got[4]
+    assert the["e"] <= got[5]["s"]                                # the stretched "the" makes room
