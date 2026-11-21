@@ -155,12 +155,14 @@ at most one emoji, no #shorts (added automatically):
 - hashtags: 3-5 relevant; keywords: 6-10 search terms
 - hook_texts: 2 short on-screen openers (2-6 words) that are accurate to the clip (or [] if none fits)
 - pinned: 2 pinned comment ideas inviting discussion of the clip's real topic
+- caption_fixes: words in the CLIP the speech-to-text clearly misheard or spelled inconsistently (names, game
+  terms, slang), as {{"heard": "meant"}}, single words only, for the captions; {{}} if none. Never reword speech.
 
 {clips}
 
 Return ONLY a JSON array: [{{"clip": n, "accurate": bool, "standalone": bool, "verdict": "...", "better_start_id": int or null,
 "hook": 0-10, "note": "short reason", "titles": [...], "descriptions": [...], "hashtags": [...], "keywords": [...],
-"hook_texts": [...], "pinned": [...]}}]"""
+"hook_texts": [...], "pinned": [...], "caption_fixes": {{}}}}]"""
 
 
 def find(tr, channel, video, max_clips=5, signals=None, learned=None, progress=lambda f, d="": None, report=None):
@@ -516,6 +518,10 @@ def verify(cands, tr, channel, video=None, report=None):
         if v.get("standalone") is False:
             c["context_complete"] = min(c.get("context_complete", 6), 4.5)
             c["context_ok"] = False
+        from clipper import caption_fix
+        fixes = caption_fix.clean_fixes(v.get("caption_fixes"), c.get("transcript", ""))
+        if fixes:
+            c["caption_fixes"] = fixes
         c["verified"] = True
         out.append(c)
     return out

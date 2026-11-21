@@ -17,6 +17,11 @@ def clipper_home(tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
     cfg.write_text('{"twitch_channel": "connortv"}')
     monkeypatch.setattr(settings, "CONFIG", cfg)
+    from clipper import caption_fix
+
+    def no_model(name):
+        raise RuntimeError("no speech model in tests")
+    monkeypatch.setattr(caption_fix, "_model", no_model)     # never downloads a model while testing
     yield tmp_path
     db.reset_connections()
 
