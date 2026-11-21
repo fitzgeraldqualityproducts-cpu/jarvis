@@ -34,6 +34,7 @@ GLOBAL_DEFAULTS = {
     "stage_timeout_minutes": 240, # a stage with no progress for this long is restarted
     "whisper_model": "small.en",  # faster-whisper model for transcripts (or "parakeet")
     "transcriber": "auto",        # auto | whisper | parakeet
+    "caption_model": "turbo",     # each clip's captions get a second, careful listen with this model ("off" = don't)
     "llm_model": "",              # Claude model for analysis ("" = Claude Code's default)
     "fps": 30,
     "x264_preset": "auto",          # auto = chosen from how fast this computer renders

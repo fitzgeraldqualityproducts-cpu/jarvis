@@ -15,7 +15,7 @@ import time
 import traceback
 from pathlib import Path
 
-from clipper import acquire, captions, crop, data_dir, db, media, metadata, moments, qa, render, selftune, settings, transcribe
+from clipper import acquire, caption_fix, captions, crop, data_dir, db, media, metadata, moments, qa, render, selftune, settings, transcribe
 
 OK, RETRY, FATAL, STOPPED = 0, 1, 2, 3
 
@@ -384,7 +384,7 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
             start, end = snap(tr, float(edits.get("start", start)), float(edits.get("end", end)))
         if end - start < 3:
             raise ValueError("the clip would be shorter than 3 seconds")
-        text = " ".join(w["w"] for w in tr["words"] if start <= w["s"] <= end)
+        text = " ".join(w["w"] for w in caption_fix.words_for(tr["words"], folder, start, end) if start <= w["s"] <= end)
         changes = {"start": start, "end": end, "duration": round(end - start, 3), "transcript": text}
         for key in ("title", "description", "pinned_comment"):
             if edits.get(key):
@@ -403,7 +403,8 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
             metadata.generate([c], video, ch)            # a hand-picked moment from further down the list
             c["titles_done"] = True
         extra = {k2: c.get(k2) for k2 in ("category", "descriptions", "hook_texts", "pinned_ideas", "highlight", "parts",
-                                          "measures", "check", "notes", "similar", "hook_text", "keywords", "method") if c.get(k2) is not None}
+                                          "measures", "check", "notes", "similar", "hook_text", "keywords", "method", "caption_fixes")
+                 if c.get(k2) is not None}
         extra["version"] = next_version = 1
         restore = None
         cid = db.add_clip(job_id=jid, video_id=video["id"], channel=ch["id"], rank=c["rank"], start=c["start"], end=c["end"],
@@ -430,7 +431,17 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
         dur = clip["end"] - clip["start"]
         analysis = _analysis(folder, path, max(0.0, clip["start"] - offset), dur,
                              lambda f, d="": p((k + f * 0.15) / total, f"clip {k + 1}/{total}: {d}"))
-        ws = [dict(w, s=w["s"] - clip["start"], e=w["e"] - clip["start"]) for w in tr["words"] if clip["start"] <= w["s"] <= clip["end"]]
+        cap_note = ""
+        if not (clip["edits"].get("words") and not caption_fix.covered(folder, clip["start"], clip["end"])):
+            # (word corrections made in the editor are tied to the words they were made on, so a clip
+            # with some keeps those words)
+            p((k + 0.16) / total, f"clip {k + 1}/{total}: double-checking every caption word")
+            cap_note = caption_fix.refine(tr, folder, src.get("audio"), clip["start"], clip["end"], ch,
+                                          log=lambda m: db.log(m, "warn", job_id=jid, clip_id=cid))
+        words = caption_fix.words_for(tr["words"], folder, clip["start"], clip["end"])
+        if cap_note:
+            db.set_clip(cid, transcript=" ".join(w["w"] for w in words if clip["start"] <= w["s"] <= clip["end"])[:20000])
+        ws = [dict(w, s=w["s"] - clip["start"], e=w["e"] - clip["start"]) for w in words if clip["start"] <= w["s"] <= clip["end"]]
         learned = learning.preferences(ch["id"])
         fb = {} if existing else dict(selftune.job_fallback(jid))     # what fixed an earlier clip of this video
         g2 = dict(g, x264_preset=selftune.preset(g))
@@ -450,13 +461,14 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
                                  if k2 in e})
             if e.get("music") is False:
                 run_ch["music_folder"] = ""
+            run_ch["fixes"] = {**(ch.get("fixes") or {}), **((clip.get("extra") or {}).get("caption_fixes") or {})}
             style_name = e.get("caption_style") or captions.choose_style(ch, c.get("caption_style"), learned, c.get("category"))
             style = captions.resolve(style_name, ch, e.get("caption") or {})
             db.set_clip(cid, layout=plan["layout"] if not plan.get("gameplay") else "gameplay", caption_style=style["name"])
             p((k + 0.15) / total, f"rendering clip {k + 1}/{total}" + (" (safer settings)" if attempt else ""))
             _mark(jid, "rendering")
             t0 = time.time()
-            rep = render.render(folder, clip, tr["words"], plan, (path, offset), run_ch, style, g2,
+            rep = render.render(folder, clip, words, plan, (path, offset), run_ch, style, g2,
                                 progress=lambda f, d="": p((k + 0.15 + f * 0.75) / total, f"clip {k + 1}/{total}: {d}"))
             selftune.speed("render", time.time() - t0, rep["duration"])
             _mark(jid, "quality_check")
@@ -488,6 +500,8 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
         elif not result["passed"]:
             selftune.record("qa_failed", clip_id=cid, job_id=jid, critical=result["critical"], layout=plan["layout"],
                             edit=bool(existing))
+        if cap_note:
+            rep.setdefault("enhancements", []).append(cap_note)
         db.merge_extra(cid, enhancements=rep.get("enhancements", []), render={k2: rep.get(k2) for k2 in
                        ("fps", "cuts", "punches", "picture", "noise_floor_db", "speech_db", "caption_pages")}, plan_reason=plan.get("reason"))
         if not result["passed"]:

@@ -79,11 +79,13 @@ def _whisper_words(audio_path, duration, progress, prompt, language):
                                       language=None if not language else language.split("-")[0])
     words, segs = [], []
     for seg in segments:
-        segs.append({"s": seg.start, "e": seg.end, "lp": seg.avg_logprob, "ns": seg.no_speech_prob})
+        segs.append({"s": seg.start, "e": seg.end, "lp": seg.avg_logprob, "ns": seg.no_speech_prob,
+                     "cr": getattr(seg, "compression_ratio", 1.0)})
         for w in seg.words or []:
             text = w.word.strip()
             if text:
-                words.append({"w": text, "s": round(w.start, 3), "e": round(w.end, 3), "p": round(w.probability, 3)})
+                words.append({"w": text, "s": round(w.start, 3), "e": round(w.end, 3), "p": round(w.probability, 3),
+                              "seg": len(segs) - 1})
         if duration:
             progress(min(0.99, seg.end / duration), "transcribing")
     return words, segs, getattr(info, "language", language or "en")
@@ -197,7 +199,22 @@ def transcribe(audio_path, progress=lambda f, d="": None, prompt="", language="e
         words, segs, lang = _parakeet_words(audio_path, duration, progress)
     else:
         words, segs, lang = _whisper_words(audio_path, duration, progress, prompt, language)
+    words = clean(words, segs, samples, rate)
     return build(words, samples, rate, duration, segs=segs, language=lang, engine=eng)
+
+
+def clean(words, segs, samples=None, rate=16000):
+    """Drops text Whisper made up (in music, silence or a loop) and moves each word's timing onto its
+    actual sound, so captions appear as it's said (see caption_fix)."""
+    from clipper import caption_fix
+    words = caption_fix.drop_made_up(words, segs)
+    mono = None
+    if samples is not None and len(samples):
+        mono = samples.mean(axis=1) if samples.ndim > 1 else samples
+    words = caption_fix.tighten(words, mono, rate)
+    for w in words:
+        w.pop("seg", None)
+    return words
 
 
 def build(words, samples=None, rate=16000, duration=None, segs=(), language="en", engine="test"):

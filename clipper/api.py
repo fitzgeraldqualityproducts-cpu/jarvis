@@ -160,7 +160,9 @@ def clip_detail(clip_id):
     folder = pipeline.folder_for(c["job_id"])
     tr = media.load(folder / "transcript.json") or {"words": []}
     lo, hi = c["start"] - 20, c["end"] + 20
-    words = [{"w": w["w"], "s": w["s"], "e": w["e"]} for w in tr.get("words", []) if lo <= w["s"] <= hi]
+    from clipper import caption_fix
+    words = [{"w": w["w"], "s": w["s"], "e": w["e"]} for w in caption_fix.words_for(tr.get("words", []), folder, lo, hi)
+             if lo <= w["s"] <= hi]
     plan = media.load(folder / f"plan_{c['id']}.json") or {}
     v = db.video(c["video_id"]) or {}
     out = _clip_public(c)
