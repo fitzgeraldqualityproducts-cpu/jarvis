@@ -264,7 +264,7 @@ class _Handler(BaseHTTPRequestHandler):
                 prefix = f"/clipper/{kind}/"
                 if path.startswith(prefix) and path.endswith(ext) and path[len(prefix):-len(ext)].isdigit():
                     cid = int(path[len(prefix):-len(ext)])
-                    f = api.media_path(kind, cid)
+                    f = api.media_path(kind, cid, (query.get("ver") or [None])[0])
                     if not f:
                         break
                     name = api.download_name(cid) if kind == "media" and query.get("download") else None

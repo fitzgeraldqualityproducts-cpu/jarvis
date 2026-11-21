@@ -349,12 +349,23 @@ captions, writes titles and descriptions, checks the quality, and (once you allo
 - **Transcript:** the whole video's transcript on the project page, searchable. Click a sentence to start
   a clip there (the source video jumps there too while it's still on disk), Shift+click to end it, then
   "Make clip from this": it's measured, scored, titled and rendered like any other moment.
-- **Clips:** preview, download, multi-select export (to Movies/Videos › Jarvis Shorts), approve, delete.
+- **Clips:** preview, search (titles and what's said), download, multi-select export (to Movies/Videos ›
+  Jarvis Shorts) as YouTube Shorts, TikTok or Reels (the same 1080p file, with a warning if a clip is too
+  long for that app) or a smaller 720p/540p copy (re-encoded and checked before it counts as exported),
+  approve, delete.
+- **Batch:** "Add several videos at once" takes many links or file paths (one per line), and you can drop
+  several files. Each becomes its own project in the queue; the same video is never added twice.
 - **Editor:** trim on a timeline (snaps to words), caption style, font, size, colours, outline, shadow,
   position, animation, fix caption words, layout or hand framing, dead-air and "um" removal, noise
   reduction, music level, sound effects, zooms and punch-ins, editing intensity, opening text,
   titles/descriptions, re-render.
-  If a re-render fails, the previous version is kept.
+  If a re-render fails, the previous version is kept. Undo/redo (Ctrl/⌘+Z, Ctrl/⌘+Shift+Z), Space to
+  play/pause, Ctrl/⌘+Enter to re-render, and a playback speed control.
+- **Variations:** from any clip, make new clips with a stronger opening (starts on its strongest line),
+  tighter pacing, different captions, different framing, a longer ending, or a plain copy. They sit next
+  to the original ("Versions of this moment"); the original never changes.
+- **Version history:** each re-render keeps the previous file (the last 2 versions per clip), so you can
+  preview an earlier version and go back to it.
 - **Approvals, Analytics** (predicted score vs. real results, kept separate) and **Settings**.
 You can also drop video files into `clipper_data/inbox` and they're picked up automatically.
 

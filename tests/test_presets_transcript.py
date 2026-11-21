@@ -172,3 +172,108 @@ def test_make_a_clip_from_the_transcript(monkeypatch, tmp_path):
     assert "already" in again["message"].lower()
     bad = api.action({"action": "make_range", "job": job["id"], "start_id": 0, "end_id": 99})
     assert "aren't in" in bad["message"]
+
+
+# ---------- phase 2: variations and version history ----------
+
+def test_variations_are_new_clips_and_versions_can_be_restored(monkeypatch, tmp_path):
+    from pathlib import Path
+    from clipper import api, db, pipeline
+    job = _job(monkeypatch, tmp_path)
+    assert pipeline.run_job(job["id"]) == pipeline.OK
+    orig = db.clips("job_id=?", job["id"])[0]
+    r = api.action({"action": "variants", "clip": orig["id"], "kinds": ["tight", "captions", "crop", "ending", "copy", "bogus"]})
+    assert r["ok"] and len(r["clips"]) in (4, 5)
+    pending = [db.clip(i) for i in r["clips"]]
+    assert all(c["state"] == "variant_pending" and not c["path"] for c in pending)
+    assert pipeline.run_job(job["id"]) == pipeline.OK
+    after = [db.clip(i) for i in r["clips"]]
+    assert all(c["path"] and Path(c["path"]).exists() and c["state"] == "awaiting_approval" for c in after), \
+        [(c["state"], c["note"]) for c in after]
+    kinds = {(c["extra"] or {})["variant"]: c for c in after}
+    assert kinds["captions"]["caption_style"] != orig["caption_style"]
+    assert kinds["tight"]["extra"]["edits"]["max_gap"] == 0.35
+    if "ending" in kinds:
+        assert kinds["ending"]["end"] > orig["end"]
+    o2 = db.clip(orig["id"])
+    assert o2["path"] == orig["path"] and Path(o2["path"]).exists()          # the original never changes
+    d = api.clip_detail(orig["id"])
+    assert len(d["family"]) == len(after) + 1 and d["family"][0]["label"] == "Original"
+    assert api.job_detail(job["id"])["candidates"][0]["clip_id"] == orig["id"]
+
+    # re-render the original: the old file goes to its history, and you can go back to it
+    pipeline.edit(orig["id"], {"caption_style": "minimal"})
+    assert pipeline.run_job(job["id"]) == pipeline.OK
+    o3 = db.clip(orig["id"])
+    hist = o3["extra"]["history"]
+    assert o3["extra"]["version"] == 2 and len(hist) == 1 and Path(hist[0]["path"]).exists()
+    assert api.media_path("media", orig["id"], "1") == hist[0]["path"]
+    assert "back to version 1" in api.action({"action": "restore", "clip": orig["id"], "version": 1})["message"]
+    o4 = db.clip(orig["id"])
+    assert o4["extra"]["version"] == 1 and o4["caption_style"] == orig["caption_style"] and Path(o4["path"]).exists()
+    assert [h["version"] for h in o4["extra"]["history"]] == [2]
+    # deleting the clip removes its earlier versions too
+    files = [h["path"] for h in o4["extra"]["history"]]
+    assert "Deleted" in api.delete(orig["id"])
+    assert not any(Path(f).exists() for f in files)
+
+
+def test_history_keeps_only_the_last_few(monkeypatch, tmp_path):
+    from clipper import pipeline
+    made = []
+    for n in range(4):
+        f = tmp_path / f"v{n}.mp4"
+        f.write_bytes(b"x")
+        made.append(f)
+    hist = []
+    for n, f in enumerate(made):
+        existing = {"id": 9, "path": str(f), "thumb": None, "start": 0, "end": 5, "duration": 5,
+                    "extra": {"version": n + 1, "history": hist}}
+        hist = pipeline.archive(existing, None, "main")
+    assert [h["version"] for h in hist] == [3, 4]
+    assert sum(1 for f in made if f.exists()) == 0
+    from pathlib import Path
+    assert sum(1 for h in hist if Path(h["path"]).exists()) == 2
+
+
+def test_hook_variant_starts_on_the_strongest_line():
+    from clipper import pipeline, transcribe
+    tr = transcribe.build(make_words(SCRIPT))
+    s = tr["sentences"]
+    c = {"start": s[2]["s"], "end": s[6]["e"], "extra": {"strongest_at": s[3]["s"] - s[2]["s"] + 0.2}, "caption_style": "bold",
+         "layout": "track"}
+    edits, _ = pipeline._variant_edits(c, "hook", tr)
+    assert edits == {"start": s[3]["s"]}
+    assert pipeline._variant_edits(c, "captions", tr)[0]["caption_style"] == "clean"
+    assert pipeline._variant_edits(c, "crop", tr)[0]["layout"] == "fit"
+    assert pipeline._variant_edits(dict(c, end=s[-1]["e"]), "ending", tr)[0] is None
+
+
+# ---------- phase 3: batch queue, export presets ----------
+
+def test_batch_adds_each_video_once(tmp_path):
+    from clipper import api, db
+    a = make_video(tmp_path / "one.mp4", 4)
+    b = make_video(tmp_path / "two.mp4", 6)
+    r = api.action({"action": "add_many", "urls": f"{a}\n{b}\n{a}\n\n", "preset": "podcast", "count": 2})
+    assert r["ok"] and len(r["results"]) == 2 and all(x["ok"] for x in r["results"])
+    jobs = db.q("SELECT * FROM jobs ORDER BY id")
+    assert len(jobs) == 2 and all(db.loads(j["options"]).get("preset") == "podcast" for j in jobs)
+    again = api.action({"action": "add_many", "urls": [str(a), "not a link at all"]})
+    assert len(db.q("SELECT id FROM jobs")) == 2 and "Not added" in again["message"]
+
+
+def test_export_presets_copy_or_shrink_and_verify(monkeypatch, tmp_path):
+    from clipper import api, db, media
+    src = make_video(tmp_path / "clip.mp4", 3, size="1080x1920")
+    cid = db.add_clip(job_id=1, video_id=1, channel="main", rank=1, start=0, end=3, duration=200, score=70,
+                      title="My clip", state="ready", path=str(src))
+    monkeypatch.setattr(api, "export_dir", lambda: tmp_path / "out")
+    full = api.action({"action": "export", "clips": [cid], "preset": "reels"})
+    assert full["ok"] and "longer than Instagram Reels allows" in full["message"]
+    assert (tmp_path / "out" / "My clip (clip 1) [Reels].mp4").stat().st_size == src.stat().st_size
+    small = api.action({"action": "export", "clips": [cid], "preset": "small"})
+    assert small["ok"], small["message"]
+    info = media.probe(str(tmp_path / "out" / "My clip (clip 1) [720p].mp4"))
+    assert (info["width"], info["height"]) == (720, 1280)
+    assert {x["id"] for x in api.export_presets()} >= {"shorts", "tiktok", "reels", "small"}

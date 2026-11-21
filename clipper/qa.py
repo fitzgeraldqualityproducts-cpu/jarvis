@@ -84,14 +84,24 @@ def fingerprint(clip, video_id):
     return f"{video_id}:{int(clip['start'] // 5)}:{' '.join(words[:12])}"
 
 
+def _root(c):
+    extra = c.get("extra")
+    if isinstance(extra, str):
+        extra = db.loads(extra)
+    return (extra or {}).get("variant_of") or c.get("id")
+
+
 def duplicate_of(clip):
     """Another clip (not this one) of the same moment: same fingerprint, or mostly the same words
     from the same video."""
     me = clip.get("id")
-    rows = db.q("SELECT id, fingerprint, transcript, video_id, start, \"end\", state FROM clips WHERE id != ? AND "
+    rows = db.q("SELECT id, fingerprint, transcript, video_id, start, \"end\", state, extra FROM clips WHERE id != ? AND "
                 "state NOT IN ('rejected','qa_failed','regenerate')", me or -1)
     a = set((clip.get("transcript") or "").lower().split())
+    root = _root(clip)
     for r in rows:
+        if root is not None and _root(r) == root:
+            continue                     # a variation you asked for is meant to be the same moment
         if clip.get("fingerprint") and r["fingerprint"] == clip["fingerprint"]:
             return r["id"]
         if r["video_id"] == clip.get("video_id"):

@@ -406,7 +406,9 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
         restore["extra"] = dict(existing.get("extra") or {})
         db.set_clip(cid, **changes)
         extra["edits"] = {**(extra.get("edits") or {}), **{k2: v for k2, v in edits.items() if k2 not in ("title", "description")}}
-        next_version = int(extra.get("version", 1)) + 1     # saved only once the new file is in place
+        next_version = max([int(extra.get("version", 1))] + [int(h.get("version", 0)) for h in extra.get("history") or []]) + 1
+        if not existing.get("path"):                      # a new variation's first render
+            next_version = 1
         db.set_clip(cid, extra=extra)
         clip = db.clip(cid)
         c = dict(extra, **{k2: clip[k2] for k2 in ("start", "end", "duration", "transcript", "hook", "hook_type", "title")})
@@ -472,7 +474,7 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
             if manual and manual.get("zoom") and plan.get("layout") == "track" and not plan.get("manual"):
                 plan["zoom"] = float(manual["zoom"])
             media.dump(plan, folder / f"plan_{cid}.json")
-            run_ch = dict(ch, **{k2: e[k2] for k2 in ("jump_cuts", "remove_fillers", "zooms", "punch_ins", "edit_intensity", "noise_reduction",
+            run_ch = dict(ch, **{k2: e[k2] for k2 in ("jump_cuts", "max_gap", "remove_fillers", "zooms", "punch_ins", "edit_intensity", "noise_reduction",
                                                       "music_volume", "sound_effects", "hook_overlay", "color_correction", "sharpen")
                                  if k2 in e})
             if e.get("music") is False:
@@ -522,6 +524,11 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
                        ("fps", "cuts", "punches", "picture", "noise_floor_db", "speech_db", "caption_pages")}, plan_reason=plan.get("reason"))
         if not result["passed"]:
             report = qa.save_report(folder, cid, result)
+            if existing and not existing.get("path"):     # a variation that didn't come out right
+                db.set_clip(cid, state="qa_failed", qa=result, path=rep["path"], thumb=rep["thumb"], note=qa.describe(result))
+                db.log(f"Variation {cid} didn't pass the quality check ({qa.describe(result)}).", "warn", job_id=jid,
+                       clip_id=cid, tell=True)
+                return False
             if existing:                                  # keep the old version rather than lose the clip
                 os.remove(rep["path"])
                 db.set_clip(cid, **restore)
@@ -545,19 +552,14 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
         if os.path.exists(rep["thumb"]):
             shutil.move(rep["thumb"], thumb)
         if existing:
-            for old in (existing.get("path"), existing.get("thumb")):
-                if old and os.path.exists(old) and old not in (str(final), str(thumb)):
-                    try:
-                        os.remove(old)
-                    except OSError:
-                        pass
+            history = archive(existing, restore, ch["id"])
             keep = existing["state"] if existing["state"] in ("awaiting_approval", "approved", "ready") else \
                 ("awaiting_approval" if ch["permissions"].get("require_approval", True) else "ready")
             if existing.get("youtube_id"):
                 keep = existing["state"]                  # already on YouTube: the new file stays local
             db.set_clip(cid, state=keep, qa=result, path=str(final), thumb=str(thumb), duration=rep["duration"], approved=0
                         if keep == "awaiting_approval" else existing.get("approved", 0))
-            db.merge_extra(cid, version=next_version)
+            db.merge_extra(cid, version=next_version, history=history)
             db.log(f"Clip {cid} updated with your edits ({rep['duration']:.0f}s).", job_id=jid, clip_id=cid)
             return True
         state = "awaiting_approval" if ch["permissions"].get("require_approval", True) else "ready"
@@ -566,7 +568,9 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
                job_id=jid, clip_id=cid)
         return True
     except Exception as err:
-        if restore:                                   # a failed edit leaves the clip as it was
+        if restore and existing and not existing.get("path") and not isinstance(err, Stop):
+            db.set_clip(cid, state="qa_failed", note=f"the render failed: {type(err).__name__}: {str(err)[:200]}")
+        elif restore:                                 # a failed edit leaves the clip as it was
             db.set_clip(cid, **restore)
         elif not isinstance(err, (Stop, Fatal)):      # never leave a clip "rendering" forever
             db.set_clip(cid, state="qa_failed", note=f"the render failed: {type(err).__name__}: {str(err)[:200]}")
@@ -603,7 +607,7 @@ EDIT_KEYS = {"start": float, "end": float, "caption_style": str, "caption": dict
              "words": dict, "hook_text": str, "jump_cuts": bool, "remove_fillers": bool, "zooms": bool, "punch_ins": bool,
              "noise_reduction": object, "music": bool, "music_volume": float, "sound_effects": bool, "hook_overlay": bool,
              "color_correction": object, "sharpen": object, "title": str, "description": str, "pinned_comment": str,
-             "edit_intensity": str}
+             "edit_intensity": str, "max_gap": float}
 
 
 def _clean_edits(edits):
@@ -638,6 +642,8 @@ def _clean_edits(edits):
             out["crop"]["layout"] = cr["layout"]
     if "music_volume" in out:
         out["music_volume"] = max(0.0, min(0.3, out["music_volume"]))
+    if "max_gap" in out:
+        out["max_gap"] = max(0.25, min(2.0, out["max_gap"]))
     if "start" in out and "end" in out and out["end"] - out["start"] < 3:
         raise ValueError("a clip needs to be at least 3 seconds long")
     return out
@@ -662,6 +668,148 @@ def pick(job_id, ranks):
     db.set_job(job["id"], state="queued", options=opts, held=0, not_before=0, attempts=0, error=None)
     db.log(f"Making {len(ranks)} more clip{'s' if len(ranks) != 1 else ''} you picked.", job_id=job["id"])
     return f"Okay, making {len(ranks)} clip{'s' if len(ranks) != 1 else ''} from the moments you picked."
+
+
+HISTORY_KEEP = 2          # earlier versions kept per clip (each is a few MB; the disk is precious)
+
+
+def archive(existing, before, channel_id):
+    """Moves the clip's previous file into the library's history folder so you can go back to it,
+    keeping the last HISTORY_KEEP versions (older ones are deleted). Returns the new history list."""
+    extra = dict(before.get("extra") or {}) if before else dict(existing.get("extra") or {})
+    history = list(extra.get("history") or [])
+    old_path, old_thumb = existing.get("path"), existing.get("thumb")
+    if old_path and os.path.exists(old_path):
+        hist_dir = data_dir("library", channel_id, "history")
+        stamp = int(time.time())
+        entry = {"version": int(extra.get("version", 1)), "t": time.time(), "edits": extra.get("edits") or {}}
+        for key in ("start", "end", "duration", "transcript", "layout", "caption_style"):
+            entry[key] = (before or existing).get(key)
+        dest = hist_dir / f"clip{existing['id']}_v{entry['version']}_{stamp}.mp4"
+        shutil.move(old_path, dest)
+        entry["path"] = str(dest)
+        if old_thumb and os.path.exists(old_thumb):
+            tdest = hist_dir / f"clip{existing['id']}_v{entry['version']}_{stamp}.jpg"
+            shutil.move(old_thumb, tdest)
+            entry["thumb"] = str(tdest)
+        history.append(entry)
+    while len(history) > HISTORY_KEEP:
+        gone = history.pop(0)
+        for f in (gone.get("path"), gone.get("thumb")):
+            if f and os.path.exists(f):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+    return history
+
+
+def restore_version(clip_id, version):
+    """Goes back to an earlier version of a clip (its file, trim, captions and settings). The version
+    you're leaving is kept in the history, so this can be undone the same way."""
+    c = db.clip(int(clip_id))
+    if not c:
+        raise KeyError("no such clip")
+    if c["state"] == "uploading":
+        return "That clip is uploading right now; try again when it's done."
+    extra = dict(c.get("extra") or {})
+    history = list(extra.get("history") or [])
+    entry = next((h for h in history if int(h.get("version", -1)) == int(version)), None)
+    if not entry or not entry.get("path") or not os.path.exists(entry["path"]):
+        return "I don't have that version any more."
+    history.remove(entry)
+    extra["history"] = history
+    db.set_clip(c["id"], extra=extra)
+    current = db.clip(c["id"])
+    history = archive(current, None, c["channel"])
+    extra = dict(db.clip(c["id"]).get("extra") or {})
+    extra.update(history=history, version=int(entry["version"]), edits=entry.get("edits") or {})
+    changes = {k: entry[k] for k in ("start", "end", "duration", "transcript", "layout", "caption_style") if entry.get(k) is not None}
+    db.set_clip(c["id"], path=entry["path"], thumb=entry.get("thumb"), extra=extra, **changes)
+    db.log(f"Clip {c['id']} is back to version {entry['version']}.", job_id=c["job_id"], clip_id=c["id"])
+    return f"Clip {c['id']} is back to version {entry['version']}."
+
+
+VARIANTS = {
+    "hook": "Stronger opening",
+    "tight": "Tighter pacing",
+    "captions": "Different captions",
+    "crop": "Different framing",
+    "ending": "Longer ending",
+    "copy": "Copy",
+}
+ALT_STYLE = {"bold": "clean", "pop": "clean", "kinetic": "minimal", "gaming": "clean", "highlight": "minimal",
+             "clean": "bold", "minimal": "pop", "podcast": "bold", "cinematic": "kinetic", "educational": "highlight",
+             "premium": "pop"}
+ALT_LAYOUT = {"track": "fit", "podcast": "fit", "fit": "track", "full": "track", "scale": "fit", "split": "track",
+              "stack": "fit", "gameplay": "fit"}
+
+
+def _variant_edits(c, kind, tr):
+    """The changes that make one kind of variation of clip c, or (None, why not)."""
+    extra = c.get("extra") or {}
+    start, end, dur = float(c["start"]), float(c["end"]), float(c["end"]) - float(c["start"])
+    sents = (tr or {}).get("sentences") or []
+    inside = [x for x in sents if x["e"] > start + 0.1 and x["s"] < end - 0.1]
+    if kind == "hook":
+        at = extra.get("strongest_at")
+        if at is not None and 0.5 < float(at) <= dur * 0.45:
+            hit = [x for x in inside if x["s"] <= start + float(at) + 0.3]
+            if hit and hit[-1]["s"] > start + 0.5:
+                return {"start": hit[-1]["s"]}, ""
+        if len(inside) >= 2 and end - inside[1]["s"] >= max(8.0, dur * 0.6):
+            return {"start": inside[1]["s"]}, ""
+        return None, "there's no stronger line to open on without losing the point"
+    if kind == "tight":
+        return {"jump_cuts": True, "max_gap": 0.35, "remove_fillers": True, "edit_intensity": "strong"}, ""
+    if kind == "captions":
+        cur = (extra.get("edits") or {}).get("caption_style") or c.get("caption_style") or "bold"
+        return {"caption_style": ALT_STYLE.get(cur, "bold"), "caption": {}}, ""
+    if kind == "crop":
+        return {"layout": ALT_LAYOUT.get(c.get("layout") or "track", "fit")}, ""
+    if kind == "ending":
+        after = [x for x in sents if x["s"] >= end - 0.1]
+        if after and after[0]["e"] - start <= 180:
+            return {"end": after[0]["e"] + 0.3}, ""
+        return None, "it already runs to the end of what was said (or would pass 3 minutes)"
+    if kind == "copy":
+        return {}, ""
+    return None, "unknown kind of variation"
+
+
+def make_variants(clip_id, kinds):
+    """Makes variations of a clip as NEW clips (the original is never changed): a stronger opening,
+    tighter pacing, different captions, different framing, a longer ending, or a plain copy to
+    experiment on. They render in the background and show up next to the original."""
+    c = db.clip(int(clip_id))
+    if not c:
+        raise KeyError("no such clip")
+    job = db.job(c["job_id"])
+    tr = media.load(folder_for(job["id"]) / "transcript.json") or {}
+    made, skipped = [], []
+    opts = job["options"]
+    for kind in [k for k in kinds if k in VARIANTS][:6]:
+        edits, why = _variant_edits(c, kind, tr)
+        if edits is None:
+            skipped.append(f"{VARIANTS[kind].lower()}: {why}")
+            continue
+        extra = {k: v for k, v in (c.get("extra") or {}).items() if k not in ("history", "version", "enhancements", "render")}
+        extra.update(variant_of=c.get("extra", {}).get("variant_of") or c["id"], variant=kind, version=1)
+        fields = {k: c[k] for k in ("job_id", "video_id", "channel", "rank", "start", "end", "duration", "score", "scores",
+                                    "hook", "hook_type", "reason", "transcript", "topic", "title", "titles", "description",
+                                    "hashtags", "tags", "category_id", "audience", "pinned_comment", "layout", "caption_style")
+                  if k in c}
+        new = db.add_clip(**fields, state="variant_pending", note=f"{VARIANTS[kind]} of clip {c['id']}", extra=extra)
+        opts.setdefault("rerender", {})[str(new)] = edits
+        made.append(new)
+    if made:
+        db.set_job(job["id"], state="queued", options=opts, held=0, not_before=0, attempts=0, error=None)
+        db.log(f"Making {len(made)} variation{'s' if len(made) != 1 else ''} of clip {c['id']}.", job_id=job["id"], clip_id=c["id"])
+    msg = f"Making {len(made)} variation{'s' if len(made) != 1 else ''} of clip {c['id']}; the original stays as it is." if made \
+        else "I couldn't make those variations."
+    if skipped:
+        msg += " Skipped " + "; ".join(skipped) + "."
+    return {"message": msg, "clips": made}
 
 
 def add_range(job_id, start_id, end_id):
