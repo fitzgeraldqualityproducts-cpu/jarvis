@@ -15,7 +15,7 @@ import time
 import traceback
 from pathlib import Path
 
-from clipper import acquire, caption_fix, captions, crop, data_dir, db, media, metadata, moments, qa, render, selftune, settings, transcribe
+from clipper import acquire, caption_fix, captions, crop, data_dir, db, media, metadata, moments, presets, qa, render, selftune, settings, transcribe
 
 OK, RETRY, FATAL, STOPPED = 0, 1, 2, 3
 
@@ -111,7 +111,7 @@ def run_job(job_id):
     except KeyError:
         db.set_job(job_id, state="failed", error="its channel no longer exists", finished=time.time())
         return FATAL
-    ch = selftune.apply(moments.with_lengths(ch, (job.get("options") or {}).get("length")))
+    ch = configure(ch, job.get("options") or {})
     folder = folder_for(job_id)
     try:
         return _run(job, video, ch, folder)
@@ -150,6 +150,19 @@ def _retry(job_id, attempts, e):
                detail=f"will retry in {wait // 60} min")
     db.log(f"Problem ({detail}); retrying in {wait // 60} minutes (try {attempts + 1} of {limit}).", "warn", job_id=job_id)
     return RETRY
+
+
+def configure(ch, opts):
+    """The settings one job runs with: the channel's, then its preset (the video's own choice, else the
+    channel's default), the clip length (the video's choice, else the channel's, else the preset's),
+    then what the clipper has learned from you."""
+    ch = presets.apply(ch, opts.get("preset"))
+    length = opts.get("length")
+    if isinstance(length, list):
+        length = tuple(length)
+    if not length and ch.get("length_mode", "auto") == "auto":
+        length = presets.length_for(ch["preset"])
+    return selftune.apply(moments.with_lengths(ch, length))
 
 
 def _run(job, video, ch, folder):
@@ -399,13 +412,16 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
         c = dict(extra, **{k2: clip[k2] for k2 in ("start", "end", "duration", "transcript", "hook", "hook_type", "title")})
         c["hook_text"] = edits.get("hook_text", extra.get("hook_text", "")) if "hook_text" in edits else extra.get("hook_text", "")
     else:
-        if not (c.get("meta") or {}).get("titles") and c.get("method") == "claude" and not c.get("titles_done"):
+        if not (c.get("meta") or {}).get("titles") and (c.get("method") == "claude" or c.get("needs_titles")) \
+                and not c.get("titles_done") and llm_ok():
             metadata.generate([c], video, ch)            # a hand-picked moment from further down the list
             c["titles_done"] = True
         extra = {k2: c.get(k2) for k2 in ("category", "descriptions", "hook_texts", "pinned_ideas", "highlight", "parts",
-                                          "measures", "check", "notes", "similar", "hook_text", "keywords", "method", "caption_fixes")
+                                          "measures", "check", "notes", "similar", "hook_text", "keywords", "method", "caption_fixes",
+                                          "strongest", "strongest_at", "audience", "weaknesses", "manual")
                  if c.get(k2) is not None}
         extra["version"] = next_version = 1
+        extra["preset"] = ch.get("preset", "balanced")
         restore = None
         cid = db.add_clip(job_id=jid, video_id=video["id"], channel=ch["id"], rank=c["rank"], start=c["start"], end=c["end"],
                           duration=c["duration"], score=c["score"], scores=c["scores"], hook=c.get("hook"),
@@ -456,7 +472,7 @@ def _make_clip(jid, video, ch, folder, src, tr, c, g, p, k, total, existing=None
             if manual and manual.get("zoom") and plan.get("layout") == "track" and not plan.get("manual"):
                 plan["zoom"] = float(manual["zoom"])
             media.dump(plan, folder / f"plan_{cid}.json")
-            run_ch = dict(ch, **{k2: e[k2] for k2 in ("jump_cuts", "remove_fillers", "zooms", "punch_ins", "noise_reduction",
+            run_ch = dict(ch, **{k2: e[k2] for k2 in ("jump_cuts", "remove_fillers", "zooms", "punch_ins", "edit_intensity", "noise_reduction",
                                                       "music_volume", "sound_effects", "hook_overlay", "color_correction", "sharpen")
                                  if k2 in e})
             if e.get("music") is False:
@@ -586,7 +602,8 @@ def edit(clip_id, edits):
 EDIT_KEYS = {"start": float, "end": float, "caption_style": str, "caption": dict, "layout": str, "crop": dict,
              "words": dict, "hook_text": str, "jump_cuts": bool, "remove_fillers": bool, "zooms": bool, "punch_ins": bool,
              "noise_reduction": object, "music": bool, "music_volume": float, "sound_effects": bool, "hook_overlay": bool,
-             "color_correction": object, "sharpen": object, "title": str, "description": str, "pinned_comment": str}
+             "color_correction": object, "sharpen": object, "title": str, "description": str, "pinned_comment": str,
+             "edit_intensity": str}
 
 
 def _clean_edits(edits):
@@ -609,6 +626,8 @@ def _clean_edits(edits):
             out[k] = v if v in (True, False, "auto") else "auto"
     if "caption_style" in out and out["caption_style"] not in captions.STYLES:
         raise ValueError("unknown caption style")
+    if "edit_intensity" in out and out["edit_intensity"] not in settings.INTENSITIES:
+        raise ValueError("editing intensity must be subtle, normal or strong")
     if "layout" in out and out["layout"] not in settings.LAYOUTS:
         raise ValueError("unknown layout")
     if "crop" in out:
@@ -643,6 +662,58 @@ def pick(job_id, ranks):
     db.set_job(job["id"], state="queued", options=opts, held=0, not_before=0, attempts=0, error=None)
     db.log(f"Making {len(ranks)} more clip{'s' if len(ranks) != 1 else ''} you picked.", job_id=job["id"])
     return f"Okay, making {len(ranks)} clip{'s' if len(ranks) != 1 else ''} from the moments you picked."
+
+
+def add_range(job_id, start_id, end_id):
+    """A clip you chose yourself from the transcript (sentence start_id..end_id, inclusive): it's
+    snapped to whole words, measured and scored like any other moment, added to the video's list and
+    made. Your boundaries are kept (no extending for context), up to 180 seconds."""
+    job = db.job(int(job_id))
+    if not job:
+        raise KeyError("no such job")
+    folder = folder_for(job["id"])
+    tr = media.load(folder / "transcript.json")
+    found = media.load(folder / "candidates.json")
+    if not tr or found is None:
+        return "That video hasn't been transcribed yet, so there's nothing to pick from."
+    a, b = sorted((int(start_id), int(end_id)))
+    sents = tr["sentences"]
+    if not (0 <= a <= b < len(sents)):
+        return "Those sentences aren't in this video's transcript."
+    if sents[b]["e"] - sents[a]["s"] > 180:
+        return "That's longer than 3 minutes; pick a shorter stretch."
+    if sents[b]["e"] - sents[a]["s"] < 3:
+        return "That's under 3 seconds; pick a bit more."
+    ch = configure(settings.channel(job["channel"]), job["options"])
+    loose = dict(ch, clip_min=3.0, clip_hard_max=180.0)
+    text = " ".join(x["text"] for x in sents[a:b + 1])
+    c = moments.finalize({"start_id": a, "end_id": b, "start_locked": True, "end_locked": True,
+                          "title": sents[a]["text"][:68], "hook": sents[a]["text"],
+                          "reason": "picked by you from the transcript", "context_complete": 7.0}, tr, loose)
+    if c is None:
+        return "I couldn't make a clip from those sentences."
+    c.pop("reject", None)
+    c["context_ok"], c["manual"], c["method"] = True, True, "manual"
+    c["score"] = moments.score(c, ch)
+    cands = found.get("candidates") or []
+    for k in cands:
+        if abs(k["start"] - c["start"]) < 0.5 and abs(k["end"] - c["end"]) < 0.5:
+            return pick(job["id"], [k["rank"]])
+    c["rank"] = max([k.get("rank", 0) for k in cands] + [0]) + 1
+    metadata.fill(c, {}, db.video(job["video_id"]) or {}, ch)
+    c["needs_titles"] = True
+    found["candidates"] = cands + [c]
+    media.dump(found, folder / "candidates.json")
+    db.log(f"Added your own moment ({c['duration']:.0f}s, \"{text[:50]}\").", job_id=job["id"])
+    return pick(job["id"], [c["rank"]])
+
+
+def llm_ok():
+    from clipper import llm
+    try:
+        return llm.available()
+    except Exception:
+        return False
 
 
 def _cache_key(video):

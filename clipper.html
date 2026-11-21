@@ -257,6 +257,17 @@ td { padding:9px 8px; border-bottom:1px solid var(--line); }
 details summary { cursor:pointer; color:var(--muted); font-weight:500; }
 .fade-in { animation:fadein .25s ease; } @keyframes fadein { from { opacity:0; transform:translateY(4px); } }
 @media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }
+.tx { max-height:440px; overflow:auto; border:1px solid var(--line); border-radius:10px; background:var(--bg2); }
+.sent { display:grid; grid-template-columns:58px minmax(0,1fr); gap:10px; padding:7px 10px; border-bottom:1px solid var(--line); cursor:pointer; font-size:14px; line-height:1.45; }
+.sent:last-child { border-bottom:0; }
+.sent:hover { background:rgba(255,255,255,.03); }
+.sent .tm { color:var(--faint); font-variant-numeric:tabular-nums; font-size:12px; padding-top:2px; }
+.sent .sp { color:var(--accent2); font-weight:600; font-size:12px; margin-right:6px; }
+.sent.in { background:var(--accentSoft); }
+.sent.edge { box-shadow:inset 3px 0 0 var(--accent); }
+.sent mark { background:rgba(250,204,21,.28); color:inherit; border-radius:3px; }
+.txbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; margin:10px 0; }
+.txplayer video { width:100%; max-height:300px; border-radius:10px; background:#000; margin-bottom:10px; }
 </style>
 </head>
 <body>
@@ -307,7 +318,7 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
   const chip = (pair) => `<span class="chip ${pair[1]}">${esc(pair[0])}</span>`;
 
   let S = null, token = "", page = null, route = parseRoute(), detail = null, detailFor = null, selected = new Set(), filter = { state: "", sort: "new" }, msort = "viral";
-  let editor = null;
+  let editor = null, tx = null;
 
   function parseRoute() { const h = (location.hash || "#dashboard").slice(1).split("/"); return { view: h[0] || "dashboard", id: h[1] ? +h[1] : null }; }
   function toast(msg) { const t = $("toast"); t.textContent = msg; t.style.display = "block"; t.classList.remove("fade-in"); void t.offsetWidth; t.classList.add("fade-in"); clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", 6000); }
@@ -351,17 +362,23 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
     else if (v === "analytics") html = analytics();
     else if (v === "settings") html = settingsView();
     else if (v === "edit") { if (!editor || editor.id !== route.id) return openEditor(route.id); return; }
+    const keep = $("txlist") ? $("txlist").scrollTop : 0, vt = $("txv") ? $("txv").currentTime : 0;
     m.innerHTML = banner + html;
+    if ($("txlist")) $("txlist").scrollTop = keep;
+    if ($("txv") && vt) $("txv").addEventListener("loadedmetadata", function () { this.currentTime = vt; }, { once: true });
     afterRender();
   }
 
   function newVideoCard() {
-    const lens = [["auto","Auto length"],["15_30","15–30s"],["30_45","30–45s"],["45_60","45–60s"],["60_90","60–90s"]];
+    const lens = [["auto","Preset length"],["15_30","15–30s"],["30_45","30–45s"],["45_60","45–60s"],["60_90","60–90s"],["90_180","90–180s"]];
+    const pre = (S.presets || []);
     return `<div class="card hero"><div class="head"><div><h2>New video or VOD</h2><div class="muted small">Paste a YouTube or Twitch link, a file path, or drop a video file.</div></div></div>
       <div class="inputrow"><input type="text" id="addurl" placeholder="https://youtube.com/watch?v=…  or  twitch.tv/videos/…" autocomplete="off" spellcheck="false">
+        <select id="addpreset" aria-label="Clipping preset" title="What to look for and how to edit">${pre.map(p => `<option value="${p.id}" ${S.channel.preset === p.id ? "selected" : ""} title="${esc(p.about)}">${esc(p.label)}</option>`).join("")}</select>
         <select id="addlen" aria-label="Clip length">${lens.map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
         <select id="addcount" aria-label="How many clips"><option value="">Default count</option>${[1,2,3,5,8,10].map(n => `<option>${n}</option>`).join("")}</select>
         <button class="btn primary" id="addbtn">${icon("spark")}Find clips</button></div>
+      <div class="small faint" id="presetabout" style="margin-top:6px">${esc((pre.find(p => p.id === S.channel.preset) || pre[0] || {}).about || "")}</div>
       <div class="valid" id="valid"></div><div id="linkprev"></div>
       <label class="drop" id="drop"><input type="file" id="file" accept="video/*,.mkv,.mov,.mp4,.webm,.m4v,.avi,.ts" hidden>
         <div class="ic">${icon("upload")}</div><div><div style="font-weight:550;color:var(--text)">Drop a video file here</div><div class="small">or click to choose one. MP4, MOV, MKV, WebM.</div></div></label>
@@ -418,10 +435,11 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
     const steps = (j.steps || []).map((s, i) => `<div class="step ${s.state}"><div class="n">${s.state === "done" ? "✓" : i + 1}</div><div class="l">${esc(s.label)}</div>
       <div class="s">${s.state === "running" ? (j.state === s.key ? Math.round((j.progress || 0) * 100) + "% · " : "") + (s.seconds != null ? secs(s.seconds) : "") : s.state === "done" ? (s.seconds != null ? secs(s.seconds) : "done") : s.state === "skipped" ? "not needed" : s.state === "stopped" ? "paused" : "waiting"}</div></div>`).join("");
     const cands = sortMoments(d.candidates.slice());
+    const preset = (S.presets || []).find(p => p.id === ((j.options || {}).preset || S.channel.preset));
     const sel = selected;
     const sorts = [["viral","Viral potential"],["funny","Funniest"],["entertaining","Most entertaining"],["emotional","Most emotional"],["interesting","Most interesting"],["story","Best storytelling"],["shortest","Shortest"],["longest","Longest"]];
     return `<div class="pagehead"><div><a class="small muted" href="#projects" style="text-decoration:none">${icon("back")} Projects</a><h1 style="margin-top:6px">${esc(d.video.title || "Video")}</h1>
-        <p class="sub">${esc(words(d.video.platform))}${d.video.duration ? " · " + fmt(d.video.duration) : ""} · ${esc(d.video.auth_basis || "")} ${chip(st)}</p></div>
+        <p class="sub">${esc(words(d.video.platform))}${d.video.duration ? " · " + fmt(d.video.duration) : ""} · ${esc(d.video.auth_basis || "")}${preset ? " · " + esc(preset.label) + " preset" : ""} ${chip(st)}</p></div>
       <div class="row">${j.waiting_retry ? `<button class="btn" data-retry="${j.id}">${icon("refresh")}Retry now</button>` : ["failed","cancelled"].includes(j.state) ? `<button class="btn" data-retry="${j.id}">${icon("refresh")}Retry</button>` : ""}
         ${running ? `<button class="btn ghost" data-cancel="${j.id}">Cancel</button>` : ""}${d.video.url && /^https?:/.test(d.video.url) ? `<a class="btn ghost" target="_blank" rel="noopener" href="${esc(d.video.url)}">${icon("ext")}Source</a>` : ""}</div></div>
       ${j.error ? `<div class="banner ${j.state === "failed" ? "bad" : "warn"}">${icon("x")}<span>${esc(j.error)}${j.waiting_retry ? " It will try again by itself, or press Retry now." : ""}</span></div>` : ""}
@@ -434,7 +452,33 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
           <button class="btn primary sm" id="makesel" ${[...sel].length ? "" : "disabled"}>${icon("spark")}Make selected</button></div>` : ""}</div>
         ${cands.map(c => momentRow(c, j.id)).join("")}
         ${d.rejected && d.rejected.length ? `<div class="sep"></div><details><summary>${d.rejected.length} turned down, and why</summary><div style="margin-top:10px">${d.rejected.map(r => `<div class="small" style="padding:5px 0;border-bottom:1px solid var(--line)"><span class="muted">${r.start != null ? fmt(r.start) + "–" + fmt(r.end) : ""}</span> ${esc(r.title || "")} <span class="faint">· ${esc(r.why)}</span></div>`).join("")}</div></details>` : ""}
-      </div>`;
+      </div>
+      ${transcriptCard(j)}`;
+  }
+  function transcriptCard(j) {
+    const ready = (j.steps || []).some(s => s.key === "transcribing" && s.state === "done") || (detail && detail.candidates.length);
+    if (!ready) return "";
+    const head = `<div class="head"><div><h2>Transcript</h2><div class="small muted">Read or search the whole video. Click a sentence to start a clip there and Shift+click to end it, then make it a clip.</div></div>`;
+    if (!tx || tx.job !== j.id) return `<div class="card">${head}<button class="btn sm" id="txload">${icon("edit")}Show transcript</button></div></div>`;
+    if (tx.loading) return `<div class="card">${head}</div><div class="muted small">Loading…</div></div>`;
+    const q = (tx.q || "").trim().toLowerCase(), [a, b] = tx.sel || [null, null];
+    const lo = a == null ? null : Math.min(a, b == null ? a : b), hi = a == null ? null : Math.max(a, b == null ? a : b);
+    const list = q.length >= 2 ? tx.sents.filter(x => x.t.toLowerCase().includes(q)) : tx.sents;
+    const mark = (t) => { if (q.length < 2) return esc(t); const i = t.toLowerCase().indexOf(q); return i < 0 ? esc(t) : esc(t.slice(0, i)) + "<mark>" + esc(t.slice(i, i + q.length)) + "</mark>" + esc(t.slice(i + q.length)); };
+    const rows = list.slice(0, 4000).map(x => `<div class="sent ${lo != null && x.id >= lo && x.id <= hi ? "in" : ""} ${x.id === lo || x.id === hi ? "edge" : ""}" data-sent="${x.id}"><span class="tm">${fmt(x.s)}</span><span>${tx.speakers > 1 ? `<span class="sp">S${x.sp + 1}</span>` : ""}${mark(x.t)}</span></div>`).join("");
+    let bar = `<span class="small muted">${q.length >= 2 ? `${list.length} match${list.length === 1 ? "" : "es"}` : `${tx.sents.length} sentences`}</span>`;
+    if (lo != null) { const s0 = tx.sents[lo], s1 = tx.sents[hi], dur = s1.e - s0.s;
+      bar = `<span><b>${fmt(s0.s)}–${fmt(s1.e)}</b> <span class="${dur > 180 || dur < 3 ? "" : "muted"}" style="${dur > 180 || dur < 3 ? "color:#fecaca" : ""}">${Math.round(dur)}s${dur > 180 ? " (3 min max)" : dur < 3 ? " (too short)" : ""}</span></span>
+        <span class="row"><button class="btn sm ghost" id="txclear">Clear</button><button class="btn sm primary" id="txmake" ${dur > 180 || dur < 3 ? "disabled" : ""}>${icon("spark")}Make clip from this</button></span>`; }
+    return `<div class="card">${head}<input type="text" id="txq" placeholder="Search the transcript" value="${esc(tx.q || "")}" style="max-width:260px"></div>
+      ${tx.has_source ? `<div class="txplayer"><video id="txv" controls playsinline preload="metadata" src="/clipper/source/${j.id}.mp4"></video></div>` : ""}
+      <div class="txbar">${bar}</div><div class="tx" id="txlist">${rows || `<div class="empty small">No sentences match.</div>`}</div></div>`;
+  }
+  async function loadTranscript(jid) {
+    tx = { job: jid, loading: true, sents: [], q: "", sel: null };
+    const r = await act({ action: "transcript", job: jid }, true);
+    tx = { job: jid, sents: (r && r.sentences) || [], speakers: (r && r.speakers) || 1, has_source: !!(r && r.has_source), q: "", sel: null };
+    render(true);
   }
   function sortMoments(list) {
     const S2 = { viral: c => c.score, funny: c => (c.scores || {}).entertainment + (["funny","one_liner","fail"].includes(c.category) ? 3 : 0), entertaining: c => (c.scores || {}).entertainment + (c.scores || {}).replay * .3,
@@ -450,9 +494,20 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
       <div style="min-width:0"><div class="t">${esc(c.title || c.hook || "Moment")}</div>
         <div class="row small muted" style="margin-top:3px">${fmt(c.start)}–${fmt(c.end)} · ${Math.round(c.duration)}s ${c.category ? chip([words(c.category), "accent"]) : ""}${c.verified ? chip(["context checked","good"]) : ""}${c.weak ? chip(["best of a weak set","warn"]) : ""}</div>
         <div class="why">${esc(c.reason || "")}${c.check ? ` <span class="faint">Check: ${esc(c.check)}</span>` : ""}</div>
+        ${explain(c)}
         <div class="bars">${bar("Hook", p.hook)}${bar("Entertainment", p.entertainment)}${bar("Context", p.context)}</div>
         ${c.similar && c.similar.length ? `<div class="small faint" style="margin-top:6px">${c.similar.length} overlapping take${c.similar.length === 1 ? "" : "s"} of this moment merged into it.</div>` : ""}</div>
       <div class="act">${action}</div></div>`;
+  }
+
+  function explain(c) {
+    const bits = [];
+    if (c.hook) bits.push(`<div><span class="faint">Opens with</span> “${esc(c.hook.slice(0, 160))}”</div>`);
+    if (c.strongest && c.strongest !== c.hook) bits.push(`<div><span class="faint">Strongest line${c.strongest_at != null ? " (" + fmtp(c.strongest_at) + " in)" : ""}</span> “${esc(c.strongest.slice(0, 160))}”</div>`);
+    const tags = [c.audience ? "For: " + c.audience : "", c.hook_type && c.hook_type !== "other" ? "Hook: " + words(c.hook_type) : "", (c.parts || {}).preset ? `Preset ${c.parts.preset > 0 ? "+" : ""}${c.parts.preset}` : ""].filter(Boolean);
+    if (tags.length) bits.push(`<div class="faint">${tags.map(esc).join(" · ")}</div>`);
+    if ((c.weaknesses || []).length) bits.push(`<div style="color:#fcd34d">Weak spots: ${c.weaknesses.map(esc).join("; ")}</div>`);
+    return bits.length ? `<div class="small explain" style="margin-top:6px;display:grid;gap:3px">${bits.join("")}</div>` : "";
   }
 
   function clipCard(c, opts) {
@@ -569,7 +624,8 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
         : `<div class="banner info" style="margin:0">YouTube isn't connected. Double-click <b>Connect YouTube</b> in Jarvis's folder${yt.client ? "" : " (it walks you through the one-time Google setup)"}. Until then, clips are saved here and nothing is uploaded.</div>`}</div>
       <div class="grid2" style="margin-top:16px">
         <div class="card" style="margin:0"><div class="head"><h2>Finding clips</h2></div><div class="fields">
-          <label class="f">Clip length<select id="slen">${[["auto","Auto (let the moment decide)"],["15_30","15–30 seconds"],["30_45","30–45 seconds"],["45_60","45–60 seconds"],["60_90","60–90 seconds"],["custom","Custom"]].map(([k, l]) => `<option value="${k}" ${ch.length_mode === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+          <label class="f">Default preset<select id="spreset">${(S.presets || []).map(p => `<option value="${p.id}" ${ch.preset === p.id ? "selected" : ""} title="${esc(p.about)}">${esc(p.label)}</option>`).join("")}</select></label>
+          <label class="f">Clip length<select id="slen">${[["auto","Auto (the preset's range)"],["15_30","15–30 seconds"],["30_45","30–45 seconds"],["45_60","45–60 seconds"],["60_90","60–90 seconds"],["90_180","90–180 seconds"],["custom","Custom"]].map(([k, l]) => `<option value="${k}" ${ch.length_mode === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
           <label class="f">Custom shortest (s)<input type="number" id="cmin" value="${ch.clip_min}" min="5" max="170"></label>
           <label class="f">Custom longest (s)<input type="number" id="cmax" value="${ch.clip_max}" min="10" max="180"></label>
           <label class="f">Clips per video<input type="number" id="cper" value="${ch.max_clips_per_video}" min="1" max="30"></label>
@@ -579,13 +635,16 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
           <label class="f">Caption style<select id="cstyle"><option value="auto">Auto (by content)</option>${S.styles.map(s => `<option value="${s.id}" ${ch.caption_style === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
           <label class="f">Layout<select id="clayout">${[["auto","Auto"],["track","Follow the speaker"],["podcast","Speaker close-up"],["split","Two people, stacked"],["stack","Facecam + gameplay"],["gameplay","Follow the action"],["fit","Whole picture"],["full","Centre crop"]].map(([k, l]) => `<option value="${k}" ${ch.layout === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
           <label class="f">Brand colour<input type="color" id="cbrand" value="${esc(ch.brand.color)}"></label><label class="f">Highlight colour<input type="color" id="chl" value="${esc(ch.brand.highlight)}"></label></div>
-          <div class="sep"></div>${sw("chook", "Opening text", "A short, accurate line over the first seconds", ch.hook_overlay)}</div>
+          <div class="sep"></div>${sw("chook", "Opening text", "A short, accurate line over the first seconds", ch.hook_overlay)}
+          ${sw("chookopt", "Hook optimisation", "Start on a stronger line inside the clip when no context is lost", ch.hook_optimization !== false)}</div>
       </div>
       <div class="grid2" style="margin-top:16px">
         <div class="card" style="margin:0"><div class="head"><h2>Editing</h2></div>
           ${sw("cjump", "Remove dead air", "Jump cuts on long pauses", ch.jump_cuts)}${sw("cfill", "Remove “um” and “uh”", "From the sound and the captions", ch.remove_fillers)}
           ${sw("czoom", "Subtle zooms", "A gentle settle and alternating framing on cuts", ch.zooms)}${sw("cpunch", "Punch-ins", "On emphasised words and big reactions", ch.punch_ins)}
-          ${sw("ctrans", "Smooth speaker changes", "A short push instead of a hard jump", ch.transitions)}${sw("csfx", "Sound effects", "Soft whoosh and pop, made by the clipper", ch.sound_effects)}
+          ${sw("ctrans", "Smooth speaker changes", "A short push instead of a hard jump", ch.transitions)}
+          <div class="fields" style="margin-top:12px"><label class="f">Editing intensity<select id="cint">${[["subtle","Subtle"],["normal","Normal"],["strong","Strong"]].map(([k, l]) => `<option value="${k}" ${(ch.edit_intensity || "normal") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+            <label class="f">Tighten pauses longer than (s)<input type="number" id="cgap" min="0.25" max="2" step="0.05" value="${ch.max_gap}"></label></div>${sw("csfx", "Sound effects", "Soft whoosh and pop, made by the clipper", ch.sound_effects)}
           <div class="fields" style="margin-top:12px"><label class="f">Noise reduction${tri("cnoise", ch.noise_reduction)}</label><label class="f">Colour correction${tri("ccolor", ch.color_correction)}</label><label class="f">Sharpening${tri("csharp", ch.sharpen)}</label></div>
           <div class="fields" style="margin-top:12px"><label class="f">Licensed music folder<input type="text" id="cmusic" value="${esc(ch.music_folder || "")}" placeholder="Empty = no music"></label>
             <label class="f">Music level (ducks under speech)<input type="range" id="cmvol" min="0" max="0.3" step="0.01" value="${ch.music_volume}"></label></div></div>
@@ -653,7 +712,8 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
         <p class="small faint">Speech is always normalised to YouTube's loudness and kept clear of clipping.</p>`;
     } else if (e.tab === "effects") {
       const tri = (k, v) => `<select id="e_${k}"><option value="auto" ${v === "auto" ? "selected" : ""}>Auto</option><option value="on" ${v === true ? "selected" : ""}>On</option><option value="off" ${v === false ? "selected" : ""}>Off</option></select>`;
-      body = `${swE("zooms", "Subtle zooms", edField("zooms", ch.zooms))}${swE("punch_ins", "Punch-ins on big moments", edField("punch_ins", ch.punch_ins))}${swE("hook_overlay", "Opening text", edField("hook_overlay", ch.hook_overlay))}
+      body = `<label class="f" style="margin-bottom:10px">Editing intensity<select id="e_edit_intensity">${[["subtle","Subtle"],["normal","Normal"],["strong","Strong"]].map(([k, l]) => `<option value="${k}" ${edField("edit_intensity", ch.edit_intensity || "normal") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        ${swE("zooms", "Subtle zooms", edField("zooms", ch.zooms))}${swE("punch_ins", "Punch-ins on big moments", edField("punch_ins", ch.punch_ins))}${swE("hook_overlay", "Opening text", edField("hook_overlay", ch.hook_overlay))}
         <label class="f" style="margin-top:10px">Opening text (2–6 words, must match the clip)<input type="text" id="e_hook" maxlength="40" value="${esc(e.hook)}"></label>
         ${(ex.hook_texts || []).length ? `<div class="row" style="margin-top:6px">${ex.hook_texts.map(h => `<button class="chip" data-usehook="${esc(h)}" style="cursor:pointer">${esc(h)}</button>`).join("")}</div>` : ""}
         <div class="fields" style="margin-top:12px"><label class="f">Colour correction${tri("color_correction", edField("color_correction", ch.color_correction))}</label><label class="f">Sharpening${tri("sharpen", edField("sharpen", ch.sharpen))}</label></div>
@@ -678,7 +738,8 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
         <p class="sub row">${chip(st2)} <span>${Math.round(c.duration)}s · version ${c.version || 1} · ${esc(words(c.layout || ""))} · ${esc(words(c.caption_style || ""))} captions</span></p></div>
         <div class="row"><span class="small muted" id="edstatus"></span><button class="btn primary" id="rerender">${icon("refresh")}Re-render with changes</button></div></div>
       <div class="editor"><div class="player">${c.has_file ? `<video id="pv" controls playsinline poster="/clipper/thumb/${c.id}.jpg?v=${c.version}" src="/clipper/media/${c.id}.mp4?v=${c.version}"></video>` : `<div class="card empty">No file yet.</div>`}
-          <div class="row" style="margin-top:10px">${ring(c.score, "score")}<div class="small muted" style="flex:1">${esc(c.reason || "")}</div></div></div>
+          <div class="row" style="margin-top:10px">${ring(c.score, "score")}<div class="small muted" style="flex:1">${esc(c.reason || "")}</div></div>
+          ${explain({ hook: c.hook, strongest: ex.strongest, strongest_at: ex.strongest_at, audience: ex.audience || c.audience, hook_type: c.hook_type, parts: ex.parts, weaknesses: ex.weaknesses })}</div>
         <div class="card" style="margin:0"><div class="tabs">${tabs.map(([k, l]) => `<button data-etab="${k}" class="${e.tab === k ? "on" : ""}">${l}</button>`).join("")}</div><div id="ebody">${body}</div></div></div>`;
     if (e.tab === "trim") drawTimeline();
     if (e.tab === "captions") drawCapWords();
@@ -715,13 +776,17 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
     if (Object.keys(e.words).length) out.words = e.words;
     if (e.layout !== "auto") out.layout = e.layout;
     if (e.manual) out.crop = { x: e.crop.x, zoom: e.crop.zoom || 1 }; else if (e.crop.zoom && e.crop.zoom !== 1 && e.layout !== "auto") out.crop = { zoom: e.crop.zoom };
-    for (const k of ["jump_cuts","remove_fillers","zooms","punch_ins","sound_effects","hook_overlay","music","music_volume","noise_reduction","color_correction","sharpen"]) if (e.fx[k] != null) out[k] = e.fx[k];
+    for (const k of ["jump_cuts","remove_fillers","zooms","punch_ins","edit_intensity","sound_effects","hook_overlay","music","music_volume","noise_reduction","color_correction","sharpen"]) if (e.fx[k] != null) out[k] = e.fx[k];
     if (e.hook !== ((c.extra || {}).hook_text || "")) out.hook_text = e.hook;
     return out;
   }
 
   // ---------- events ----------
   function afterRender() {
+    const q = $("txq");
+    if (q) q.addEventListener("input", () => { clearTimeout(q.h); q.h = setTimeout(() => { tx.q = q.value; const pos = q.selectionStart; render(true); const q2 = $("txq"); if (q2) { q2.focus(); q2.setSelectionRange(pos, pos); } }, 200); });
+    const ap = $("addpreset");
+    if (ap) ap.addEventListener("change", () => { const p = (S.presets || []).find(x => x.id === ap.value); if ($("presetabout")) $("presetabout").textContent = p ? p.about + " Clips " + p.length + "." : ""; });
     const u = $("addurl");
     if (u) { u.addEventListener("input", () => { clearTimeout(u.h); u.h = setTimeout(checkLink, 350); }); u.addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("addbtn").click(); }); }
     const drop = $("drop");
@@ -751,6 +816,7 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
     x.open("POST", "/clipper/upload"); x.setRequestHeader("X-Jarvis-Token", token); x.setRequestHeader("X-File-Name", encodeURIComponent(f.name));
     const cnt = $("addcount") && $("addcount").value, len = $("addlen") && $("addlen").value;
     if (cnt) x.setRequestHeader("X-Clip-Count", cnt); if (len) x.setRequestHeader("X-Clip-Length", len);
+    const pr = $("addpreset") && $("addpreset").value; if (pr) x.setRequestHeader("X-Clip-Preset", pr);
     x.upload.onprogress = (ev) => { if (ev.lengthComputable && $("uplbar")) $("uplbar").style.width = (ev.loaded / ev.total * 100).toFixed(1) + "%"; };
     x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (e) { j = { message: "Upload failed (" + x.status + ")" }; }
       if ($("uplmsg")) $("uplmsg").textContent = j.message || ""; toast(j.message || "Done."); load(); if (j.job) location.hash = "#project/" + j.job; };
@@ -759,7 +825,14 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
   }
 
   document.addEventListener("click", async (ev) => {
+    const sn = ev.target.closest("[data-sent]");
+    if (sn && tx) { const id = +sn.dataset.sent; if (ev.shiftKey && tx.sel) tx.sel = [tx.sel[0], id]; else tx.sel = [id, id];
+      const v = $("txv"), x = tx.sents[id]; if (v && x && !ev.shiftKey) { try { v.currentTime = x.s; } catch (e) {} }
+      const keep = $("txlist") ? $("txlist").scrollTop : 0; render(true); if ($("txlist")) $("txlist").scrollTop = keep; return; }
     const t = ev.target.closest("button, [data-cw], [data-wi], [data-etab]"); if (!t) return;
+    if (t.id === "txload") { loadTranscript(route.id); return; }
+    if (t.id === "txclear") { tx.sel = null; const keep = $("txlist") ? $("txlist").scrollTop : 0; render(true); if ($("txlist")) $("txlist").scrollTop = keep; return; }
+    if (t.id === "txmake") { const [a, b] = tx.sel; const r = await act({ action: "make_range", job: route.id, start_id: Math.min(a, b), end_id: Math.max(a, b) }); if (r && r.ok) tx.sel = null; loadDetail(); return; }
     if (t.dataset.etab) { editor.tab = t.dataset.etab; drawEditor(); return; }
     if (t.dataset.wi != null && editor) { const w = editor.c.words[+t.dataset.wi]; if (ev.shiftKey) { editor.end = Math.max(editor.start + 3, w.e + 0.2); } else { editor.start = Math.min(editor.end - 3, Math.max(0, w.s - 0.1)); } drawTimeline(); return; }
     if (t.dataset.cw != null && editor) { const w = editor.c.words.find(x => x.s.toFixed(3) === t.dataset.cw); const cur = editor.words[t.dataset.cw];
@@ -793,7 +866,7 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
     if (t.id === "unlearnall") { if (!(await confirmBox("Forget everything I learned from your edits and choices? I won't learn those same things again.", "Forget all"))) return; return act({ action: "unlearn_all" }); }
     if (t.dataset.filter != null) { filter.state = t.dataset.filter; render(true); return; }
     if (t.id === "addbtn") { const u = $("addurl").value.trim(); if (!u) return toast("Paste a link or file path first, or drop a file below.");
-      const r = await act({ action: "add", url: u, count: +$("addcount").value || null, length: $("addlen").value });
+      const r = await act({ action: "add", url: u, count: +$("addcount").value || null, length: $("addlen").value, preset: $("addpreset") ? $("addpreset").value : null });
       if (r && r.ok) { $("addurl").value = ""; if (r.job) location.hash = "#project/" + r.job; } return; }
     if (t.id === "makesel") { const ranks = [...selected].filter(x => typeof x === "number"); if (!ranks.length) return; const r = await act({ action: "pick", job: route.id, ranks }); selected.clear(); return r; }
     if (t.id === "selall") { document.querySelectorAll("[data-selclip]").forEach(x => selected.add("c" + x.dataset.selclip)); render(true); return; }
@@ -822,7 +895,8 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
       e_color: () => e.cap.color = t.value, e_active: () => e.cap.active = t.value, e_stroke: () => e.cap.stroke = num(t.value), e_shadow: () => e.cap.shadow = num(t.value),
       e_pos: () => { if (t.value) e.cap.position = t.value; else delete e.cap.position; }, e_anim: () => e.cap.animation = t.value, e_layout: () => e.layout = t.value,
       e_manual: () => { e.manual = t.checked; $("manualbox").classList.toggle("hide", !t.checked); drawWin(); }, e_hook: () => e.hook = t.value,
-      e_music_volume: () => e.fx.music_volume = num(t.value), e_noise_reduction: () => e.fx.noise_reduction = tri(t.value), e_color_correction: () => e.fx.color_correction = tri(t.value), e_sharpen: () => e.fx.sharpen = tri(t.value) };
+      e_music_volume: () => e.fx.music_volume = num(t.value), e_noise_reduction: () => e.fx.noise_reduction = tri(t.value), e_color_correction: () => e.fx.color_correction = tri(t.value), e_sharpen: () => e.fx.sharpen = tri(t.value),
+      e_edit_intensity: () => e.fx.edit_intensity = t.value };
     if (map[t.id]) map[t.id]();
     if (t.dataset.efx) e.fx[t.dataset.efx] = t.checked;
   });
@@ -869,6 +943,7 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
         publish_times: list($("ctimes").value), max_uploads_per_day: +$("cday").value, niches: list($("cniche").value), jump_cuts: $("cjump").checked, remove_fillers: $("cfill").checked,
         zooms: $("czoom").checked, punch_ins: $("cpunch").checked, transitions: $("ctrans").checked, sound_effects: $("csfx").checked, hook_overlay: $("chook").checked,
         noise_reduction: tri($("cnoise").value), color_correction: tri($("ccolor").value), sharpen: tri($("csharp").value), music_folder: $("cmusic").value.trim(), music_volume: +$("cmvol").value,
+        preset: $("spreset").value, edit_intensity: $("cint").value, max_gap: Math.max(0.25, Math.min(2, +$("cgap").value || 0.55)), hook_optimization: $("chookopt").checked,
         brand: { color: $("cbrand").value, highlight: $("chl").value } } }); };
     const old = ch.permissions;
     if ((perms.publish_public && !old.publish_public) || (perms.schedule_public && !old.schedule_public)) {
@@ -888,7 +963,10 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
   async function loadDetail(silent) {
     if (route.view !== "project") return;
     const id = route.id;
-    try { const d = await (await fetch("/clipper/job/" + id, { cache: "no-store" })).json(); if (route.id !== id) return; detail = d; detailFor = id; if (!silent || !busy()) render(true); } catch (e) { /* shown on next poll */ }
+    try { const raw = await (await fetch("/clipper/job/" + id, { cache: "no-store" })).text(); if (route.id !== id) return;
+      if (silent && raw === loadDetail.last && detailFor === id) return; loadDetail.last = raw;
+      detail = JSON.parse(raw); detailFor = id;
+      if (!silent || !busy()) { const keep = $("txlist") ? $("txlist").scrollTop : 0; render(true); if ($("txlist")) $("txlist").scrollTop = keep; } } catch (e) { /* shown on next poll */ }
   }
   window.addEventListener("hashchange", () => { route = parseRoute(); selected.clear(); if (route.view !== "edit") editor = null; if (route.view === "project") { detail = null; loadDetail(); } render(true); window.scrollTo(0, 0); });
   nav(); load(); setInterval(load, 4000); setInterval(() => { if (route.view === "project") loadDetail(true); }, 2500);

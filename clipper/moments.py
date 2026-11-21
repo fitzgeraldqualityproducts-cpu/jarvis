@@ -39,7 +39,7 @@ HOOK_TYPES = ["question", "bold_claim", "story", "surprising_fact", "emotional",
 CATEGORIES = ["funny", "reaction", "controversial", "opinion", "argument", "emotional", "revelation", "gameplay",
               "achievement", "fail", "story", "educational", "high_energy", "one_liner", "suspense", "relatable", "other"]
 LENGTHS = {"auto": (12, 60, 90), "15_30": (15, 30, 38), "30_45": (30, 45, 55), "45_60": (45, 60, 70),
-           "60_90": (60, 90, 120)}
+           "60_90": (60, 90, 120), "90_180": (90, 180, 180)}
 DANGLING = re.compile(r"^(and|but|or|because|which|that's why|that is why|also|then|plus|anyway|"
                       r"like i said|as i said|it|this|that|they|he|she|those|these|him|her|them)\b", re.I)
 FILLER = re.compile(r"^(um+|uh+|erm+|er|ah+|hmm+|mm+)[.,!?]*$", re.I)
@@ -60,9 +60,10 @@ def lengths(channel, mode=None):
     """(shortest, preferred longest, hard longest) seconds for a channel (or a per-job choice):
     auto, 15_30, 30_45, 45_60, 60_90, or custom (the channel's own clip_min/clip_max/clip_hard_max)."""
     mode = mode or channel.get("length_mode") or "auto"
-    if isinstance(mode, (list, tuple)) and len(mode) == 2:
+    if isinstance(mode, (list, tuple)) and len(mode) in (2, 3):
         lo, hi = float(mode[0]), float(mode[1])
-        return lo, hi, max(hi, min(180.0, hi * 1.15))
+        hard = float(mode[2]) if len(mode) == 3 else min(180.0, hi * 1.15)
+        return lo, hi, max(hi, min(180.0, hard))
     if mode in LENGTHS:
         return tuple(float(x) for x in LENGTHS[mode])
     return float(channel["clip_min"]), float(channel["clip_max"]), float(channel["clip_hard_max"])
@@ -114,6 +115,7 @@ Length: let the content decide. Typical {lo}-{hi} seconds, up to {hard} only if 
 A great 20-second moment stays short; never pad. A great story is kept whole.
 Channel: {channel}. Niches: {niches}. Audience: {audience}. Video: "{title}" by {creator}.
 {priorities}
+{focus}
 Transcript: [sentence number] (time{speaker_note}) text. LOUD = loudness spike (laughing, shouting).
 PAUSE Ns = silence after the line. CHAT xN = viewers' chat went N times faster than usual.
 {lines}
@@ -132,6 +134,8 @@ Return ONLY a JSON array (best first, at most {n}), each:
 {{"start_id": int, "end_id": int, "setup_id": first sentence needed for context, "payoff_id": sentence where it lands,
  "category": one of {categories}, "hook": "opening line, verbatim", "hook_type": one of {hook_types},
  "reason": "why it works, one short sentence", "topic": "2-4 words",
+ "strongest": "the single strongest line in the clip, verbatim", "audience": "who it's for, 2-5 words",
+ "weakness": "its biggest weakness in a few words, or empty if none",
  "highlight": ["up to 6 words said in the clip worth highlighting: punchline, names, emotional or surprising words"],
  "scores": {{{criteria}}}, "context_complete": 0-10, "title": "accurate, curious, under 70 characters"}}"""
 
@@ -248,7 +252,7 @@ def _ask_claude(tr, channel, video, want, signals, progress):
             lo=int(channel["clip_min"]), hi=int(channel["clip_max"]), hard=int(channel["clip_hard_max"]), channel=channel["name"],
             niches=", ".join(channel.get("niches") or []), audience=channel.get("audience", "general"),
             title=str(video.get("title") or "")[:150], creator=video.get("creator") or "unknown",
-            priorities=pri_text, speaker_note=", speaker" if tr.get("speakers", 1) > 1 else "",
+            priorities=pri_text, focus=channel.get("preset_focus") or "", speaker_note=", speaker" if tr.get("speakers", 1) > 1 else "",
             lines=transcript_lines(tr, a, b, signals), n=per, hook_types=HOOK_TYPES, categories=CATEGORIES,
             criteria=", ".join(f'"{c}": 0-10' for c in CRITERIA))
         got = llm.ask_json(prompt, timeout=420)
@@ -289,7 +293,7 @@ def finalize(c, tr, channel):
     if setup is not None and 0 <= setup < a and a - setup <= 4 and not c.get("start_locked"):
         a = setup                                       # the setup the moment needs
         notes.append("starts at the setup")
-    if payoff is not None and b < payoff < len(sents) and payoff - b <= 4:
+    if payoff is not None and not c.get("end_locked") and b < payoff < len(sents) and payoff - b <= 4:
         b = payoff                                      # through the payoff
         notes.append("runs through the payoff")
     steps = 0
@@ -298,15 +302,15 @@ def finalize(c, tr, channel):
         a -= 1                                          # "And that's why..." needs what came before
         steps += 1
         notes.append("started earlier for context")
-    while b < len(sents) - 1 and not re.search(r"[.!?…]['\")\]]*$", sents[b]["text"].strip()) and \
+    while b < len(sents) - 1 and not c.get("end_locked") and not re.search(r"[.!?…]['\")\]]*$", sents[b]["text"].strip()) and \
             length(a, b + 1) <= hard:
         b += 1                                          # don't stop mid-sentence
         notes.append("ended later to finish the sentence")
-    while length(a, b) < lo and b < len(sents) - 1 and length(a, b + 1) <= hi:
+    while length(a, b) < lo and b < len(sents) - 1 and length(a, b + 1) <= hi and not c.get("end_locked"):
         b += 1                                          # under the shortest length: carry on a sentence
     if length(a, b) > hard:
         return None                      # cutting the ending off could change the point: drop it instead
-    if length(a, b) < max(5.0, lo * 0.6):
+    if length(a, b) < max(3.0 if c.get("end_locked") else 5.0, lo * 0.6):
         return None
     w0, w1 = words[sents[a]["i0"]], words[sents[b]["i1"]]
     prev_end = words[sents[a]["i0"] - 1]["e"] if sents[a]["i0"] > 0 else 0.0
@@ -330,9 +334,13 @@ def finalize(c, tr, channel):
                category=c.get("category") if c.get("category") in CATEGORIES else "other",
                highlight=[str(k) for k in (c.get("highlight") or c.get("keywords") or [])][:8],
                keywords=[str(k) for k in (c.get("keywords") or [])][:10],
+               strongest=str(c.get("strongest") or "")[:300], audience=str(c.get("audience") or "")[:60],
+               weakness=str(c.get("weakness") or "")[:160],
                speakers=sorted({s["speaker"] for s in sents[a:b + 1]}))
     out.pop("reject", None)
     out["context_ok"] = ctx >= 5.0
+    out["strongest_at"] = _strongest_at(out["strongest"], sents, a, b, start)
+    out["weaknesses"] = weaknesses(out, m)
     lively = m["loud"] > 0 or out["category"] in ("gameplay", "reaction", "high_energy", "achievement", "fail")
     if m["words_per_sec"] < 0.7 and not lively:
         out["reject"] = "mostly silence"
@@ -341,6 +349,44 @@ def finalize(c, tr, channel):
     elif m["unique_ratio"] < 0.3 and m["words"] > 40:
         out["reject"] = "repeats itself"
     return out
+
+
+def _toks(text):
+    return [t for t in re.sub(r"[^a-z0-9' ]", " ", str(text).lower()).split() if t]
+
+
+def _strongest_at(line, sents, a, b, start):
+    """Seconds into the clip where its strongest line is said (the sentence that best matches it)."""
+    want = set(_toks(line))
+    if not want:
+        return None
+    best, at = 0.0, None
+    for s in sents[a:b + 1]:
+        have = set(_toks(s["text"]))
+        share = len(want & have) / len(want) if have else 0.0
+        if share > best:
+            best, at = share, s["s"]
+    return round(max(0.0, at - start), 2) if at is not None and best >= 0.5 else None
+
+
+def weaknesses(c, m):
+    """Honest weak spots: the reviewer's own note plus what was measured."""
+    out = []
+    if c.get("weakness"):
+        out.append(str(c["weakness"])[:160])
+    if m.get("first_word", 0) > 1.0:
+        out.append(f"first word only after {m['first_word']:.1f}s")
+    elif m.get("words_first_3s", 9) < 4 and not m.get("loud"):
+        out.append("slow first 3 seconds")
+    if m.get("dead_air", 0) > 0.2:
+        out.append(f"{round(m['dead_air'] * 100)}% pauses (jump cuts tighten these)")
+    if m.get("fillers", 0) >= 4:
+        out.append(f"{m['fillers']} filler words")
+    if c.get("context_complete", 6) < 6:
+        out.append("may need more context")
+    if not re.search(r"[.!?…]['\")\]]*$", str(c.get("transcript", "")).strip()):
+        out.append("ending may not land")
+    return out[:5]
 
 
 def measure(words, sents, a, b, start, end, loud=()):
@@ -372,7 +418,8 @@ def score(c, channel, learned=None):
     pri = {OLD_NAMES.get(k, k): v for k, v in (channel.get("priorities") or {}).items()}
     if "education" in (channel.get("priorities") or {}):
         pri["clarity"] = (channel.get("priorities") or {})["education"]      # clear explanations
-    w = {k: WEIGHTS[k] * float(pri.get(k, 1.0)) for k in CRITERIA}
+    pw = channel.get("preset_weights") or {}
+    w = {k: WEIGHTS[k] * float(pri.get(k, 1.0)) * float(pw.get(k, 1.0)) for k in CRITERIA}
     raw = dict(c.get("scores") or {})
     for old, new in OLD_NAMES.items():
         if old in raw and new not in raw:
@@ -393,6 +440,8 @@ def score(c, channel, learned=None):
             adj -= 4.0
         if m.get("loud"):
             adj += min(3.0, 1.0 * m["loud"])                         # laughing/shouting: real energy
+    preset = max(-6.0, min(6.0, float((channel.get("category_bonus") or {}).get(c.get("category"), 0.0))))
+    adj += preset                                                     # the preset's kind of moment
     bonus = 0.0
     for key, table in (learned or {}).items():          # small, capped nudges from real results
         if not isinstance(table, dict):
@@ -412,7 +461,7 @@ def score(c, channel, learned=None):
     total = round(max(0.0, min(100.0, total)), 1)
     c["parts"] = {"hook": round(c["scores"]["hook"] * 10), "entertainment": round(c["scores"]["entertainment"] * 10),
                   "context": round(c.get("context_complete", 6.0) * 10), "content": round(base * 10, 1),
-                  "measured": round(adj, 1), "learned": round(learn, 1)}
+                  "measured": round(adj - preset, 1), "preset": round(preset, 1), "learned": round(learn, 1)}
     return total
 
 
@@ -498,7 +547,7 @@ def verify(cands, tr, channel, video=None, report=None):
         elif v.get("verdict") == "extend_end" and c["end_id"] < len(sents) - 1:
             changed = dict(c, end_id=c["end_id"] + 1, payoff_id=None)
         bs = _int(v.get("better_start_id"))
-        if changed is None and bs is not None and c["start_id"] < bs <= c["end_id"]:
+        if changed is None and bs is not None and c["start_id"] < bs <= c["end_id"] and channel.get("hook_optimization", True):
             trial = dict(c, start_id=bs, start_locked=True, setup_id=None,
                          notes=c.get("notes", []) + ["opens on a stronger line"])
             trial["hook"] = sents[bs]["text"]

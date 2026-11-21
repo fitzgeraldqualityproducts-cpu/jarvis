@@ -332,18 +332,28 @@ captions, writes titles and descriptions, checks the quality, and (once you allo
 - "Pause clipping", "resume clipping", and **"emergency stop"** (no new jobs, no uploads, until "resume clipping")
 
 **Dashboard:** http://localhost:8765/clipper (or the CLIPPER link on the HUD), a dark dashboard with:
-- **New video:** paste a YouTube/Twitch link (checked as you type) or drag in a video file; pick a clip
-  length (auto, 15–30, 30–45, 45–60, 60–90 seconds) and how many clips.
+- **New video:** paste a YouTube/Twitch link (checked as you type) or drag in a video file; pick a preset,
+  a clip length (the preset's, 15–30, 30–45, 45–60, 60–90, 90–180 seconds) and how many clips.
+- **Presets** (per video, or a default in Settings): Balanced, Viral potential, Educational, Entertainment,
+  Storytelling, Podcast. Each one really changes things: what Claude looks for, how the score weighs hook,
+  story, clarity and so on, which kinds of moments get a small bonus, the clip length, and the editing
+  (pause tightening, zoom/punch-in strength, caption style). Your own settings always win over a preset.
 - **Projects:** real progress through each step (getting the video, audio, transcript, understanding,
   ranking, framing, rendering, quality check), with Retry now / Cancel.
 - **Moments, ranked:** every candidate with a 0–100 score (hook, entertainment and context shown
   separately), why it was picked, its kind of moment (funny, story, reaction...), sorting by viral,
   funniest, most emotional, storytelling, shortest, longest... and "Make selected" for any moment you
-  want as a clip. Turned-down moments are listed with the reason. Scores are estimates, not view predictions.
+  want as a clip. Each moment also shows its opening line, its strongest line (and when it's said), who it's
+  for, and its weak spots (the reviewer's note plus measured ones like a slow start or long pauses).
+  Turned-down moments are listed with the reason. Scores are estimates, not view predictions.
+- **Transcript:** the whole video's transcript on the project page, searchable. Click a sentence to start
+  a clip there (the source video jumps there too while it's still on disk), Shift+click to end it, then
+  "Make clip from this": it's measured, scored, titled and rendered like any other moment.
 - **Clips:** preview, download, multi-select export (to Movies/Videos › Jarvis Shorts), approve, delete.
 - **Editor:** trim on a timeline (snaps to words), caption style, font, size, colours, outline, shadow,
   position, animation, fix caption words, layout or hand framing, dead-air and "um" removal, noise
-  reduction, music level, sound effects, zooms and punch-ins, opening text, titles/descriptions, re-render.
+  reduction, music level, sound effects, zooms and punch-ins, editing intensity, opening text,
+  titles/descriptions, re-render.
   If a re-render fails, the previous version is kept.
 - **Approvals, Analytics** (predicted score vs. real results, kept separate) and **Settings**.
 You can also drop video files into `clipper_data/inbox` and they're picked up automatically.

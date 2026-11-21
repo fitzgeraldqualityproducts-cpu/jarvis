@@ -341,14 +341,15 @@ def zoom_at(t_out, intervals, p, channel, punches=()):
     if p.get("layout") not in ("track", "fit", "scale"):
         return 1.0
     z = 1.0
+    k_int = _intensity(channel)["zoom"]
     if channel.get("zooms", True):
         if t_out < 0.6:
-            z += 0.08 * (1 - t_out / 0.6) ** 2
+            z += 0.08 * k_int * (1 - t_out / 0.6) ** 2
         acc = 0.0
         for k, (a, b) in enumerate(intervals):
             if t_out < acc + (b - a):
                 if k % 2 == 1:
-                    z += 0.05
+                    z += 0.05 * k_int
                 break
             acc += b - a
     for t0, amount in punches:
@@ -358,19 +359,26 @@ def zoom_at(t_out, intervals, p, channel, punches=()):
     return z
 
 
-def plan_punches(ow, plan, channel, intervals, min_gap=3.5):
+def _intensity(channel):
+    from clipper import presets
+    return presets.INTENSITY.get(channel.get("edit_intensity") or "normal", presets.INTENSITY["normal"])
+
+
+def plan_punches(ow, plan, channel, intervals, min_gap=None):
     """When to push in: emphasised (loud) words that are highlights, and speaker changes, at most one
     every few seconds and never in the first second (the opening already settles)."""
     out = []
+    k_int = _intensity(channel)
+    min_gap = k_int["punch_gap"] if min_gap is None else min_gap
     if channel.get("punch_ins", True):
         for w in ow:
             if w.get("emph") and w["s"] > 1.0:
-                out.append((w["s"], 0.07))
+                out.append((w["s"], 0.07 * k_int["zoom"]))
     if channel.get("transitions", True):
         for t in plan.get("shots") or []:
             to = to_output_time(float(t), [(a - intervals[0][0], b - intervals[0][0]) for a, b in intervals])
             if to is not None and to > 1.0:
-                out.append((to, 0.05))
+                out.append((to, 0.05 * min(1.0, k_int["zoom"])))
     kept = []
     for t, a in sorted(out):
         if not kept or t - kept[-1][0] >= min_gap:

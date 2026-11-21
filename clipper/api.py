@@ -7,6 +7,7 @@ GET  /clipper/clip/<id>             one clip for the editor: the words around it
 GET  /clipper/media/<clip>.mp4      a clip (with Range support so the preview can seek; ?download=1 saves it)
 GET  /clipper/thumb/<clip>.jpg
 GET  /clipper/frame/<clip>.jpg?t=   a frame of the source video (for positioning the crop by hand)
+GET  /clipper/source/<job>.mp4      the whole source video, while it's still on disk (plays the transcript)
 POST /clipper/action                buttons, with the page's token (same protection as the type box)
 POST /clipper/upload                a video file dropped on the page (raw bytes, with the token)"""
 import os
@@ -16,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from clipper import captions, data_dir, db, jobs, media, moments, publish, settings, sources, status
+from clipper import captions, data_dir, db, jobs, media, moments, presets, publish, settings, sources, status
 
 VIDEO_TYPES = (".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".flv", ".ts", ".mts")
 MAX_UPLOAD_GB = 20
@@ -61,7 +62,7 @@ def state():
         j["clip_count"] = db.one("SELECT COUNT(*) n FROM clips WHERE job_id=? AND state NOT IN ('rejected','regenerate','deleted','qa_failed')",
                                  j["id"])["n"]
         j["waiting_retry"] = j["state"] == "queued" and bool(j.get("error"))
-        j["options"] = {k: v for k, v in (j.get("options") or {}).items() if k in ("length", "stages")}
+        j["options"] = {k: v for k, v in (j.get("options") or {}).items() if k in ("length", "stages", "preset")}
     return {
         "now": time.time(), "overview": status.overview(), "stats": stats(), "jobs": js, "clips": clips,
         "events": db.q("SELECT id, t, level, job_id, clip_id, msg FROM events ORDER BY id DESC LIMIT 80"),
@@ -76,7 +77,7 @@ def state():
         "styles": [{"id": k, "name": captions.STYLE_NAMES.get(k, k), **{x: v[x] for x in ("font", "size", "color", "active", "keyword",
                     "stroke", "shadow", "y", "animation", "words_per_line", "uppercase")}} for k, v in captions.STYLES.items()],
         "fonts": sorted(captions.FONTS), "animations": captions.ANIMATIONS, "layouts": settings.LAYOUTS,
-        "lengths": settings.LENGTH_MODES, "sorts": list(moments.SORTS), "export_dir": str(export_dir()),
+        "lengths": settings.LENGTH_MODES, "presets": presets.public(), "sorts": list(moments.SORTS), "export_dir": str(export_dir()),
         "platform": sys.platform,
     }
 
@@ -143,7 +144,8 @@ def job_detail(job_id):
     for c in found.get("candidates", []):
         cands.append({k: c.get(k) for k in ("rank", "title", "titles", "start", "end", "duration", "score", "parts", "scores",
                                             "category", "hook", "hook_type", "reason", "check", "notes", "measures", "similar",
-                                            "topic", "weak", "method", "verified")} | {"clip_id": made.get(c.get("rank"))})
+                                            "topic", "weak", "method", "verified", "strongest", "strongest_at", "audience",
+                                            "weaknesses", "manual")} | {"clip_id": made.get(c.get("rank"))})
     j["steps"] = steps(j)
     j["waiting_retry"] = j["state"] == "queued" and bool(j.get("error"))
     return {"job": j, "video": {k: v.get(k) for k in ("id", "title", "url", "platform", "creator", "duration", "auth_basis")},
@@ -171,6 +173,32 @@ def clip_detail(clip_id):
                source={"title": v.get("title"), "duration": v.get("duration"), "platform": v.get("platform")},
                window=[max(0.0, lo), hi], has_source=bool(_source_path(c)))
     return out
+
+
+def transcript(job_id):
+    """The whole video's transcript as sentences (number, start, end, speaker, text), for reading,
+    searching and picking your own clip on the project page."""
+    j = db.job(int(job_id))
+    if not j:
+        return {"sentences": [], "error": "no such job"}
+    from clipper import pipeline
+    tr = media.load(pipeline.folder_for(j["id"]) / "transcript.json") or {}
+    sents = [{"id": x["id"], "s": round(x["s"], 2), "e": round(x["e"], 2), "sp": x.get("speaker", 0), "t": x["text"]}
+             for x in tr.get("sentences") or []]
+    return {"sentences": sents, "speakers": tr.get("speakers", 1), "has_source": bool(source_file(j["id"]))}
+
+
+def source_file(job_id):
+    """The job's whole source video if it's still on disk (for playing the transcript), else None."""
+    j = db.job(int(job_id))
+    if not j:
+        return None
+    v = db.video(j["video_id"]) or {}
+    if v.get("platform") == "file" and v.get("path") and os.path.exists(v["path"]):
+        return v["path"]
+    from clipper import pipeline
+    src = media.load(pipeline.folder_for(j["id"]) / "source.json") or {}
+    return src["video"] if src.get("video") and os.path.exists(src["video"]) else None
 
 
 def media_path(kind, clip_id):
@@ -339,8 +367,10 @@ def action(req):
     try:
         if a == "add":
             opts = {}
-            if req.get("length") in settings.LENGTH_MODES and req.get("length") not in ("custom",):
+            if req.get("length") in settings.LENGTH_MODES and req.get("length") not in ("custom", "auto"):
                 opts["length"] = req["length"]
+            if req.get("preset") in presets.PRESETS:
+                opts["preset"] = req["preset"]
             v, job, msg = sources.add(str(req.get("url", "")).strip(), max_clips=req.get("count") or None, priority=8,
                                       options=opts or None)
             return {"ok": job is not None, "message": msg, "job": job["id"] if job else None}
@@ -363,6 +393,11 @@ def action(req):
         if a == "regenerate":
             from clipper import pipeline
             return {"ok": True, "message": pipeline.regenerate(int(cid))}
+        if a == "transcript":
+            return dict(transcript(int(jid)), ok=True, message="")
+        if a == "make_range":
+            from clipper import pipeline
+            return {"ok": True, "message": pipeline.add_range(int(jid), int(req["start_id"]), int(req["end_id"]))}
         if a == "pick":
             from clipper import pipeline
             return {"ok": True, "message": pipeline.pick(int(jid), req.get("ranks") or [])}

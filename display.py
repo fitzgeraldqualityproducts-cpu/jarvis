@@ -255,6 +255,11 @@ class _Handler(BaseHTTPRequestHandler):
                 if f:
                     self._send_file(f, "image/jpeg")
                     return True
+            if path.startswith("/clipper/source/") and path.endswith(".mp4") and path[16:-4].isdigit():
+                f = api.source_file(int(path[16:-4]))
+                if f:
+                    self._send_file(f, "video/mp4")
+                    return True
             for kind, ext, ctype in (("media", ".mp4", "video/mp4"), ("thumb", ".jpg", "image/jpeg")):
                 prefix = f"/clipper/{kind}/"
                 if path.startswith(prefix) and path.endswith(ext) and path[len(prefix):-len(ext)].isdigit():
@@ -383,7 +388,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if res.get("ok"):
                     count = self.headers.get("X-Clip-Count")
                     res = api.action({"action": "add", "url": res["path"], "count": int(count) if count and count.isdigit() else None,
-                                      "length": self.headers.get("X-Clip-Length") or None})
+                                      "length": self.headers.get("X-Clip-Length") or None,
+                                      "preset": self.headers.get("X-Clip-Preset") or None})
             except Exception as e:
                 res = {"ok": False, "message": f"{type(e).__name__}: {e}"}
             self._send(200, json.dumps(res, default=str).encode(), "application/json")
