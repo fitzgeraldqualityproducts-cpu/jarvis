@@ -512,12 +512,38 @@ class _Watch:
             pass
 
 
+def _muted():
+    try:
+        import mute
+        return mute.MUTED.is_set()
+    except Exception:
+        return False
+
+
+def _wait(proc, stop):
+    """Waits for a phrase to finish, but cuts it off at once if he's muted. True if muted."""
+    while proc.poll() is None:
+        if _muted():
+            proc.terminate()
+            stop.set()
+            print("(muted mid-sentence)")
+            return True
+        time.sleep(0.05)
+    try:
+        proc.wait()
+    except Exception:
+        pass
+    return False
+
+
 def _play(audio, interruptible, stop, own_text="", watch=None):
-    """Plays one phrase; returns True if the user interrupted."""
+    """Plays one phrase; returns True if the user interrupted (or muted him)."""
+    if _muted():
+        stop.set()
+        return True
     proc = _start(audio)
     if not interruptible or not _cfg().get("interrupt", True):
-        proc.wait()
-        return False
+        return _wait(proc, stop)
     try:
         if watch is None:
             watch = _Watch(own_text)
@@ -526,6 +552,11 @@ def _play(audio, interruptible, stop, own_text="", watch=None):
             own = False
         try:
             while proc.poll() is None:
+                if _muted():
+                    proc.terminate()
+                    stop.set()
+                    print("(muted mid-sentence)")
+                    return True
                 if watch.heard():
                     proc.terminate()
                     stop.set()
@@ -563,13 +594,34 @@ def say(text, interruptible=True):
     shown = expressive.strip(text)
     print(f"Jarvis: {shown}")
     display.log("jarvis", shown)
+    if _muted():                    # muted: the words go on the display only
+        _said(shown)
+        return False
     return _speak(_chunks([_speakable(text)]), interruptible, shown)
+
+
+def _said(text):
+    SAID.append(text)
+    del SAID[:-20]
 
 
 def say_stream(pieces, interruptible=True):
     """Speak text as it's being written (e.g. brain.think_stream), starting with the first
     sentence. If it's slow to start (say, a web search), he says "one sec" first.
     Returns True if the user interrupted."""
+    if _muted():                    # muted: show the whole answer on the display instead
+        import display
+        import expressive
+        try:
+            full = expressive.strip("".join(pieces)).strip()
+        except Exception as e:
+            print(f"(brain stream failed: {e})")
+            full = ""
+        print(f"Jarvis (muted): {full}")
+        if full:
+            display.log("jarvis", full)
+        _said(full)
+        return False
     return _speak(_chunks(_hold_on(pieces, float(_cfg().get("hold_on_after", 3.5)))), interruptible, None,
                   source=pieces)
 

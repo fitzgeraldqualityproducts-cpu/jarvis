@@ -1,5 +1,5 @@
 """Jarvis's icon in the Windows taskbar tray (next to the clock). Needs 'pystray' and 'Pillow'.
-Click it to open the display; right-click for pause and quit."""
+Click it to open the display; right-click for mute and quit."""
 import ctypes
 import os
 import threading
@@ -14,7 +14,7 @@ import display
 COLORS = {"sleeping": (40, 120, 160), "listening": (0, 220, 255), "thinking": (255, 190, 40),
           "speaking": (0, 255, 180), "paused": (120, 120, 120)}
 LABELS = {"sleeping": "Waiting for \"Hey Jarvis\" or a double clap", "listening": "Listening…",
-          "thinking": "Thinking…", "speaking": "Speaking…", "paused": "Paused (not listening)"}
+          "thinking": "Thinking…", "speaking": "Speaking…", "paused": "Muted (not listening or talking)"}
 _images = {}
 
 
@@ -51,10 +51,8 @@ def run(paused):
         webbrowser.open(f"http://localhost:{display.PORT}/?type=1")
 
     def toggle(icon, item):
-        if paused.is_set():
-            paused.clear()
-        else:
-            paused.set()
+        import mute
+        mute.toggle()
 
     def quit_app(icon, item):
         icon.visible = False
@@ -68,7 +66,7 @@ def run(paused):
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Open display", open_display, default=True),
         pystray.MenuItem("Type to Jarvis…", type_to),
-        pystray.MenuItem(lambda item: "Resume listening" if paused.is_set() else "Pause listening", toggle),
+        pystray.MenuItem(lambda item: "Unmute Jarvis" if paused.is_set() else "Mute Jarvis", toggle),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit Jarvis", quit_app),
     )

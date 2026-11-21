@@ -72,7 +72,8 @@ import workforce  # noqa: E402
 CONFIG = json.loads(Path(__file__).with_name("config.json").read_text())
 SLEEP_RE = re.compile(r"(ok |okay |thanks |thank you )?(goodbye|bye|go to sleep|sleep|that's all|thats all|that is all|"
                       r"dismissed|nothing|never mind|nevermind|no thanks|no thank you|that's it|thats it)( for now)?( jarvis)?")
-PAUSED = threading.Event()
+import mute  # noqa: E402
+PAUSED = mute.MUTED            # muted: not listening or talking (mute.py)
 TALKING = threading.Event()     # set while he's in a conversation (updates wait for this to clear)
 TYPING = threading.Event()      # set while he's answering something typed into the display
 HANDLE_LOCK = threading.RLock()  # one command at a time, whether spoken or typed
@@ -96,7 +97,8 @@ CAPABILITIES = (
     "I'm also a YouTube Shorts clipper: copy a video link and say clip this video, or say clip my last stream, "
     "and I'll find the best moments, edit them into captioned vertical Shorts and, once you allow it, upload them. "
     "If I can't do something, I'll work out an upgrade and offer it to you, and say review yourself for my report "
-    "card. And you can ask me anything else."
+    "card. Say mute yourself, or hit the mic button on my display, and I'll stop listening and talking until you unmute me. "
+    "And you can ask me anything else."
 )
 
 
@@ -507,6 +509,52 @@ def shut_down():
     os._exit(0)
 
 
+MUTE_RE = re.compile(r"(?:(?:please )?mute(?: yourself| jarvis| you| your mic(?:rophone)?)?|go (?:on )?mute|mute mode|"
+                     r"stop listening(?: to me)?|privacy mode|go quiet|turn (?:off )?your mic(?:rophone)?(?: off)?)"
+                     r"(?: for (?P<n>\d+|an?|one|half an?|a couple of) ?(?P<unit>min(?:ute)?s?|hours?|hrs?))?(?: please)?")
+UNMUTE_RE = re.compile(r"(?:un-? ?mute(?: yourself| jarvis| you)?|start listening(?: again)?|stop being muted|"
+                       r"you can (?:talk|listen|speak) (?:again|now)|mic on|turn (?:on )?your mic(?:rophone)?(?: on)?)(?: please)?")
+MUTED_Q_RE = re.compile(r"are you (?:on )?mute(?:d)?|am i muted|how long are you muted(?: for)?")
+
+
+def _mute_minutes(m):
+    n, unit = m.group("n"), m.group("unit")
+    if not n:
+        return None
+    num = {"a": 1, "an": 1, "one": 1, "half a": 0.5, "half an": 0.5, "a couple of": 2}.get(n)
+    num = float(n) if num is None else num
+    return num * 60 if unit.startswith("h") else num
+
+
+def mute_command(t):
+    """"mute yourself", "mute for an hour", "unmute" (typed, since he can't hear while muted).
+    Returns False (go to sleep) / True when handled, None if it wasn't a mute command."""
+    if not WHO.get("owner", True):
+        return None
+    m = MUTE_RE.fullmatch(t)
+    if m:
+        mins = _mute_minutes(m)
+        if mins:
+            span = f"{int(mins)} minute{'s' if mins != 1 else ''}" if mins < 60 else \
+                (f"{mins / 60:g} hour" + ("s" if mins != 60 else ""))
+            voice.say(f"Muted for {span}. Type unmute or hit the mic button if you need me sooner.",
+                      interruptible=False)
+        else:
+            voice.say("Muted. I won't listen or talk until you hit the mic button or type unmute.",
+                      interruptible=False)
+        mute.set_muted(True, mins)
+        return False
+    if UNMUTE_RE.fullmatch(t):
+        was = mute.is_muted()
+        mute.set_muted(False)
+        voice.say("I'm back. Listening again." if was else "I'm not muted. I'm listening.")
+        return False
+    if MUTED_Q_RE.fullmatch(t):
+        voice.say(mute.describe())
+        return True
+    return None
+
+
 def handle(text, _part=False):
     """Returns False when Jarvis should go back to sleep."""
     if not _part:
@@ -530,6 +578,9 @@ def handle(text, _part=False):
             return awake
     if SHUTDOWN_RE.fullmatch(t) and WHO.get("owner", True):     # only Connor can switch him off
         shut_down()
+    said = mute_command(t)
+    if said is not None:
+        return said
     if re.fullmatch(r"(stop talking|shut up|be quiet|quiet|hush|enough|that's enough|ok stop|okay stop|stop stop)", t):
         return True                     # he's already stopped: just listen for what's next
     if not t or SLEEP_RE.fullmatch(t):
@@ -1383,12 +1434,14 @@ def _conversation(get_input, how="clap", spoken=False):
         except Exception as e:
             print(f"(couldn't share news: {e})")
     misses, follow_up = 0, False
-    while misses < 2:
+    while misses < 2 and not PAUSED.is_set():
         # After he answers, keep listening for a bit: no need to say "Hey Jarvis" again.
         secs = CONFIG.get("follow_up_seconds", 8) if follow_up else CONFIG.get("listen_seconds", 8)
         print("(listening for a follow-up)" if follow_up else "(listening for a command)")
         display.update(status="listening")
         text = get_input(secs)
+        if PAUSED.is_set():             # muted while listening: drop it
+            break
         if not text:
             print("(heard nothing I understood)")
             misses += 1
@@ -1405,6 +1458,9 @@ def _conversation(get_input, how="clap", spoken=False):
         if not awake:
             display.update(status="sleeping")
             return
+    if PAUSED.is_set():
+        display.update(status="paused")
+        return
     if how != "wake":
         voice.say(personality.line("idle_sleep"), interruptible=False)
     display.update(status="sleeping")
@@ -1446,6 +1502,7 @@ def main():
         keeper.claim_jarvis_lock()      # stops here if another Jarvis is already running
     display.start(open_browser="--no-display" not in sys.argv)
     display.update(apps=hands.allowed_apps(), status="sleeping")
+    mute.load()                         # still muted if he was muted before a restart
     briefing.keep_display_fresh()
     try:
         import discord_bot

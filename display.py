@@ -39,6 +39,8 @@ STATE = {
     "timers": [],
     "music": None,          # {title, artist, album, art, state, pos, dur, at}
     "sky": None,            # {code, is_day, sunrise, sunset} for the live weather effects
+    "muted": False,         # mic and voice off (mute.py)
+    "mute_until": None,
     "boot": time.time(),    # changes when Jarvis restarts, so the page replays its boot-up
     "updated": time.time(),
 }
@@ -399,6 +401,22 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 res = {"ok": False, "message": f"{type(e).__name__}: {e}"}
             self._send(200, json.dumps(res, default=str).encode(), "application/json")
+            return
+        if self.path.startswith("/mute"):
+            # The display's mic button: {"muted": true/false}, or {} to flip it
+            if not ok_origin or self.headers.get("X-Jarvis-Token") != TOKEN:
+                self.send_response(403)
+                self.end_headers()
+                return
+            try:
+                n = min(int(self.headers.get("Content-Length", 0)), 1000)
+                req = json.loads(self.rfile.read(n) or b"{}")
+                import mute
+                on = mute.toggle() if "muted" not in req else mute.set_muted(bool(req["muted"]))
+                res = {"ok": True, "muted": on}
+            except Exception as e:
+                res = {"ok": False, "message": f"{type(e).__name__}: {e}"}
+            self._send(200, json.dumps(res).encode(), "application/json")
             return
         if not self.path.startswith("/say") or not ok_origin or self.headers.get("X-Jarvis-Token") != TOKEN:
             self.send_response(403)

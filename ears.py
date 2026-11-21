@@ -83,6 +83,14 @@ class Detector:
         return None
 
 
+def _muted():
+    try:
+        import mute
+        return mute.MUTED.is_set()
+    except Exception:
+        return False
+
+
 def wait_for_wake(clap_threshold=0.35, paused=None):
     """Blocks until a double clap ('clap') or "Hey Jarvis" ('wake').
     Returns None if paused() becomes true."""
@@ -129,6 +137,9 @@ def record_phrase(start_timeout=8, max_seconds=15, silence_seconds=0.9, preroll=
     with sd.InputStream(samplerate=RATE, channels=1, blocksize=BLOCK, dtype="int16") as stream:
         t0 = time.time()
         while True:
+            if _muted():                       # muted mid-sentence: throw away what he heard
+                frames, voiced = [], 0.0
+                break
             block, _ = stream.read(BLOCK)
             block = block[:, 0].copy()
             level = float(np.sqrt(np.mean(block.astype(np.float32) ** 2)))

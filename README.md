@@ -46,7 +46,7 @@ Adding to the queue needs Spotify Premium.
 - **Apps:** "close Safari", "switch to Messages"
 - **Shortcuts:** "run my Good Night shortcut", "what shortcuts do I have?"
 - **Memory:** "remember that my sister's birthday is June 3rd", "what do you remember about me?", "forget my sister's birthday"
-- **Menu bar icon:** shows his status, open the display, pause listening, quit
+- **Menu bar icon:** shows his status, open the display, mute / unmute, quit
 - **Start at login:** the installer asks; or add "Jarvis at Login.command" in System Settings > Login Items
 
 ## Hearing and voice upgrade (run once: double-click "Upgrade Jarvis.command")
@@ -82,7 +82,7 @@ In the Jarvis folder on Windows:
 - **Choose Jarvis Apps**, **Choose Jarvis Speaker** (own audio channel for OBS via VB-CABLE), **Connect Spotify / Obsidian / Oura / Twitch**, **Fix Jarvis Brain**.
 
 What's different on Windows (all in `win.py`, `wincal.py`, `menubar_win.py`):
-- The menu bar icon is a tray icon by the clock (click: display, right-click: pause / quit).
+- The menu bar icon is a tray icon by the clock (click: display, right-click: mute / quit).
 - Calendar and reminders are Jarvis's own (kept in `calendar.json`), not Apple's. Reminders are
   spoken when due while he's running. Notes go to "Jarvis Notes.txt" in Documents, or Obsidian.
 - Spotify uses media keys and the Windows volume mixer; "play <song>" needs Connect Spotify.
@@ -291,6 +291,15 @@ starts StoreForge itself if it isn't running.
 - StoreForge's AI runs on your Claude plan through Claude Code, so no API key and nothing extra to pay.
 - Pushing to Shopify needs setup once: double-click **Connect StoreForge.command** and give it
   your store's myshopify.com address and Admin API token. That part is optional and free.
+
+## Mute
+
+The **mic button** under his status on the display (or press **M** there, or **Mute Jarvis** in the menu
+bar / tray) mutes him: he stops listening completely (no wake word, claps or "stop") and stops talking
+out loud, cutting off mid-sentence if he's speaking. Anything he'd say shows up in the Comms panel, and
+typing to him still works. Timer and reminder alarm sounds still ring. You can also say "mute yourself"
+or "mute for an hour". To unmute, click the mic again, press M, use the menu, or type "unmute" (he can't
+hear you while muted, on purpose). He stays muted through restarts and updates until you unmute.
 
 ## Type to him
 His display has a **Type to Jarvis** box under the conversation (press / to jump to it). Type
