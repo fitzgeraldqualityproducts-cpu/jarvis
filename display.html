@@ -156,6 +156,18 @@
   .center3d .status { text-shadow:0 0 14px rgba(79,216,255,.8); }
   .center3d .caption { text-shadow:0 0 18px rgba(0,0,0,.9), 0 0 4px rgba(0,0,0,.8); }
   #view { cursor:pointer; color:var(--cyan); pointer-events:auto; }
+  /* mute button */
+  .mutebtn { display:inline-flex; align-items:center; gap:10px; background:rgba(4,16,26,.55); border:1px solid var(--cyanDim);
+    color:var(--cyan); font-family:var(--hfont); font-size:11px; letter-spacing:.3em; text-transform:uppercase; padding:8px 18px 8px 12px;
+    border-radius:999px; cursor:pointer; pointer-events:auto; transition:background .2s, border-color .2s, color .2s, box-shadow .2s; }
+  .mutebtn:hover { border-color:var(--cyan); box-shadow:0 0 12px var(--cyanDim); }
+  .mutebtn svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .mutebtn .slash { display:none; }
+  body.muted .mutebtn { color:var(--red); border-color:var(--red); background:rgba(40,6,10,.6); box-shadow:0 0 16px rgba(255,80,90,.35);
+    animation:mutepulse 2.4s ease-in-out infinite; }
+  body.muted .mutebtn .slash { display:inline; }
+  body.muted .status { color:var(--red); }
+  @keyframes mutepulse { 0%,100% { box-shadow:0 0 10px rgba(255,80,90,.25); } 50% { box-shadow:0 0 22px rgba(255,80,90,.55); } }
   #view:hover { color:var(--cyan2); text-shadow:0 0 8px var(--cyan); }
   .sysline, #view { z-index:6; }
   .offline { z-index:7; }
@@ -187,6 +199,9 @@
     <div class="orb-wrap"><canvas id="orb"></canvas></div>
     <div class="status" id="status">Sleeping</div>
     <div class="caption" id="caption">Clap twice to wake me.</div>
+    <button class="mutebtn" id="mute" type="button" title="Mute Jarvis: mic and voice off (press M)" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/><path class="slash" d="M3 3l18 18"/></svg>
+      <span id="muteLabel">Mute</span></button>
   </div>
   <div class="col right">
     <div class="panel" id="musicPanel"><div class="label">05 · Audio <span id="eq" class="eq"><span></span><span></span><span></span><span></span></span></div>
@@ -254,9 +269,25 @@ $("typeForm").addEventListener("submit", async e => {
   setTimeout(() => { box.placeholder = "Type to Jarvis…"; }, 2500);
 });
 if (/[?&]type=1/.test(location.search)) setTimeout(() => $("typeIn").focus(), 300);
-document.addEventListener("keydown", e => {        // press / anywhere to start typing
-  if (e.key === "/" && document.activeElement !== $("typeIn")) { e.preventDefault(); $("typeIn").focus(); }
+document.addEventListener("keydown", e => {        // press / anywhere to start typing, M to mute
+  if (document.activeElement === $("typeIn") || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === "/") { e.preventDefault(); $("typeIn").focus(); }
+  else if (e.key === "m" || e.key === "M") { e.preventDefault(); toggleMute(); }
 });
+
+// ---------- mute ----------
+async function toggleMute() {
+  if (!S.token) return;
+  const want = !S.muted;
+  S.muted = want; render();                          // show it straight away
+  try {
+    const r = await fetch("/mute", { method:"POST", headers:{ "Content-Type":"application/json", "X-Jarvis-Token":S.token },
+                                     body:JSON.stringify({ muted:want }) });
+    const j = await r.json(); if (!j.ok) throw new Error(j.message);
+    S.muted = j.muted; render();
+  } catch { S.muted = !want; render(); }
+}
+$("mute").addEventListener("click", e => { e.stopPropagation(); toggleMute(); });
 
 // ---------- data ----------
 async function poll() {
@@ -271,7 +302,7 @@ async function poll() {
   } catch { $("offline").style.display = "block"; }
   setTimeout(poll, 250);
 }
-const LABELS = { sleeping:"Standby", listening:"Listening", thinking:"Processing", speaking:"Speaking", paused:"Paused" };
+const LABELS = { sleeping:"Standby", listening:"Listening", thinking:"Processing", speaking:"Speaking", paused:"Muted" };
 let lastLog = "", lastApps = "", lastToday = "", lastArt = null;
 
 function wxKind(sky) {
@@ -303,10 +334,15 @@ function inWords(sec) {
 }
 
 function render() {
+  if (S.muted) S.status = "paused";
+  document.body.classList.toggle("muted", !!S.muted);
+  $("muteLabel").textContent = S.muted ? "Muted" : "Mute";
+  $("mute").setAttribute("aria-pressed", S.muted ? "true" : "false");
+  $("mute").title = S.muted ? "Unmute Jarvis (press M)" : "Mute Jarvis: mic and voice off (press M)";
   $("status").textContent = LABELS[S.status] || S.status;
   $("sysstate").textContent = "CORE " + (S.status === "sleeping" ? "STANDBY" : (LABELS[S.status] || S.status).toUpperCase());
   $("caption").textContent = S.status === "sleeping" ? "Say “Hey Jarvis” or clap twice."
-    : S.status === "paused" ? "Not listening. Resume from the menu bar."
+    : S.status === "paused" || S.muted ? "Muted. I'm not listening or talking." + (S.mute_until ? " Back " + inWords(S.mute_until - nowS()) + "." : "") + " Click the mic or type unmute."
     : S.status === "listening" ? (S.you ? "“" + S.you + "”" : "Go ahead…")
     : S.status === "thinking" ? "One moment…" : S.jarvis;
 
@@ -824,7 +860,7 @@ function build3D(T) {
   // --- the panels, floating in 3D space ---
   const hud = document.querySelector(".hud"), left = document.querySelector(".col.left"), right = document.querySelector(".col.right");
   const center = document.querySelector(".center"), wrap = document.createElement("div"); wrap.className = "center3d";
-  wrap.append($("status"), $("caption"));
+  wrap.append($("status"), $("caption"), $("mute"));
   const oL = new T.CSS3DObject(left), oR = new T.CSS3DObject(right), oC = new T.CSS3DObject(wrap);
   cssScene.add(oL, oR, oC);
 
@@ -944,7 +980,7 @@ function build3D(T) {
     removeEventListener("pointercancel", onUp); removeEventListener("wheel", onWheel); removeEventListener("dblclick", onDbl);
     removeEventListener("resize", layout); canvas.removeEventListener("webglcontextlost", lost);
     for (const el of [left, right, wrap]) el.removeAttribute("style");
-    hud.prepend(left); hud.append(right); center.append($("status"), $("caption"));
+    hud.prepend(left); hud.append(right); center.append($("status"), $("caption"), $("mute"));
     css.domElement.remove();
     try { renderer.dispose(); renderer.forceContextLoss(); } catch {}
   }

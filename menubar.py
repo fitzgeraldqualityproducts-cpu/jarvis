@@ -7,15 +7,15 @@ import rumps
 
 import display
 
-ICONS = {"sleeping": "◎", "listening": "◉", "thinking": "◌", "speaking": "◉", "paused": "⊘"}
+ICONS = {"sleeping": "◎", "listening": "◉", "thinking": "◌", "speaking": "◉", "paused": "🔇"}
 LABELS = {"sleeping": "Waiting for \"Hey Jarvis\" or a double clap", "listening": "Listening…",
-          "thinking": "Thinking…", "speaking": "Speaking…", "paused": "Paused (not listening)"}
+          "thinking": "Thinking…", "speaking": "Speaking…", "paused": "Muted (not listening or talking)"}
 
 
 def run(paused):
     app = rumps.App("Jarvis", title=ICONS["sleeping"], quit_button=None)
     status = rumps.MenuItem(LABELS["sleeping"])
-    pause_item = rumps.MenuItem("Pause listening")
+    pause_item = rumps.MenuItem("Mute Jarvis")
 
     def open_display(_):
         subprocess.run(["open", f"http://localhost:{display.PORT}"])
@@ -24,12 +24,8 @@ def run(paused):
         subprocess.run(["open", f"http://localhost:{display.PORT}/?type=1"])
 
     def toggle(_):
-        if paused.is_set():
-            paused.clear()
-            pause_item.title = "Pause listening"
-        else:
-            paused.set()
-            pause_item.title = "Resume listening"
+        import mute
+        mute.toggle()
 
     def quit_app(_):
         os._exit(0)
@@ -41,8 +37,11 @@ def run(paused):
 
     @rumps.timer(0.5)
     def refresh(_):
-        s = display.STATE.get("status", "sleeping")
+        s = "paused" if paused.is_set() else display.STATE.get("status", "sleeping")
         app.title = ICONS.get(s, "◎")
+        want = "Unmute Jarvis" if paused.is_set() else "Mute Jarvis"
+        if pause_item.title != want:
+            pause_item.title = want
         status.title = LABELS.get(s, s)
 
     signal.signal(signal.SIGINT, lambda *a: os._exit(0))

@@ -20,6 +20,7 @@ memory.json
 .spotify_token
 .update-*
 .hearing.json
+.mute.json
 .jarvis-mcp.json
 addons.json
 memory.db
