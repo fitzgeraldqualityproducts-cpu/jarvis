@@ -300,6 +300,10 @@ def _render_all(jid, video, ch, folder, src, tr, cands, want, g):
     need = max(want - len(good), 0) + len(picked)
     total, made, k = max(1, min(need, len(todo))), 0, 0
     errors = []
+    try:                                             # the next clips' video downloads while this one renders
+        acquire.prefetch(src, folder, [(c["start"], c["end"]) for c in todo[:need]])
+    except Exception as e:
+        print(f"(clipper: prefetch skipped: {e})")
     for c in todo:
         if need <= 0:
             break
