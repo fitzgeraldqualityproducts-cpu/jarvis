@@ -35,6 +35,17 @@ def parse(t, original=""):
         return "pause", {}
     if re.search(r"\b(?:resume|restart|unpause|continue|start) (?:the )?(?:clipping|clipper)(?: jobs)?\b|\bclipper back on\b", t):
         return "resume", {}
+    if re.search(r"\b(?:free up|clear up|get back|reclaim) (?:some |more )?(?:disk |storage |hard drive )?(?:space|room|storage)\b|"
+                 r"\bmake (?:some |more )?(?:disk|storage|hard drive) space\b|"
+                 r"\bclean (?:up )?(?:my |the )?(?:disk|storage|hard drive|drive)(?: space)?\b|"
+                 r"\bclean(?:ing)? up (?:the |your |my )?(?:clipper|clipping|jarvis(?:'s)?)(?: files| folder)?\b|"
+                 r"\b(?:clear|delete|clean) (?:out )?(?:the |my |all )?(?:old )?(?:downloaded )?(?:vods|renders|downloaded videos|"
+                 r"source (?:videos|files)|temp(?:orary)? files)\b", t):
+        return "disk_clean", {}
+    if re.search(r"\bhow much (?:disk |storage |hard drive |free )?(?:space|storage) (?:do i have|have i got|is (?:left|free)|"
+                 r"left|free|is jarvis using|are you using|does (?:jarvis|the clipper) use)\b|"
+                 r"\b(?:disk|storage) (?:space|usage|status)\b|\bis (?:my|the) (?:disk|drive|mac|computer) (?:full|nearly full)\b", t):
+        return "disk", {}
     if re.search(r"\b(?:show|open|pull up|bring up|let me see|display)(?: me)? (?:the |my )?(?:clips?|shorts?) "
                  r"(?:awaiting|waiting for|that need|needing|pending) (?:my )?(?:approval|ok|okay|review)|"
                  r"\b(?:what|which) clips (?:are )?(?:waiting|need my (?:ok|okay|approval))\b|\bapproval (?:center|queue)\b", t):

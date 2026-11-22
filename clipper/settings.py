@@ -30,6 +30,7 @@ GLOBAL_DEFAULTS = {
     "min_free_gb": 4,             # never fill the disk below this
     "keep_sources_days": 3,       # delete downloaded source videos this long after a job finishes
     "keep_failed_days": 14,
+    "keep_rejected_days": 7,      # rejected clips' video files are deleted this long after you reject them
     "max_attempts": 3,            # retries for a failing stage (with growing waits), then it fails
     "stage_timeout_minutes": 240, # a stage with no progress for this long is restarted
     "whisper_model": "small.en",  # faster-whisper model for transcripts (or "parakeet")

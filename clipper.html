@@ -405,6 +405,23 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
       <div class="row" style="justify-content:flex-end">${btn}</div></div>`;
   }
 
+  function diskCard() {
+    const d = S.disk; if (!d || d.error || !d.total_gb) return "";
+    const usedPct = Math.max(0, Math.min(100, 100 - d.free_gb / d.total_gb * 100));
+    const gb = (v) => v >= 0.1 ? v.toFixed(1) + " GB" : Math.round(v * 1024) + " MB";
+    const can = d.can_free_gb >= 0.02;
+    const parts = (d.parts || []).filter(p => p.gb >= 0.01).map(p => `<div class="bar">${esc(p.label)}<b>${gb(p.gb)}</b><div class="tr"><i style="width:${Math.max(2, Math.min(100, p.gb / Math.max(0.01, d.jarvis_gb) * 100))}%"></i></div></div>`).join("");
+    const names = { sources: "old downloaded videos", temp: "half-finished files", rejected: "rejected clips", backups: "old setup backups", logs: "big logs" };
+    const canList = Object.entries(d.can_free || {}).filter(([, v]) => v >= 0.01).map(([k, v]) => `${names[k] || k} ${gb(v)}`).join(", ");
+    const last = d.last ? `Last clean-up ${ago(d.last.t)}: cleared ${gb(d.last.freed / 1073741824)}.` : "";
+    return `<div class="card" style="margin-top:16px"><div class="head"><div><h2>Disk space</h2><div class="small muted">${gb(d.free_gb)} free of ${Math.round(d.total_gb)} GB · Jarvis uses ${gb(d.jarvis_gb)}</div></div>
+        <button class="btn ${d.low ? "primary" : ""}" data-act="disk_clean" ${can ? "" : "disabled"}>${icon("refresh")}${can ? "Clean up now (" + gb(d.can_free_gb) + ")" : "Nothing to clean"}</button></div>
+      <div class="bar">Disk used<b>${Math.round(usedPct)}%</b><div class="tr"><i style="width:${usedPct}%;${d.low ? "background:#f87171" : ""}"></i></div></div>
+      ${d.low ? `<div class="banner bad" style="margin:10px 0 0">${d.free_gb < d.min_free_gb ? `Under ${d.min_free_gb} GB free, so new clipping waits for room.` : `Almost at the ${d.min_free_gb} GB the clipper needs.`} I clear what's safe automatically; reviewing or deleting clips frees more.</div>` : ""}
+      <div class="bars" style="margin-top:12px">${parts}</div>
+      <p class="small muted" style="margin:12px 0 0">${can ? "Clean up clears " + esc(canList) + ". " : ""}Clips waiting for review, approved or on YouTube are never deleted${d.kept_review_projects ? `, and videos of ${d.kept_review_projects} project${d.kept_review_projects === 1 ? "" : "s"} you're still reviewing stay for ${d.settings.keep_sources_days} days so you can edit` : ""}. Old downloads clear by themselves after ${d.settings.keep_sources_days} days. ${esc(last)}</p></div>`;
+  }
+
   function dashboard() {
     const o = S.overview, st = S.stats, hour = new Date().getHours();
     const hi = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
@@ -424,6 +441,7 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
         <div class="card" style="margin:0"><div class="head"><h2>Recent projects</h2></div>${recent.length ? `<div class="jobs">${recent.map(jobRow).join("")}</div>` : `<div class="empty small">No projects yet.</div>`}</div>
       </div>
       <div class="card" style="margin-top:16px"><div class="head"><h2>Latest clips</h2><a class="small muted" href="#clips">All clips</a></div>${latest.length ? `<div class="clips">${latest.map(c => clipCard(c)).join("")}</div>` : `<div class="empty"><div class="ic">${icon("film")}</div>Your finished clips will show up here.</div>`}</div>
+      ${diskCard()}
       <div class="card"><div class="head"><h2>Activity</h2></div><div class="log">${S.events.slice(0, 40).map(e => `<div class="${esc(e.level)}">${new Date(e.t * 1000).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})} · ${e.job_id ? "project " + e.job_id + " · " : ""}${esc(e.msg)}</div>`).join("") || "<div>Nothing yet.</div>"}</div></div>`;
   }
 
@@ -890,6 +908,7 @@ details summary { cursor:pointer; color:var(--muted); font-weight:500; }
       const v = window.prompt(`Caption for "${w.w}" (leave empty to hide the word):`, cur != null ? cur : w.w); if (v == null) return;
       if (v.trim() === w.w) delete editor.words[t.dataset.cw]; else editor.words[t.dataset.cw] = v.trim(); drawCapWords(); return; }
     if (t.dataset.act) {
+      if (t.dataset.act === "disk_clean" && !(await confirmBox("Clear old downloaded videos, half-finished files, rejected clips and old setup backups from Jarvis's folder? Clips you haven't reviewed, approved clips and anything on YouTube stay.", "Clean up disk space"))) return;
       if (t.dataset.act === "stop" && !(await confirmBox("Stop all clipping and uploads now? Running jobs stop safely and resume later.", "Emergency stop"))) return;
       return act({ action: t.dataset.act });
     }

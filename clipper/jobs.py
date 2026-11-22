@@ -109,8 +109,13 @@ def claim():
             return None
         home = data_dir()
         if acquire.free_gb(home) < float(g.get("min_free_gb", 4)):
-            _warn_once("disk", "I've paused clipping because the disk is almost full.")
-            return None
+            from clipper import disk
+            disk.maybe_clean()                             # clear what's safe first (at most every 30 min)
+            if acquire.free_gb(home) < float(g.get("min_free_gb", 4)):
+                _warn_once("disk", f"I've paused clipping because the disk is almost full "
+                                   f"({acquire.free_gb(home):.1f} GB free, I need {g.get('min_free_gb', 4)} GB). "
+                                   "I've cleared what's safe; say free up disk space to see what's left.")
+                return None
         if acquire.folder_gb(home) > float(g.get("max_disk_gb", 25)):
             cleanup(force=True)
             if acquire.folder_gb(home) > float(g.get("max_disk_gb", 25)):
@@ -235,43 +240,18 @@ def tick(now=None):
             publish.refresh_analytics()
         except Exception as e:
             db.log(f"Analytics refresh failed: {e}", "warn")
-    if now - float(db.get("cleanup_at", 0) or 0) > 6 * 3600:
-        db.put("cleanup_at", now)
-        cleanup()
+    try:
+        from clipper import disk
+        disk.maybe_clean(now)
+    except Exception as e:
+        db.log(f"Disk clean-up failed: {e}", "warn")
 
 
 def cleanup(force=False):
-    """Deletes downloaded source videos of finished jobs after keep_sources_days (and failed jobs'
-    leftovers after keep_failed_days). Finished clips are never deleted here. Your own files are
-    never touched."""
-    g = settings.general()
-    freed = 0
-    days = 0 if force else float(g.get("keep_sources_days", 3))
-    fdays = 0 if force else float(g.get("keep_failed_days", 14))
-    rows = db.q("SELECT id, channel, state, finished FROM jobs WHERE state IN ('done','published','awaiting_approval',"
-                "'failed','cancelled') AND finished IS NOT NULL")
-    for j in rows:
-        if not settings.allowed(j["channel"], "delete_files"):
-            continue
-        keep = fdays if j["state"] in ("failed", "cancelled") else days
-        if time.time() - float(j["finished"]) >= keep * 86400:
-            folder = data_dir("jobs", str(j["id"]))
-            freed += acquire.cleanup(folder)
-    tmp_parts = 0
-    for root, _, files in os.walk(str(data_dir("jobs"))):
-        for f in files:
-            if f.endswith((".part", ".part.mp4", ".part.wav", ".fix.mp4")):
-                p = os.path.join(root, f)
-                if time.time() - os.path.getmtime(p) > 86400:
-                    try:
-                        tmp_parts += os.path.getsize(p)
-                        os.remove(p)
-                    except OSError:
-                        pass
-    freed += tmp_parts
-    if freed > 50 << 20:
-        db.log(f"Cleaned up {freed / (1 << 30):.1f} GB of old source files.")
-    return freed
+    """Clears old downloads, half-finished files and rejected clips (see disk.py for the rules).
+    force: the "clean up now" rules. Clips you haven't reviewed are never deleted. Returns bytes freed."""
+    from clipper import disk
+    return disk.clean(urgent=force, by="limit" if force else "schedule")["freed"]
 
 
 # ---------- controls ----------

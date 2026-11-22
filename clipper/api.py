@@ -39,6 +39,14 @@ def _clip_public(c):
     return c
 
 
+def _disk():
+    try:
+        from clipper import disk
+        return disk.report()
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
+
 def state():
     settings.ensure_default_channel()
     ch = settings.channel("main")
@@ -79,7 +87,7 @@ def state():
                     "stroke", "shadow", "y", "animation", "words_per_line", "uppercase")}} for k, v in captions.STYLES.items()],
         "fonts": sorted(captions.FONTS), "animations": captions.ANIMATIONS, "layouts": settings.LAYOUTS,
         "lengths": settings.LENGTH_MODES, "presets": presets.public(), "exports": export_presets(), "sorts": list(moments.SORTS), "export_dir": str(export_dir()),
-        "platform": sys.platform,
+        "platform": sys.platform, "disk": _disk(),
     }
 
 
@@ -463,6 +471,10 @@ def action(req):
             v, job, msg = sources.add(str(req.get("url", "")).strip(), max_clips=req.get("count") or None, priority=8,
                                       options=opts or None)
             return {"ok": job is not None, "message": msg, "job": job["id"] if job else None}
+        if a == "disk_clean":
+            from clipper import disk
+            r = disk.clean(urgent=True, by="dashboard")
+            return {"ok": True, "message": disk.say_clean(r), "disk": disk.report(fresh=True)}
         if a == "check":
             return check_link(req.get("url"))
         if a == "approve":
