@@ -151,6 +151,28 @@ def check(manual=False):
         _lock.release()
 
 
+DATA_PATTERNS = ("clipper_data/", "db-rescue")
+DATA_SUFFIXES = (".db", ".db-wal", ".db-shm", ".db-journal", ".db.bak")
+
+
+def _is_data(path):
+    return path.startswith(DATA_PATTERNS) or path.endswith(DATA_SUFFIXES)
+
+
+def _untrack_data():
+    """Your databases and clips must never be replaced by a file from an update (an update once
+    carried an empty clipper.db, which broke the real one). Anything like that which git is tracking
+    in this folder is untracked (the files themselves stay exactly where they are), so a merge can't
+    touch them."""
+    tracked = [p for p in _out("ls-files").splitlines() if _is_data(p)]
+    if not tracked:
+        return []
+    _git("rm", "-q", "--cached", "--", *tracked)
+    _git("commit", "-q", "-m", "Keep databases out of updates")
+    print(f"(update: untracked {len(tracked)} data file(s) so updates never replace them)")
+    return tracked
+
+
 def _check(manual):
     if _ready.is_set():
         return "I've already installed an update. I'll restart to load it as soon as we're done talking.", True
@@ -166,6 +188,7 @@ def _check(manual):
     if new in state.get("skip", []) and not manual:
         return None, False
     selfedit.ensure_repo()                       # snapshot anything changed since
+    _untrack_data()                              # databases are never part of an update
     old = _out("rev-parse", "HEAD")
     before = _selftest(None)                     # how well everything works now, to compare with
     news = _summary(old, new)

@@ -25,6 +25,11 @@ memory.json
 addons.json
 memory.db
 memory.db-*
+*.db
+*.db-wal
+*.db-shm
+*.db.bak
+db-rescue*/
 *.part
 oura_tokens.json
 sounds/
