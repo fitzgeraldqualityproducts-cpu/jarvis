@@ -42,6 +42,11 @@ def startup(log=print):
                          f"{'them' if n != 1 else 'it'} back for your review")
     except Exception as e:
         log(f"(clipper: couldn't check for lost clips: {e})")
+    try:
+        from clipper import sources
+        sources.release_waiting()                   # nothing waits for permission any more
+    except Exception as e:
+        log(f"(clipper: couldn't start waiting projects: {e})")
     for n in notes:
         db.log(n[0].upper() + n[1:] + ("" if n.endswith(".") else "."), "warn", tell=True)
     return notes

@@ -301,7 +301,8 @@ def retry(job_id):
     if j["state"] not in ("failed", "cancelled") and not waiting:
         return f"Job {job_id} is {j['state'].replace('_', ' ')}, not failed."
     v = db.video(j["video_id"]) or {}
-    if v and v.get("auth_status") == "awaiting_authorization" and not v.get("source_id"):
+    if v and v.get("auth_status") == "awaiting_authorization" and \
+            (not v.get("source_id") or not settings.general().get("ask_permission")):
         # a link you gave me yourself: pressing Retry is your say-so (protected videos stay rejected)
         db.run("UPDATE videos SET auth_status='authorized', auth_basis='a link you added yourself' WHERE id=?", v["id"])
     db.set_job(job_id, state="queued", attempts=0, not_before=0, error=None, held=0, finished=None)

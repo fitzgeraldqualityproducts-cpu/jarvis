@@ -16,6 +16,8 @@ Authorization (nothing is processed unless one of these is true; the reason is s
   - a Creative Commons (CC BY) YouTube video (credit is added to the description)
   - a channel or video you marked "I have permission" (your say-so is recorded)
   - a link you paste or say yourself (that's your say-so too, so it starts right away)
+  - anything else, unless the "ask_permission" setting is on (it's off: everything starts right away)
+Protected/members-only videos are always refused, and live streams wait for their VOD.
 Anything else waits in "awaiting authorization" until you approve it or drop it.
 DRM, private, members-only or sub-only videos are never touched."""
 import hashlib
@@ -143,6 +145,8 @@ def authorize_check(channel, platform, info, added_by_owner=False, source=None):
             return "authorized", s["auth_basis"] or "an approved creator"
     if added_by_owner and not source:
         return "authorized", "a link you added yourself"     # your own paste is your say-so: starts right away
+    if not settings.general().get("ask_permission"):
+        return "authorized", "you chose to clip without asking first"
     return "awaiting_authorization", "not yours, not Creative Commons, and no permission recorded"
 
 
@@ -226,6 +230,19 @@ def make_job(video, max_clips=None, priority=5, options=None):
                  int(max_clips or ch["max_clips_per_video"]), json.dumps(options or {}), now, now)
     db.log(f"New job for \"{_short(video['title'])}\" ({state.replace('_', ' ')}).", job_id=jid)
     return db.one("SELECT * FROM jobs WHERE id=?", jid)
+
+
+def release_waiting():
+    """With ask_permission off, projects still waiting for an OK start (live streams keep waiting)."""
+    if settings.general().get("ask_permission"):
+        return 0
+    n = 0
+    for v in db.q("SELECT * FROM videos WHERE auth_status='awaiting_authorization'"):
+        if "still live" in (v.get("auth_basis") or ""):
+            continue
+        grant(v["id"], "you chose to clip without asking first")
+        n += 1
+    return n
 
 
 def grant(video_id, basis="you confirmed you have permission"):
