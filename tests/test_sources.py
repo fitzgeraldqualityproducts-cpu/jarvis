@@ -68,3 +68,21 @@ def test_own_twitch_vod_authorized(monkeypatch):
                                                       "duration": 4 * 3600})
     v, job, msg = sources.add("https://www.twitch.tv/videos/123456789")
     assert v["auth_basis"] == "your own Twitch VOD" and job["state"] == "queued"
+
+
+def test_retrying_a_project_that_failed_for_permission(monkeypatch):
+    """Projects made before links started right away failed with "not authorized"; Retry fixes them."""
+    from clipper import acquire, db, jobs, sources
+    monkeypatch.setattr(acquire, "info", lambda url: {"title": "I Flew Overseas", "creator": "Other", "creator_id": "UCother",
+                                                      "license": "youtube", "duration": 6 * 3600})
+    v, job, msg = sources.add("https://youtu.be/bbbbbbbbbbb", added_by_owner=False)
+    db.set_job(job["id"], state="failed", error="not authorized: not yours, not Creative Commons, and no permission recorded")
+    assert "back in the queue" in jobs.retry(job["id"])
+    assert db.job(job["id"])["state"] == "queued"
+    assert db.video(v["id"])["auth_status"] == "authorized"
+    found = db.run("INSERT INTO videos(channel, platform, external_id, url, title, auth_status, auth_basis, source_id, "
+                   "discovered) VALUES('main','youtube','x1','u','found','awaiting_authorization','not yours',1,0)")
+    j2 = sources.make_job(db.video(found))
+    db.set_job(j2["id"], state="failed")
+    jobs.retry(j2["id"])
+    assert db.video(found)["auth_status"] == "awaiting_authorization"    # found by a source: still needs your OK
