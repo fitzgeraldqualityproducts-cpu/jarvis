@@ -7,8 +7,9 @@ Engines:
   mlx       the same Whisper model run on the Apple Silicon graphics chip (mlx-whisper, already
             installed on the Mac): several times faster than the CPU, same words. Only on Apple
             Silicon Macs; anything going wrong falls back to faster-whisper on the CPU.
-"auto" uses mlx on an Apple Silicon Mac that has mlx-whisper, then whisper when its model is on the
-computer, else parakeet. Setting gpu_transcribe: false turns the graphics chip off.
+"auto" uses whisper when its model is on the computer, else parakeet. mlx is only used when chosen
+(transcriber: "mlx"): measured on Connor's M1 it was 1.6x faster but its words differed from the
+CPU's in about 1 in 5 places, and it slowed right down while a clip was rendering.
 
 The transcript (transcript.json) has:
   words      [{w, s, e, p, emph}]   every word with start/end seconds, confidence, loud emphasis
@@ -79,8 +80,6 @@ def engine():
     choice = g.get("transcriber", "auto")
     if choice in ("whisper", "parakeet", "mlx"):
         return choice if choice != "mlx" or mlx_available() else "whisper"
-    if mlx_available():
-        return "mlx"
     if _whisper_available(g.get("whisper_model", "small.en")):
         return "whisper"
     if (MODELS / PARAKEET).is_dir():

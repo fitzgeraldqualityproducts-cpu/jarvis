@@ -34,8 +34,7 @@ GLOBAL_DEFAULTS = {
     "max_attempts": 3,            # retries for a failing stage (with growing waits), then it fails
     "stage_timeout_minutes": 240, # a stage with no progress for this long is restarted
     "whisper_model": "small.en",  # faster-whisper model for transcripts (or "parakeet")
-    "transcriber": "auto",        # auto | mlx | whisper | parakeet  (auto = mlx on an Apple Silicon Mac)
-    "gpu_transcribe": True,       # use the Mac's graphics chip for transcripts when it can
+    "transcriber": "auto",        # auto | whisper | parakeet | mlx (Mac graphics chip, only when chosen)
     "caption_model": "turbo",     # each clip's captions get a second, careful listen with this model ("off" = don't)
     "llm_model": "",              # Claude model for analysis ("" = Claude Code's default)
     "fps": 30,

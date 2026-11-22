@@ -51,17 +51,16 @@ def test_graphics_chip_transcript_has_original_times(monkeypatch, tmp_path):
     assert seen["n"] == 16000 * 4                      # only the speech is listened to
 
 
-def test_engine_picks_the_graphics_chip_only_on_apple_silicon(monkeypatch):
+def test_graphics_chip_only_when_chosen_and_only_on_apple_silicon(monkeypatch):
     from clipper import settings, transcribe
     _fake_mlx(monkeypatch, lambda *a, **k: {})
     monkeypatch.setattr(transcribe.sys, "platform", "darwin")
     monkeypatch.setattr(transcribe.platform, "machine", lambda: "arm64")
+    assert transcribe.engine() != "mlx"                 # not by itself
+    settings.set_global(transcriber="mlx")
     assert transcribe.engine() == "mlx"
-    settings.set_global(gpu_transcribe=False)
-    assert transcribe.engine() != "mlx"
-    settings.set_global(gpu_transcribe=True)
     monkeypatch.setattr(transcribe.platform, "machine", lambda: "x86_64")
-    assert transcribe.engine() != "mlx"
+    assert transcribe.engine() == "whisper"
     assert transcribe.mlx_repo("turbo") == "mlx-community/whisper-large-v3-turbo"
 
 
