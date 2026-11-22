@@ -14,9 +14,32 @@ def test_classify_links(tmp_path):
         sources.classify("not a link")
 
 
+def test_nothing_waits_for_permission_by_default():
+    from clipper import settings, sources
+    settings.ensure_default_channel()
+    assert sources.authorize_check("main", "youtube", {"creator_id": "UCx"}) == \
+        ("authorized", "you chose to clip without asking first")
+    assert sources.authorize_check("main", "youtube", {"drm": True})[0] == "rejected"
+    assert sources.authorize_check("main", "twitch", {"is_live": True})[0] == "awaiting_authorization"
+
+
+def test_waiting_projects_start_when_asking_is_off(monkeypatch):
+    from clipper import acquire, db, settings, sources
+    monkeypatch.setattr(acquire, "info", lambda url: {"title": "Found one", "creator": "Other", "creator_id": "UCother",
+                                                      "license": "youtube", "duration": 600})
+    settings.set_global(ask_permission=True)
+    v, job, msg = sources.add("https://youtu.be/ccccccccccc", added_by_owner=False)
+    assert job["state"] == "awaiting_authorization"
+    assert sources.release_waiting() == 0
+    settings.set_global(ask_permission=False)
+    assert sources.release_waiting() == 1
+    assert db.job(job["id"])["state"] == "queued"
+
+
 def test_authorization_rules():
     from clipper import settings, sources
     settings.ensure_default_channel()
+    settings.set_global(ask_permission=True)
     own = {"creator": "ConnorTV", "creator_id": "connortv"}
     assert sources.authorize_check("main", "twitch", own)[0] == "authorized"
     assert sources.authorize_check("main", "twitch", {"creator_id": "someoneelse"})[0] == "awaiting_authorization"
@@ -44,8 +67,9 @@ def test_a_link_you_add_starts_right_away(monkeypatch):
     assert job["state"] == "queued" and v["auth_basis"] == "a link you added yourself" and "queued" in msg
 
 
-def test_found_videos_still_wait_and_grant(monkeypatch):
-    from clipper import acquire, db, sources
+def test_found_videos_wait_when_asking_is_on_and_grant(monkeypatch):
+    from clipper import acquire, db, settings, sources
+    settings.set_global(ask_permission=True)
     monkeypatch.setattr(acquire, "info", lambda url: {"title": "Someone's podcast", "creator": "Other", "creator_id": "UCother",
                                                       "license": "youtube", "duration": 3600})
     v, job, msg = sources.add("https://youtu.be/aaaaaaaaaaa", added_by_owner=False)
@@ -68,3 +92,26 @@ def test_own_twitch_vod_authorized(monkeypatch):
                                                       "duration": 4 * 3600})
     v, job, msg = sources.add("https://www.twitch.tv/videos/123456789")
     assert v["auth_basis"] == "your own Twitch VOD" and job["state"] == "queued"
+
+
+def test_retrying_a_project_that_failed_for_permission(monkeypatch):
+    """Projects made before links started right away failed with "not authorized"; Retry fixes them."""
+    from clipper import acquire, db, jobs, settings, sources
+    settings.set_global(ask_permission=True)
+    monkeypatch.setattr(acquire, "info", lambda url: {"title": "I Flew Overseas", "creator": "Other", "creator_id": "UCother",
+                                                      "license": "youtube", "duration": 6 * 3600})
+    v, job, msg = sources.add("https://youtu.be/bbbbbbbbbbb", added_by_owner=False)
+    db.set_job(job["id"], state="failed", error="not authorized: not yours, not Creative Commons, and no permission recorded")
+    assert "back in the queue" in jobs.retry(job["id"])
+    assert db.job(job["id"])["state"] == "queued"
+    assert db.video(v["id"])["auth_status"] == "authorized"
+    found = db.run("INSERT INTO videos(channel, platform, external_id, url, title, auth_status, auth_basis, source_id, "
+                   "discovered) VALUES('main','youtube','x1','u','found','awaiting_authorization','not yours',1,0)")
+    j2 = sources.make_job(db.video(found))
+    db.set_job(j2["id"], state="failed")
+    jobs.retry(j2["id"])
+    assert db.video(found)["auth_status"] == "awaiting_authorization"    # found by a source: still needs your OK
+    settings.set_global(ask_permission=False)
+    db.set_job(j2["id"], state="failed")
+    jobs.retry(j2["id"])
+    assert db.video(found)["auth_status"] == "authorized"                # unless asking is off (the default)

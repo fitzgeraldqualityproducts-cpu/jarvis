@@ -42,6 +42,7 @@ GLOBAL_DEFAULTS = {
     "crf": 20,
     "allow_platform_download": True,   # yt-dlp, only ever for AUTHORIZED YouTube/Twitch sources
     "max_video_hours": 12,
+    "ask_permission": False,           # True = videos that aren't yours wait for your OK before clipping
     "youtube_daily_quota": 10000,      # Google's free daily API quota
     "youtube_upload_cost": 1600,       # units one upload costs (Google's published price)
     "discovery_every_hours": 6,
