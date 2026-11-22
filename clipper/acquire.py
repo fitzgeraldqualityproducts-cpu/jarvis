@@ -11,6 +11,8 @@ instead of 15 GB. Protected (DRM), private or members-only videos are never down
 access control is ever worked around: if yt-dlp says it needs a login, the job stops there."""
 import os
 import shutil
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import urllib.request
 from pathlib import Path
 
@@ -186,6 +188,34 @@ def acquire(video, folder, progress=lambda f, d="": None):
     return out
 
 
+_pending = {}                     # (folder, key) -> a background download of that section
+_lock = threading.Lock()
+
+
+def _span(start, end, pad):
+    s, e = max(0.0, start - pad), end + pad
+    return s, e, f"{int(s * 10)}_{int(e * 10)}"
+
+
+def prefetch(source, folder, spans, pad=3.0, workers=2):
+    """Smart mode: starts downloading the next clips' sections in the background, two at a time,
+    so the next clip's video is usually already here when its turn comes (same files, just sooner)."""
+    if source.get("mode") != "sections" or (source.get("video") and os.path.exists(source["video"])):
+        return 0
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="clipper-prefetch")
+    n = 0
+    for start, end in spans:
+        s, e, key = _span(start, end, pad)
+        with _lock:
+            have = (source.get("sections") or {}).get(key)
+            if (have and os.path.exists(have)) or (str(folder), key) in _pending:
+                continue
+            _pending[(str(folder), key)] = pool.submit(_fetch, source, Path(folder), s, e, key)
+        n += 1
+    pool.shutdown(wait=False)
+    return n
+
+
 def section(source, folder, start, end, pad=3.0):
     """For smart mode: the video for one clip (start..end seconds of the original), downloaded once.
     Returns (path, offset) where offset is the original time at the file's 0."""
@@ -194,15 +224,29 @@ def section(source, folder, start, end, pad=3.0):
         return source["video"], 0.0
     if source.get("video") and os.path.exists(source["video"]):
         return source["video"], 0.0                 # the whole video was fetched already (fallback)
-    s, e = max(0.0, start - pad), end + pad
-    key = f"{int(s * 10)}_{int(e * 10)}"
+    s, e, key = _span(start, end, pad)
+    with _lock:
+        fut = _pending.get((str(folder), key))
+    if fut is not None:
+        try:
+            fut.result()                            # being downloaded in the background: wait for it
+        except Exception:
+            pass                                    # it failed there: try again here (errors show)
+        finally:
+            with _lock:
+                _pending.pop((str(folder), key), None)
     have = source.setdefault("sections", {}).get(key)
     if have and os.path.exists(have):
         return have, s
-    for k, p in source["sections"].items():        # an earlier, wider section covers it
+    for k, p in list(source["sections"].items()):  # an earlier, wider section covers it
         a, b = (int(x) / 10 for x in k.split("_"))
         if a <= start and b >= end and os.path.exists(p):
             return p, a
+    got = _fetch(source, folder, s, e, key)
+    return (got, s) if got != source.get("video") else (got, 0.0)
+
+
+def _fetch(source, folder, s, e, key):
     try:
         from yt_dlp.utils import download_range_func
     except ImportError:
@@ -214,13 +258,15 @@ def section(source, folder, start, end, pad=3.0):
         if "ffmpeg" not in str(err).lower():
             raise
         # yt-dlp can't cut sections on this computer: get the whole video once and cut it ourselves
-        if not (source.get("video") and os.path.exists(source["video"])):
-            source["video"] = str(_download(source["url"], folder, {"format": VIDEO_FMT}, "source"))
-            media.dump(source, folder / "source.json")
-        return source["video"], 0.0
-    source["sections"][key] = str(path)
-    media.dump(source, folder / "source.json")
-    return str(path), s
+        with _lock:
+            if not (source.get("video") and os.path.exists(source["video"])):
+                source["video"] = str(_download(source["url"], folder, {"format": VIDEO_FMT}, "source"))
+                media.dump(source, folder / "source.json")
+        return source["video"]
+    with _lock:
+        source.setdefault("sections", {})[key] = str(path)
+        media.dump(source, folder / "source.json")
+    return str(path)
 
 
 def _http_download(url, out, max_gb=20):
