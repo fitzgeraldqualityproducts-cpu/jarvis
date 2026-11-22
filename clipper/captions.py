@@ -103,6 +103,8 @@ def choose_style(channel, suggestion=None, learned=None, category=None):
     best = (learned or {}).get("caption_style")
     if best in STYLES:
         return best
+    if channel.get("preset_style") in STYLES:       # the clipping preset's look (e.g. podcast -> podcast)
+        return channel["preset_style"]
     if suggestion in STYLES:
         return suggestion
     if category in CATEGORY_STYLE:

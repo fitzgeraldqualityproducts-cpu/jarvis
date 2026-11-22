@@ -7,6 +7,7 @@ GET  /clipper/clip/<id>             one clip for the editor: the words around it
 GET  /clipper/media/<clip>.mp4      a clip (with Range support so the preview can seek; ?download=1 saves it)
 GET  /clipper/thumb/<clip>.jpg
 GET  /clipper/frame/<clip>.jpg?t=   a frame of the source video (for positioning the crop by hand)
+GET  /clipper/source/<job>.mp4      the whole source video, while it's still on disk (plays the transcript)
 POST /clipper/action                buttons, with the page's token (same protection as the type box)
 POST /clipper/upload                a video file dropped on the page (raw bytes, with the token)"""
 import os
@@ -16,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from clipper import captions, data_dir, db, jobs, media, moments, publish, settings, sources, status
+from clipper import captions, data_dir, db, jobs, media, moments, presets, publish, settings, sources, status
 
 VIDEO_TYPES = (".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".flv", ".ts", ".mts")
 MAX_UPLOAD_GB = 20
@@ -34,6 +35,7 @@ def _clip_public(c):
     c["category"] = extra.get("category")
     c["parts"] = extra.get("parts") or {}
     c["version"] = extra.get("version", 1)
+    c["variant"], c["variant_of"] = extra.get("variant"), extra.get("variant_of")
     return c
 
 
@@ -69,7 +71,7 @@ def state():
         j["clip_count"] = db.one("SELECT COUNT(*) n FROM clips WHERE job_id=? AND state NOT IN ('rejected','regenerate','deleted','qa_failed')",
                                  j["id"])["n"]
         j["waiting_retry"] = j["state"] == "queued" and bool(j.get("error"))
-        j["options"] = {k: v for k, v in (j.get("options") or {}).items() if k in ("length", "stages")}
+        j["options"] = {k: v for k, v in (j.get("options") or {}).items() if k in ("length", "stages", "preset")}
     return {
         "now": time.time(), "overview": status.overview(), "stats": stats(), "jobs": js, "clips": clips,
         "events": db.q("SELECT id, t, level, job_id, clip_id, msg FROM events ORDER BY id DESC LIMIT 80"),
@@ -84,7 +86,7 @@ def state():
         "styles": [{"id": k, "name": captions.STYLE_NAMES.get(k, k), **{x: v[x] for x in ("font", "size", "color", "active", "keyword",
                     "stroke", "shadow", "y", "animation", "words_per_line", "uppercase")}} for k, v in captions.STYLES.items()],
         "fonts": sorted(captions.FONTS), "animations": captions.ANIMATIONS, "layouts": settings.LAYOUTS,
-        "lengths": settings.LENGTH_MODES, "sorts": list(moments.SORTS), "export_dir": str(export_dir()),
+        "lengths": settings.LENGTH_MODES, "presets": presets.public(), "exports": export_presets(), "sorts": list(moments.SORTS), "export_dir": str(export_dir()),
         "platform": sys.platform, "disk": _disk(),
     }
 
@@ -146,12 +148,14 @@ def job_detail(job_id):
     v = db.video(j["video_id"]) or {}
     from clipper import pipeline
     found = media.load(pipeline.folder_for(j["id"]) / "candidates.json") or {}
-    made = {c["rank"]: c["id"] for c in db.clips("job_id=? AND state NOT IN ('rejected','regenerate','deleted')", j["id"], limit=500)}
+    made = {c["rank"]: c["id"] for c in db.clips("job_id=? AND state NOT IN ('rejected','regenerate','deleted')", j["id"], limit=500)
+            if not (c.get("extra") or {}).get("variant_of")}
     cands = []
     for c in found.get("candidates", []):
         cands.append({k: c.get(k) for k in ("rank", "title", "titles", "start", "end", "duration", "score", "parts", "scores",
                                             "category", "hook", "hook_type", "reason", "check", "notes", "measures", "similar",
-                                            "topic", "weak", "method", "verified")} | {"clip_id": made.get(c.get("rank"))})
+                                            "topic", "weak", "method", "verified", "strongest", "strongest_at", "audience",
+                                            "weaknesses", "manual")} | {"clip_id": made.get(c.get("rank"))})
     j["steps"] = steps(j)
     j["waiting_retry"] = j["state"] == "queued" and bool(j.get("error"))
     return {"job": j, "video": {k: v.get(k) for k in ("id", "title", "url", "platform", "creator", "duration", "auth_basis")},
@@ -174,6 +178,18 @@ def clip_detail(clip_id):
     plan = media.load(folder / f"plan_{c['id']}.json") or {}
     v = db.video(c["video_id"]) or {}
     out = _clip_public(c)
+    ex = c.get("extra") or {}
+    root = ex.get("variant_of") or c["id"]
+    family = [x for x in db.clips("job_id=? AND state NOT IN ('deleted','regenerate','rejected')", c["job_id"], limit=500)
+              if x["id"] == root or (x.get("extra") or {}).get("variant_of") == root]
+    out["family"] = [{"id": x["id"], "label": pipeline.VARIANTS.get((x.get("extra") or {}).get("variant"), "Original"),
+                      "state": x["state"], "duration": x["duration"], "has_file": bool(x.get("path") and os.path.exists(x["path"])),
+                      "caption_style": x.get("caption_style"), "layout": x.get("layout"), "version": (x.get("extra") or {}).get("version", 1)}
+                     for x in sorted(family, key=lambda x: x["id"])]
+    out["history"] = [{"version": h["version"], "t": h.get("t"), "duration": h.get("duration"),
+                       "caption_style": h.get("caption_style"), "layout": h.get("layout"),
+                       "has_file": bool(h.get("path") and os.path.exists(h["path"]))}
+                      for h in reversed(ex.get("history") or [])]
     out.update(words=words, plan={k: plan.get(k) for k in ("layout", "reason", "zoom", "crop_w", "face_y", "manual", "gameplay")},
                x=(plan.get("x") or [0.5])[0] if plan.get("x") else 0.5, extra=c.get("extra") or {},
                source={"title": v.get("title"), "duration": v.get("duration"), "platform": v.get("platform")},
@@ -181,11 +197,41 @@ def clip_detail(clip_id):
     return out
 
 
-def media_path(kind, clip_id):
+def transcript(job_id):
+    """The whole video's transcript as sentences (number, start, end, speaker, text), for reading,
+    searching and picking your own clip on the project page."""
+    j = db.job(int(job_id))
+    if not j:
+        return {"sentences": [], "error": "no such job"}
+    from clipper import pipeline
+    tr = media.load(pipeline.folder_for(j["id"]) / "transcript.json") or {}
+    sents = [{"id": x["id"], "s": round(x["s"], 2), "e": round(x["e"], 2), "sp": x.get("speaker", 0), "t": x["text"]}
+             for x in tr.get("sentences") or []]
+    return {"sentences": sents, "speakers": tr.get("speakers", 1), "has_source": bool(source_file(j["id"]))}
+
+
+def source_file(job_id):
+    """The job's whole source video if it's still on disk (for playing the transcript), else None."""
+    j = db.job(int(job_id))
+    if not j:
+        return None
+    v = db.video(j["video_id"]) or {}
+    if v.get("platform") == "file" and v.get("path") and os.path.exists(v["path"]):
+        return v["path"]
+    from clipper import pipeline
+    src = media.load(pipeline.folder_for(j["id"]) / "source.json") or {}
+    return src["video"] if src.get("video") and os.path.exists(src["video"]) else None
+
+
+def media_path(kind, clip_id, version=None):
+    """A clip's file (or thumbnail); version = an earlier version kept in its history."""
     c = db.clip(int(clip_id))
     if not c:
         return None
     p = c.get("path") if kind == "media" else c.get("thumb")
+    if version is not None and str(version).isdigit() and int(version) != int((c.get("extra") or {}).get("version", 1)):
+        h = next((h for h in (c.get("extra") or {}).get("history") or [] if int(h.get("version", -1)) == int(version)), {})
+        p = h.get("path") if kind == "media" else h.get("thumb")
     return p if p and os.path.exists(p) else None
 
 
@@ -238,22 +284,69 @@ def export_dir():
     return home / "Videos" / "Jarvis Shorts"
 
 
-def export(ids):
-    """Copies finished clips (title-named MP4s) into the export folder. Returns what happened."""
+# Export presets. Shorts, TikTok and Reels all take the same 1080x1920 H.264/AAC file the clipper
+# makes, so those are a straight copy (no quality lost to re-encoding); they differ in how long a
+# video may be, which is checked. The smaller sizes are re-encoded for sharing or slow uploads.
+EXPORTS = {
+    "shorts": {"label": "YouTube Shorts (1080p)", "height": None, "max_s": 180, "suffix": ""},
+    "tiktok": {"label": "TikTok (1080p)", "height": None, "max_s": 600, "suffix": " [TikTok]"},
+    "reels": {"label": "Instagram Reels (1080p)", "height": None, "max_s": 180, "suffix": " [Reels]"},
+    "small": {"label": "Smaller file (720p)", "height": 1280, "crf": 25, "audio": "128k", "max_s": None, "suffix": " [720p]"},
+    "preview": {"label": "Quick preview (540p)", "height": 960, "crf": 28, "audio": "96k", "max_s": None, "suffix": " [540p]"},
+}
+
+
+def export_presets():
+    return [{"id": k, "label": v["label"], "max_s": v["max_s"]} for k, v in EXPORTS.items()]
+
+
+def _transcode(src, dest, p):
+    part = Path(str(dest) + ".part.mp4")
+    media.run(["-y", "-i", src, "-vf", f"scale=-2:{p['height']}:flags=lanczos", "-c:v", "libx264", "-preset", "veryfast",
+               "-crf", str(p["crf"]), "-pix_fmt", "yuv420p", "-profile:v", "high", "-c:a", "aac", "-b:a", p["audio"],
+               "-movflags", "+faststart", str(part)], timeout=900)
+    info = media.probe(str(part))               # never call it exported until the file really plays
+    if int(info.get("height") or 0) != p["height"] or float(info.get("duration") or 0) <= 0:
+        part.unlink(missing_ok=True)
+        raise media.MediaError("the smaller copy didn't come out right")
+    os.replace(part, dest)
+
+
+def export(ids, preset="shorts"):
+    """Copies finished clips (title-named MP4s) into the export folder, as the chosen export preset.
+    Returns what happened, including clips too long for that platform (they're still exported)."""
+    p = EXPORTS.get(preset or "shorts") or EXPORTS["shorts"]
     out = export_dir()
     out.mkdir(parents=True, exist_ok=True)
-    done, missing = [], []
+    done, missing, long, failed = [], [], [], []
     for i in ids:
         c = db.clip(int(i))
         if not c or not c.get("path") or not os.path.exists(c["path"]):
             missing.append(int(i))
             continue
-        name = f"{_safe(c.get('title'))} (clip {c['id']}).mp4"
-        shutil.copy2(c["path"], out / name)
+        name = f"{_safe(c.get('title'))} (clip {c['id']}){p['suffix']}.mp4"
+        try:
+            if p["height"]:
+                _transcode(c["path"], out / name, p)
+            else:
+                shutil.copy2(c["path"], out / name)
+        except Exception as e:
+            failed.append(f"clip {c['id']}: {str(e)[:120]}")
+            continue
+        if p["max_s"] and float(c.get("duration") or 0) > p["max_s"]:
+            long.append(c["id"])
         done.append(name)
-    msg = f"Exported {len(done)} clip{'s' if len(done) != 1 else ''} to {out}." if done else "Nothing to export."
+    what = p["label"]
+    msg = f"Exported {len(done)} clip{'s' if len(done) != 1 else ''} as {what} to {out}." if done else "Nothing was exported."
     if missing:
         msg += f" {len(missing)} had no file (not rendered or deleted)."
+    if long:
+        msg += f" Heads up: clip{'s' if len(long) != 1 else ''} {', '.join(map(str, long))} {'are' if len(long) != 1 else 'is'} " \
+               f"longer than {what.split(' (')[0]} allows ({p['max_s']}s)."
+    if failed:
+        msg += " Couldn't export " + "; ".join(failed) + "."
+    if done:
+        db.log(f"Export: {msg}")
     return {"ok": bool(done), "message": msg, "folder": str(out), "files": done}
 
 
@@ -265,7 +358,8 @@ def delete(clip_id):
         return "That clip is on YouTube, so I've kept it here too. Delete it on YouTube first if you want it gone."
     if c["state"] == "uploading":
         return "That clip is uploading right now."
-    for p in (c.get("path"), c.get("thumb")):
+    old_files = [f for h in (c.get("extra") or {}).get("history") or [] for f in (h.get("path"), h.get("thumb"))]
+    for p in [c.get("path"), c.get("thumb")] + old_files:
         if p and os.path.exists(p):
             try:
                 os.remove(p)
@@ -278,6 +372,29 @@ def delete(clip_id):
     db.set_clip(c["id"], state="deleted", note="deleted from the dashboard")
     db.log(f"Deleted clip {c['id']}.", clip_id=c["id"])
     return f"Deleted clip {c['id']}."
+
+
+def add_many(urls, req):
+    """Batch: several links or file paths at once (one per line). Each becomes its own project in the
+    queue, with the same preset, length and count; links already being processed aren't added twice."""
+    if isinstance(urls, str):
+        urls = urls.splitlines()
+    seen, results = set(), []
+    for u in urls:
+        u = str(u).strip()
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        r = action(dict(req, action="add", url=u))
+        results.append({"url": u, "ok": r.get("ok"), "job": r.get("job"), "message": r.get("message")})
+        if len(results) >= 50:
+            break
+    ok = [r for r in results if r["ok"]]
+    msg = f"Queued {len(ok)} of {len(results)} video{'s' if len(results) != 1 else ''}."
+    bad = [r for r in results if not r["ok"]]
+    if bad:
+        msg += " Not added: " + "; ".join(f"{r['url'][:60]} ({r['message']})" for r in bad[:5])
+    return {"ok": bool(ok), "message": msg[:900], "results": results}
 
 
 def check_link(text):
@@ -347,8 +464,10 @@ def action(req):
     try:
         if a == "add":
             opts = {}
-            if req.get("length") in settings.LENGTH_MODES and req.get("length") not in ("custom",):
+            if req.get("length") in settings.LENGTH_MODES and req.get("length") not in ("custom", "auto"):
                 opts["length"] = req["length"]
+            if req.get("preset") in presets.PRESETS:
+                opts["preset"] = req["preset"]
             v, job, msg = sources.add(str(req.get("url", "")).strip(), max_clips=req.get("count") or None, priority=8,
                                       options=opts or None)
             return {"ok": job is not None, "message": msg, "job": job["id"] if job else None}
@@ -375,6 +494,18 @@ def action(req):
         if a == "regenerate":
             from clipper import pipeline
             return {"ok": True, "message": pipeline.regenerate(int(cid))}
+        if a == "transcript":
+            return dict(transcript(int(jid)), ok=True, message="")
+        if a == "make_range":
+            from clipper import pipeline
+            return {"ok": True, "message": pipeline.add_range(int(jid), int(req["start_id"]), int(req["end_id"]))}
+        if a == "variants":
+            from clipper import pipeline
+            r = pipeline.make_variants(int(cid), [str(k) for k in req.get("kinds") or []])
+            return {"ok": bool(r["clips"]), "message": r["message"], "clips": r["clips"]}
+        if a == "restore":
+            from clipper import pipeline
+            return {"ok": True, "message": pipeline.restore_version(int(cid), int(req["version"]))}
         if a == "pick":
             from clipper import pipeline
             return {"ok": True, "message": pipeline.pick(int(jid), req.get("ranks") or [])}
@@ -384,7 +515,9 @@ def action(req):
             msgs = [delete(int(i)) for i in req.get("clips") or []]
             return {"ok": True, "message": f"Deleted {sum(1 for m in msgs if m.startswith('Deleted'))} clip(s)."}
         if a == "export":
-            return export(req.get("clips") or ([cid] if cid else []))
+            return export(req.get("clips") or ([cid] if cid else []), req.get("preset") or "shorts")
+        if a == "add_many":
+            return add_many(req.get("urls") or [], req)
         if a == "open_exports":
             folder = export_dir()
             folder.mkdir(parents=True, exist_ok=True)

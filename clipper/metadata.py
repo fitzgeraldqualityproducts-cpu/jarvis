@@ -74,7 +74,7 @@ def fill(c, r, video, channel):
     pinned = [str(p).strip()[:500] for p in (r.get("pinned") or ([r["pinned_comment"]] if r.get("pinned_comment") else [])) if str(p).strip()][:3]
     c.update(title=titles[0], titles=titles[:5], description=full[0][:4800], descriptions=[d[:4800] for d in full],
              hashtags=tags, tags=_uniq([str(k)[:60] for k in (r.get("keywords") or [])] + [c.get("topic", "")])[:15],
-             audience=str(r.get("audience") or channel.get("audience", "general"))[:80],
+             audience=str(r.get("audience") or c.get("audience") or channel.get("audience", "general"))[:80],
              pinned_comment=pinned[0] if pinned else "", pinned_ideas=pinned, hook_texts=hooks,
              category_id=channel.get("category_id", "24"))
     if not c.get("hook_text") and hooks and channel.get("hook_overlay", True):

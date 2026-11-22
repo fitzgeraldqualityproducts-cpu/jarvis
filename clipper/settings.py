@@ -61,6 +61,9 @@ CHANNEL_DEFAULTS = {
     "language": "en",
     "brand": {"handle": "", "voice": "energetic, honest, never clickbait", "color": "#22d3ee",
               "highlight": "#facc15", "watermark": False},
+    "preset": "balanced",             # balanced | viral | educational | entertainment | storytelling | podcast (presets.py)
+    "edit_intensity": "normal",       # subtle | normal | strong: how strong zooms/punch-ins are and how often
+    "hook_optimization": True,        # may start a clip on a stronger line inside it (never losing needed context)
     "caption_style": "auto",          # auto or one of STYLES (see captions.py)
     "caption_overrides": {},          # font, size, color, active, keyword, stroke, shadow, y, animation, words_per_line
     "hook_overlay": True,             # short accurate title text over the first seconds
@@ -77,7 +80,7 @@ CHANNEL_DEFAULTS = {
     "music_folder": "",               # licensed background music only (empty = none)
     "music_volume": 0.08,             # music level under speech (0-0.3); it ducks further while someone talks
     "sound_effects": False,           # soft whoosh/pop on the opening text and punch-ins (made by the clipper, no licences)
-    "length_mode": "auto",            # auto | 15_30 | 30_45 | 45_60 | 60_90 | custom (clip_min/clip_max below)
+    "length_mode": "auto",            # auto | 15_30 | 30_45 | 45_60 | 60_90 | 90_180 | custom (clip_min/clip_max below)
     "clip_min": 20, "clip_max": 60, "clip_hard_max": 90,
     "max_clips_per_video": 5,
     "min_score": 55,                  # clips scoring under this (out of 100) are dropped
@@ -97,7 +100,9 @@ CHANNEL_DEFAULTS = {
 
 STYLES = ["clean", "bold", "minimal", "gaming", "podcast", "highlight", "pop", "cinematic", "kinetic", "educational", "premium"]
 LAYOUTS = ["auto", "track", "podcast", "split", "stack", "gameplay", "fit", "full"]
-LENGTH_MODES = ["auto", "15_30", "30_45", "45_60", "60_90", "custom"]
+LENGTH_MODES = ["auto", "15_30", "30_45", "45_60", "60_90", "90_180", "custom"]
+PRESET_NAMES = ["balanced", "viral", "educational", "entertainment", "storytelling", "podcast"]
+INTENSITIES = ["subtle", "normal", "strong"]
 
 
 def _deep(base, over):
@@ -209,6 +214,10 @@ def _validate(s):
         raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}")
     if s.get("length_mode", "auto") not in LENGTH_MODES:
         raise ValueError(f"clip length must be one of {', '.join(LENGTH_MODES)}")
+    if s.get("preset", "balanced") not in PRESET_NAMES:
+        raise ValueError(f"preset must be one of {', '.join(PRESET_NAMES)}")
+    if s.get("edit_intensity", "normal") not in INTENSITIES:
+        raise ValueError("editing intensity must be subtle, normal or strong")
     if "music_volume" in s and not (0 <= float(s["music_volume"]) <= 0.3):
         raise ValueError("music volume must be between 0 and 0.3 so it never drowns out speech")
     if "min_score" in s and not (0 <= float(s["min_score"]) <= 100):
