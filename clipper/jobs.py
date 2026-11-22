@@ -31,6 +31,11 @@ def start(busy=lambda: False):
     """Starts the worker and scheduler threads (inside Jarvis, or `python -m clipper run`)."""
     if _threads:
         return
+    try:
+        from clipper import health
+        health.startup()                            # repair a damaged database before anything uses it
+    except Exception as e:
+        print(f"(clipper: database health check failed: {e})")
     settings.ensure_default_channel()
     recover()
     for name, fn in (("clipper-worker", _worker_loop), ("clipper-scheduler", _scheduler_loop)):
@@ -187,7 +192,20 @@ def _worker_loop(busy):
             _self_repair()
         except Exception as e:
             print(f"(clipper worker error: {e})")
+            _repair_if_damaged(e)
             _stop.wait(15)
+
+
+def _repair_if_damaged(err):
+    """A damaged database found while running: repair it once nothing else is using it."""
+    import sqlite3
+    if not (isinstance(err, sqlite3.DatabaseError) and "malformed" in str(err).lower()) or _children:
+        return
+    try:
+        from clipper import health
+        health.startup()
+    except Exception as e:
+        print(f"(clipper: couldn't repair the database: {e})")
 
 
 def _self_repair():
@@ -240,6 +258,11 @@ def tick(now=None):
             publish.refresh_analytics()
         except Exception as e:
             db.log(f"Analytics refresh failed: {e}", "warn")
+    try:
+        from clipper import health
+        health.daily()                              # a daily backup copy of the database
+    except Exception as e:
+        print(f"(clipper: backup failed: {e})")
     try:
         from clipper import disk
         disk.maybe_clean(now)

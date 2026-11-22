@@ -47,6 +47,13 @@ _conn = None
 def _db():
     global _conn
     if _conn is None:
+        try:
+            import dbrescue
+            if not dbrescue.check(DB):
+                dbrescue.repair(DB)                 # a damaged memory is rebuilt (the damaged copy is kept)
+            dbrescue.backup(DB)                     # and a daily good copy is kept next to it
+        except Exception as e:
+            print(f"(memory: health check skipped: {e})")
         _conn = sqlite3.connect(str(DB), check_same_thread=False, timeout=10)
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("CREATE TABLE IF NOT EXISTS talk (id INTEGER PRIMARY KEY, t REAL, user TEXT, jarvis TEXT, "

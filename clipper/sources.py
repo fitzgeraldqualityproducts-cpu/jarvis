@@ -15,6 +15,7 @@ Authorization (nothing is processed unless one of these is true; the reason is s
   - your own YouTube channel (the one you connected)
   - a Creative Commons (CC BY) YouTube video (credit is added to the description)
   - a channel or video you marked "I have permission" (your say-so is recorded)
+  - a link you paste or say yourself (that's your say-so too, so it starts right away)
 Anything else waits in "awaiting authorization" until you approve it or drop it.
 DRM, private, members-only or sub-only videos are never touched."""
 import hashlib
@@ -140,6 +141,8 @@ def authorize_check(channel, platform, info, added_by_owner=False, source=None):
         v = s["value"].lower()
         if s["kind"] in ("youtube_channel", "twitch_channel", "creator") and v and v in (creator_id, creator):
             return "authorized", s["auth_basis"] or "an approved creator"
+    if added_by_owner and not source:
+        return "authorized", "a link you added yourself"     # your own paste is your say-so: starts right away
     return "awaiting_authorization", "not yours, not Creative Commons, and no permission recorded"
 
 
@@ -155,6 +158,10 @@ def add(text, channel="main", added_by_owner=True, max_clips=None, priority=5, o
     if existing:
         job = db.one("SELECT * FROM jobs WHERE video_id=? AND state NOT IN ('failed','cancelled') ORDER BY id DESC",
                      existing["id"])
+        if job and job["state"] == "awaiting_authorization" and added_by_owner and not source:
+            grant(existing["id"], "a link you added yourself")
+            return db.video(existing["id"]), db.job(job["id"]), \
+                f"Got it. \"{_short(existing['title'])}\" is queued (job {job['id']})."
         if job:
             return existing, job, f"I already have that one (job {job['id']}, {job['state'].replace('_', ' ')})."
         if existing["auth_status"] != "authorized" and added_by_owner and platform == "file":

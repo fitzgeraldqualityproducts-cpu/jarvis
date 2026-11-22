@@ -36,14 +36,24 @@ def test_twitch_channel_is_an_approved_source():
     assert s["value"] == "connortv" and s["authorized"] == 1
 
 
-def test_unauthorized_link_waits_and_grant(monkeypatch):
+def test_a_link_you_add_starts_right_away(monkeypatch):
     from clipper import acquire, db, sources
     monkeypatch.setattr(acquire, "info", lambda url: {"title": "Someone's podcast", "creator": "Other", "creator_id": "UCother",
                                                       "license": "youtube", "duration": 3600})
     v, job, msg = sources.add("https://youtu.be/aaaaaaaaaaa")
+    assert job["state"] == "queued" and v["auth_basis"] == "a link you added yourself" and "queued" in msg
+
+
+def test_found_videos_still_wait_and_grant(monkeypatch):
+    from clipper import acquire, db, sources
+    monkeypatch.setattr(acquire, "info", lambda url: {"title": "Someone's podcast", "creator": "Other", "creator_id": "UCother",
+                                                      "license": "youtube", "duration": 3600})
+    v, job, msg = sources.add("https://youtu.be/aaaaaaaaaaa", added_by_owner=False)
     assert job["state"] == "awaiting_authorization" and "permission" in msg
-    sources.grant(v["id"])
-    assert db.job(job["id"])["state"] == "queued"
+    v2, job2, msg2 = sources.add("https://youtu.be/aaaaaaaaaaa")   # pasting it yourself approves it
+    assert job2["id"] == job["id"] and job2["state"] == "queued"
+    assert sources.authorize_check("main", "youtube", {"creator_id": "UCx"}, added_by_owner=True)[0] == "authorized"
+    assert sources.authorize_check("main", "youtube", {"drm": True}, added_by_owner=True)[0] == "rejected"
 
 
 def test_unauthorized_never_downloads(tmp_path):
