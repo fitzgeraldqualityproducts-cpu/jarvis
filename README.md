@@ -446,3 +446,11 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   scores 20 candidate niches with the fixed weights, picks one, defines 3-7 content pillars, and opens
   the Top 10 report (`studio_data/research/<run>/report.html`). Scores are reproducible from the saved
   evidence; once picked, the niche only changes with `--rechoose "<reason>"`.
+- Phase 4 (done): the channel. Double-click **Set Up YouTube Channel**: Claude suggests names, each
+  handle is looked up on YouTube ("taken" / "not found"), you pick one, and Jarvis draws the logo
+  (800x800) and banner (2048x1152, text inside the 1235x338 safe area) and writes the description
+  (with the AI-narration disclosure) and brand guide in `studio_data/brand/`. YouTube has no API to
+  create channels, so you create it by hand in a NEW Google account, then double-click **Connect
+  YouTube Business**: it protects your existing channel by handle, signs in with only upload,
+  read-only and analytics-read permissions (own token in `studio_data/secrets/`), and locks the studio
+  to that one channel. It refuses your existing channel. `python -m studio verify` re-checks it.
