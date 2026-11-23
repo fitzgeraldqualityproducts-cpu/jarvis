@@ -513,3 +513,9 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   Restart drills are tested: a crash mid-render resumes at rendering, and a stop mid-upload continues
   the same upload session (never a second upload). Starting Jarvis at login is your choice:
   run **Install Jarvis Extras** (it asks) or add "Jarvis at Login.command" in System Settings > Login Items.
+- Live dashboard: say "show me the YouTube dashboard" or double-click **Open YouTube Dashboard**
+  (http://localhost:8765/studio). An assembly line of nine stations (Idea, Script, Fact-check, Voice, Video,
+  Quality check, Ready, Uploading, Live): every Short sits at the station it's on, with how long it's been
+  there, retries and failures shown on the card. Channel numbers, Partner Program progress, recent uploads,
+  what Jarvis did lately and health sit around it. It refreshes every 4 seconds and only reads; it never
+  changes anything. If Jarvis isn't running, the double-click serves the page itself (port 8766).
