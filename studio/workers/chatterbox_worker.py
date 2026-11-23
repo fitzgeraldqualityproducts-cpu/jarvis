@@ -28,7 +28,6 @@ def sentences(text, limit=260):
 try:
     import numpy as np
     import torch
-    import torchaudio
     from chatterbox.tts import ChatterboxTTS
     torch.manual_seed(int(job.get("seed", 7)))
     device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -50,7 +49,13 @@ try:
         chunks.append(wav.squeeze(0).detach().cpu().numpy().astype(np.float32))
         chunks.append(gap)
     audio = np.concatenate(chunks[:-1]) if chunks else np.zeros(1, dtype=np.float32)
-    torchaudio.save(job["out"], torch.from_numpy(audio).unsqueeze(0), rate)
+    import wave                           # 16-bit PCM: the format Jarvis's own WAV reader understands
+    pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
+    with wave.open(job["out"], "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(int(rate))
+        w.writeframes(pcm.tobytes())
     json.dump({"path": job["out"], "rate": rate, "seconds": round(len(audio) / rate, 2), "device": device,
                "sentences": len(chunks) // 2, "took": round(time.time() - t0, 1)}, open(pout, "w"))
 except Exception as e:
