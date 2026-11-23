@@ -108,6 +108,14 @@ def connect_flow():
                 print(f"Protected: {c['title']} ({c['id']}). The business can never upload there.")
             except Exception as e:
                 print(f"Couldn't look that up ({e}). You can add it later with: .venv/bin/python -m studio protect @handle")
+    if ytauth.connected() and guard.locked_channel() and "--again" not in sys.argv:
+        try:
+            me = ytauth.whoami()
+            if me["id"] == guard.locked_channel()["youtube_channel_id"]:
+                print(f"\nAlready connected to {me['title']}. Nothing to do. (To sign in again anyway: add --again.)")
+                return 0
+        except Exception as e:
+            print(f"\nThe saved sign-in doesn't work any more ({e}), so let's sign in again.")
     print("\nNow sign in. In Google's page, choose the NEW business account and its channel, then press Allow.")
     try:
         me = ytauth.connect()
