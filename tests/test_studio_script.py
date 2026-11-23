@@ -162,4 +162,4 @@ def test_worker_runs_research_to_narration(fakes, fake_voice):
     assert db.one("SELECT COUNT(*) n FROM voiceovers WHERE video_id=?", vid)["n"] == 1
     assert fake_voice["voice"] == "am_michael" and "88 percent" in fake_voice["text"]
     assert db.one("SELECT status, video_id FROM topics WHERE id=?", tid)["video_id"] == vid
-    assert jobs.tick() is None                                   # waits at rendering until Phase 7
+    assert "rendering" in jobs.STAGES                            # Phase 7 picks it up from here

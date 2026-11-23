@@ -67,9 +67,28 @@ def generating_audio(v, ctx):
     return "rendering"
 
 
+def rendering(v, ctx):
+    from studio import video
+    video.render(v["id"], progress=lambda s: ctx.beat(s))
+    return "validating"
+
+
+def validating(v, ctx):
+    from studio import qa, video
+    video.metadata(v["id"])
+    r = qa.check(v["id"])
+    if not r["ok"]:
+        if v.get("topic_id"):
+            topics.set_status(v["topic_id"], script_status="passed", publish_status="qa_failed")
+        raise jobs.Permanent("failed QA: " + "; ".join(f"{c['name']} ({c['detail']})" for c in r["failed"][:5]))
+    if v.get("topic_id"):
+        topics.set_status(v["topic_id"], publish_status="ready")
+    return "ready"
+
+
 def register():
     """Adds the stages (a stage that's already registered, e.g. by a test, is kept)."""
     for name, fn in (("researching", researching), ("scripting", scripting), ("fact_checking", fact_checking),
-                     ("generating_audio", generating_audio)):
+                     ("generating_audio", generating_audio), ("rendering", rendering), ("validating", validating)):
         if name not in jobs.STAGES:
             jobs.register(name, fn)
