@@ -58,10 +58,10 @@ def ffmpeg_on_path():
         link = folder / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
         if not link.exists():
             try:
-                os.symlink(exe, link)
+                os.symlink(exe, link)                     # a link keeps the original's permissions
             except (OSError, NotImplementedError):
                 shutil.copy2(exe, link)
-            os.chmod(link, 0o755)
+                os.chmod(link, 0o755)                     # (chmod on a link would change a system ffmpeg)
         os.environ["PATH"] = str(folder) + os.pathsep + os.environ.get("PATH", "")
         return bool(shutil.which("ffmpeg"))
     except Exception as e:
