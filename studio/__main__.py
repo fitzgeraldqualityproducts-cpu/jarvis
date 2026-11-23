@@ -1,7 +1,11 @@
 """python -m studio status | check | run | toolchain | test-short [folder]
   run         the worker in the foreground (Ctrl+C stops it safely)
   toolchain   checks every free tool is installed, with versions and licences
-  test-short  makes one real 1080x1920 test Short with narration and times each step (never uploads)"""
+  test-short  makes one real 1080x1920 test Short with narration and times each step (never uploads)
+  add-key     saves a read-only YouTube Data API key for research (reads it from the keyboard)
+  research    researches the candidate niches, scores them, picks one and writes the Top 10 report
+              (--no-youtube skips YouTube data; --run <id> resumes a run; --rechoose "<reason>" replaces the niche)
+  report      rewrites the last run's report"""
 import json
 import sys
 import time
@@ -22,6 +26,25 @@ def main(argv):
         from studio import ROOT, toolchain
         folder = argv[1] if len(argv) > 1 else str(ROOT / "studio_data" / "test-short")
         print(json.dumps(toolchain.benchmark(folder), indent=2, default=str))
+    elif cmd == "add-key":
+        import getpass
+        from studio import ytpublic
+        key = getpass.getpass("Paste the API key (it won't show) and press Return: ")
+        ytpublic.save_key(key)
+        print("Saved. Only your user can read it.")
+    elif cmd in ("research", "report"):
+        from studio import db, niche
+        run = argv[argv.index("--run") + 1] if "--run" in argv else None
+        if cmd == "report":
+            print(niche.report(run or db.get("last_niche_run")))
+            return 0
+        health.startup()
+        print("Researching niches. This takes a while (it uses YouTube's free API and your Claude plan).")
+        run = niche.research(run, progress=print, skip_youtube="--no-youtube" in argv)
+        reason = argv[argv.index("--rechoose") + 1] if "--rechoose" in argv else ""
+        d = niche.choose(run, force=bool(reason), reason=reason)
+        print(f"\nNiche: {d.get('name') or d.get('niche')}")
+        print(f"Report: {niche.run_dir(run) / 'report.html'}")
     elif cmd == "run":
         jobs.start()
         try:
