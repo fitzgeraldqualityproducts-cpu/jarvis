@@ -24,6 +24,7 @@ from pathlib import Path
 
 from studio import config, data_dir, db, guard
 
+SCORING_VERSION = 2   # 2: linear viral score (v1 capped at 50% hit share)
 WEIGHTS = {"monetization": 0.25, "demand": 0.20, "competition": 0.15, "viral": 0.15,
            "sustainability": 0.15, "feasibility": 0.10}
 NAMES = {"monetization": "Monetization potential", "demand": "Audience demand", "competition": "Competition opportunity",
@@ -147,7 +148,7 @@ def metrics(m):
         "avg_seconds": round(statistics.mean(v["seconds"] for v in vids), 1),
         "competitor_recent_median": _median([c["recent_median"] for c in comp]),
         "competitor_consistency": _median([c["consistency"] for c in comp]),
-        "competitor_uploads_per_week": _median([c["uploads_per_week"] for c in comp]),
+        "competitor_uploads_per_week": round(_median([c["uploads_per_week"] for c in comp]) or 0, 1) if comp else None,
     }
 
 
@@ -204,7 +205,7 @@ def score_one(nid, mm, qual):
                             "evidence": f"{mm['big_channel_share']:.0%} of top Shorts from 1M+ subscriber channels; "
                                         f"{mm['small_channel_hit_share']:.0%} of 500k+ hits from channels under 100k; "
                                         f"{mm['young_channel_share']:.0%} of channels under 18 months old"}
-        viral = 100 * (0.6 * min(mm["share_over_1m"] * 2, 1) + 0.4 * min(mm["outlier_share"] * 2, 1))
+        viral = 100 * (0.6 * mm["share_over_1m"] + 0.4 * mm["outlier_share"])     # linear: no early 100 cap (v2)
         f["viral"] = {"score": round(_clamp(viral), 1), "basis": "measured", "confidence": mconf,
                       "evidence": f"{mm['share_over_1m']:.0%} of top Shorts passed 1M views; "
                                   f"{mm['outlier_share']:.0%} got more views than their channel has subscribers"}

@@ -5,7 +5,11 @@
   add-key     saves a read-only YouTube Data API key for research (reads it from the keyboard)
   research    researches the candidate niches, scores them, picks one and writes the Top 10 report
               (--no-youtube skips YouTube data; --run <id> resumes a run; --rechoose "<reason>" replaces the niche)
-  report      rewrites the last run's report"""
+  report      rewrites the last run's report
+  brand       channel names (handles checked), logo, banner, description, brand guide
+  connect     signs in to the NEW business channel and locks the studio to it
+  verify      checks the connection: right channel, upload and analytics permission (changes nothing)
+  protect     adds a channel (@handle or UC id) that the studio must never publish to"""
 import json
 import sys
 import time
@@ -45,6 +49,18 @@ def main(argv):
         d = niche.choose(run, force=bool(reason), reason=reason)
         print(f"\nNiche: {d.get('name') or d.get('niche')}")
         print(f"Report: {niche.run_dir(run) / 'report.html'}")
+    elif cmd == "brand":
+        from studio import setup_channel
+        return setup_channel.brand_flow()
+    elif cmd == "connect":
+        from studio import setup_channel
+        return setup_channel.connect_flow()
+    elif cmd == "verify":
+        from studio import ytauth
+        print(json.dumps(ytauth.verify(), indent=2, default=str))
+    elif cmd == "protect":
+        from studio import ytauth
+        print(ytauth.protect_existing(argv[1]))
     elif cmd == "run":
         jobs.start()
         try:

@@ -141,8 +141,9 @@ def _tokens(channel):
 
 # ---------- sign-in ----------
 
-def sign_in(channel="main", open_browser=True, timeout=300, port=0):
-    """The desktop sign-in flow (loopback redirect + PKCE). Returns the connected channel's title."""
+def browser_code(scopes=SCOPES, open_browser=True, timeout=300, port=0, done_text="Jarvis is connected to YouTube."):
+    """Google's desktop sign-in (loopback redirect + PKCE): opens the browser and waits for the
+    answer. Returns {"code", "redirect", "verifier"} for exchange()."""
     cl = client()
     if not cl:
         raise NotConnected("I need the Google OAuth client file first (see Connect YouTube).")
@@ -163,7 +164,7 @@ def sign_in(channel="main", open_browser=True, timeout=300, port=0):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            msg = "Jarvis is connected to YouTube. You can close this tab." if got["code"] else \
+            msg = f"{done_text} You can close this tab." if got["code"] else \
                 "YouTube wasn't connected. You can close this tab and try again."
             self.wfile.write(f"<html><body style='font:20px system-ui;background:#05121a;color:#9ef;padding:40px'>"
                              f"{msg}</body></html>".encode())
@@ -174,8 +175,8 @@ def sign_in(channel="main", open_browser=True, timeout=300, port=0):
     srv = http.server.HTTPServer(("127.0.0.1", port), H)
     redirect = f"http://127.0.0.1:{srv.server_address[1]}"
     url = AUTH_URL + "?" + urllib.parse.urlencode({
-        "client_id": cl["client_id"], "redirect_uri": redirect, "response_type": "code", "scope": " ".join(SCOPES),
-        "access_type": "offline", "prompt": "consent", "state": state, "code_challenge": challenge,
+        "client_id": cl["client_id"], "redirect_uri": redirect, "response_type": "code", "scope": " ".join(scopes),
+        "access_type": "offline", "prompt": "consent select_account", "state": state, "code_challenge": challenge,
         "code_challenge_method": "S256"})
     print("Opening Google's sign-in page. If it doesn't open, paste this into your browser:\n" + url)
     if open_browser:
@@ -187,14 +188,46 @@ def sign_in(channel="main", open_browser=True, timeout=300, port=0):
     srv.server_close()
     if not got.get("code"):
         raise YouTubeError(f"sign-in didn't finish ({got.get('error') or 'timed out'})")
-    tok = _post_form(TOKEN_URL, {"code": got["code"], "client_id": cl["client_id"], "client_secret": cl["client_secret"],
-                                 "redirect_uri": redirect, "grant_type": "authorization_code", "code_verifier": verifier})
+    return {"code": got["code"], "redirect": redirect, "verifier": verifier}
+
+
+def exchange(answer):
+    """Swaps the sign-in answer for tokens (with a refresh token)."""
+    cl = client()
+    tok = _post_form(TOKEN_URL, {"code": answer["code"], "client_id": cl["client_id"], "client_secret": cl["client_secret"],
+                                 "redirect_uri": answer["redirect"], "grant_type": "authorization_code",
+                                 "code_verifier": answer["verifier"]})
     if not tok.get("refresh_token"):
         raise YouTubeError("Google didn't give a refresh token; remove Jarvis's access at myaccount.google.com and try again")
     tok["expires_at"] = time.time() + float(tok.get("expires_in", 3600)) - 60
+    return tok
+
+
+def sign_in(channel="main", open_browser=True, timeout=300, port=0):
+    """The desktop sign-in flow (loopback redirect + PKCE). Returns the connected channel's title."""
+    tok = exchange(browser_code(SCOPES, open_browser, timeout, port))
     _write_secret(_token_path(channel), tok)
     me = identify(channel)
     return me.get("title") or "your channel"
+
+
+def refresh(tok):
+    """A fresh access token for saved tokens (updates tok in place). Raises NotConnected if revoked."""
+    cl = client()
+    if not cl:
+        raise NotConnected("the Google OAuth client file is missing")
+    try:
+        new = _post_form(TOKEN_URL, {"refresh_token": tok["refresh_token"], "client_id": cl["client_id"],
+                                     "client_secret": cl["client_secret"], "grant_type": "refresh_token"})
+    except YouTubeError as e:
+        if e.status in (400, 401):
+            raise NotConnected("Google signed Jarvis out of YouTube (that happens weekly while the Google app is in "
+                               "'Testing'). Double-click Connect YouTube again.")
+        raise
+    tok.update(access_token=new["access_token"], expires_at=time.time() + float(new.get("expires_in", 3600)) - 60)
+    if new.get("refresh_token"):
+        tok["refresh_token"] = new["refresh_token"]
+    return tok
 
 
 def _post_form(url, fields):
@@ -212,20 +245,7 @@ def access_token(channel="main"):
     tok = _tokens(channel)
     if time.time() < float(tok.get("expires_at", 0)):
         return tok["access_token"]
-    cl = client()
-    if not cl:
-        raise NotConnected("the Google OAuth client file is missing")
-    try:
-        new = _post_form(TOKEN_URL, {"refresh_token": tok["refresh_token"], "client_id": cl["client_id"],
-                                     "client_secret": cl["client_secret"], "grant_type": "refresh_token"})
-    except YouTubeError as e:
-        if e.status in (400, 401):
-            raise NotConnected("Google signed Jarvis out of YouTube (that happens weekly while the Google app is in "
-                               "'Testing'). Double-click Connect YouTube again.")
-        raise
-    tok.update(access_token=new["access_token"], expires_at=time.time() + float(new.get("expires_in", 3600)) - 60)
-    if new.get("refresh_token"):
-        tok["refresh_token"] = new["refresh_token"]
+    refresh(tok)
     _write_secret(_token_path(channel), tok)
     return tok["access_token"]
 

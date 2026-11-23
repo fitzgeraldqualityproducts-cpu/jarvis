@@ -133,8 +133,8 @@ def test_scoring_rules():
     q = {"monetization": {"score": 80}, "sustainability": {"score": 70}, "feasibility": {"score": 90}, "confidence": "high"}
     s = niche.score_one("x", mm, q)
     assert s["factors"]["demand"]["score"] == 75.0 and s["factors"]["competition"]["score"] == 100.0
-    assert s["factors"]["viral"]["score"] == 100.0 and s["factors"]["sustainability"]["score"] == 79.0
-    assert s["overall"] == round(0.25 * 80 + 0.2 * 75 + 0.15 * 100 + 0.15 * 100 + 0.15 * 79 + 0.1 * 90, 1)
+    assert s["factors"]["viral"]["score"] == 50.0 and s["factors"]["sustainability"]["score"] == 79.0
+    assert s["overall"] == round(0.25 * 80 + 0.2 * 75 + 0.15 * 100 + 0.15 * 50 + 0.15 * 79 + 0.1 * 90, 1)
     assert sum(niche.WEIGHTS.values()) == pytest.approx(1.0)
 
 
