@@ -12,12 +12,55 @@
   protect     adds a channel (@handle or UC id) that the studio must never publish to
   ideas       finds new Short topics for the 2 pillars with the fewest ideas, scores them, lists the best
               (--all every pillar; --list only lists; --pillar "<name>")
-  next        shows the idea Jarvis would make next (--take marks it as picked)"""
+  next        shows the idea Jarvis would make next (--take marks it as picked)
+  script      makes one real script for the next idea: hooks, fact-check, narration (never uploads)
+              (--topic <id> picks the idea; --no-voice skips narration)"""
 import json
 import sys
 import time
 
 from studio import health, jobs, status
+
+
+def _script(argv):
+    import subprocess
+    from studio import data_dir, db, narration, script, topics
+    health.startup()
+    if "--topic" in argv:
+        t = topics.topic(int(argv[argv.index("--topic") + 1]))
+    else:
+        nxt = topics.pick_next()
+        t = topics.topic(nxt["id"]) if nxt else None
+    if not t:
+        print("No ideas ready. Double-click Find Video Ideas first.")
+        return 1
+    vid = jobs.create(t["id"], title=t["title"])
+    db.set_video(vid, topic_id=t["id"], title=t["title"], state="scripting", stage_done="researching")
+    topics.set_status(t["id"], "in_production", video_id=vid, script_status="writing")
+    print(f"Idea #{t['id']}: {t['title']}  (video {vid})")
+    try:
+        script.make(t, vid)
+    except script.ScriptRejected as e:
+        db.set_video(vid, state="rejected", error=str(e), error_kind="permanent", finished=time.time())
+        topics.set_status(t["id"], "rejected", reject_reason="script failed the fact-check")
+        print(f"\nRejected: {e}\nThat's the safety net working: nothing unchecked goes further.")
+        return 1
+    folder = data_dir("videos", str(vid))
+    page = folder / "script.md"
+    page.write_text(script.report(vid))
+    db.set_video(vid, state="generating_audio", stage_done="fact_checking")
+    print("\n" + page.read_text())
+    if "--no-voice" not in argv:
+        print("Recording the narration...")
+        rec = narration.narrate(script.latest(vid)["body"], folder / "voice.wav", vid)
+        db.set_video(vid, state="rendering", stage_done="generating_audio", duration=rec["seconds"])
+        print(f"Narration: {rec['seconds']} s, {rec['checks']['wpm']} words a minute, {rec['loudness']} LUFS. Checks passed.")
+        if sys.platform == "darwin":
+            subprocess.run(["open", str(folder / "voice.wav")])
+    if sys.platform == "darwin":
+        subprocess.run(["open", str(page)])
+    print(f"\nSaved in {folder}. Nothing was uploaded.")
+    return 0
 
 
 def main(argv):
@@ -79,6 +122,8 @@ def main(argv):
             print(f"#{t['id']} {t['title']}  (score {t['score']}, {t['pillar']}, {t['kind']})\nAngle: {t['angle']}\nHook: {t['hook']}")
             for s_ in full["sources"]:
                 print(f"  [{s_['verdict']}, tier {s_['tier']}] {s_['claim']} <{s_['url']}>")
+    elif cmd == "script":
+        return _script(argv)
     elif cmd == "brand":
         from studio import setup_channel
         return setup_channel.brand_flow()
