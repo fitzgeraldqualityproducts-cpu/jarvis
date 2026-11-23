@@ -64,6 +64,8 @@ def main(argv):
             topics.expire()
             res = topics.discover(names)
             print(f"\nKept {len(res['added'])} new ideas, rejected {len(res['rejected'])}, dropped {res['duplicates']} repeats.")
+            if res.get("revived"):
+                print(f"Brought back {len(res['revived'])} earlier ideas that now have enough sources.")
             for r in res["rejected"]:
                 print(f"  rejected: {r['title']} ({'; '.join(r['why'])})")
         print("\n" + topics.summary_text())
