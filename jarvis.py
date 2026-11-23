@@ -1164,6 +1164,18 @@ def clipper_news():
     return " ".join(r["msg"] for r in rows[:3]), [r["id"] for r in rows]
 
 
+def studio_news():
+    """Alerts and the weekly report from the YouTube business module (or None)."""
+    try:
+        from studio import config as studio_config, health as studio_health
+        if not studio_config.enabled():
+            return None, []
+        rows = studio_health.peek_news()
+    except Exception:
+        return None, []
+    return (" ".join(m for _, m in rows), [i for i, _ in rows]) if rows else (None, [])
+
+
 def offer_team_change():
     """If the team's last project worked out a change to Jarvis himself, ask before doing it.
     Also asks about anything the store builder queued for Connor's OK (StoreForge)."""
@@ -1343,6 +1355,10 @@ def speak_up_loop():
                     if said and speak_up(said):
                         from clipper import db as clip_db
                         clip_db.mark_told(ids)
+                    said, ids = studio_news()
+                    if said and speak_up(said):
+                        from studio import health as studio_health
+                        studio_health.mark_told(ids)
                 n = None if late else workforce.news()
                 if n and speak_up(team_news_words(n)):
                     workforce.told(n[0])

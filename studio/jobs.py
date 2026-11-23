@@ -280,9 +280,9 @@ def start(busy=lambda: False):
         return False
     report = health.startup()
     recover()
-    from studio import pipeline, topics
+    from studio import analytics, pipeline, topics
     pipeline.register()
-    for f in (topics.expire, topics.maybe_discover):
+    for f in (topics.expire, topics.maybe_discover, analytics.maybe_run):
         if f not in IDLE:
             IDLE.append(f)
     _stop.clear()

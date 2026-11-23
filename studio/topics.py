@@ -304,6 +304,10 @@ def propose(pillar, n=6, competitor=()):
         comp = ("\nTop Shorts in this area right now (views). Treat them as GAPS: find angles they missed or got "
                 "wrong. Never copy a title, script or idea:\n" + "\n".join(f"- {c['title']} ({c['views']:,})" for c in competitor))
     taken = "\n".join(f"- {t}" for t in _existing_titles()) or "- (none yet)"
+    from studio import analytics
+    learned = analytics.hint()
+    if learned:
+        comp += "\n" + learned
     prompt = f"""You find topics for a YouTube Shorts channel (25-45 s, US English, narrated, original graphics).
 Niche: {d.get('name', '')}. Positioning: {plan.get('positioning', '')}. Audience: {plan.get('audience', '')}.
 Pillar: {pillar['name']}: {pillar.get('description', '')}
@@ -518,6 +522,7 @@ def maybe_discover(now=None):
 
 def pick_next(now=None, mark=True):
     """The best ready idea, nudged so pillars take turns and trending stays a minority. Marks it 'selected'."""
+    from studio import analytics
     now = now or time.time()
     ideas = pool(now)
     if not ideas:
@@ -529,6 +534,7 @@ def pick_next(now=None, mark=True):
     def effective(t):
         s = t["score"] or 0
         s -= 8 * last3.count(t["pillar"])                   # pillars take turns
+        s += analytics.nudge(t["pillar"])                   # learned from real results (capped, 0 until measured)
         if t["kind"] == "trending":
             if trending_share >= TRENDING_SHARE:
                 s -= 15                                       # don't lean on trends
@@ -543,7 +549,7 @@ def pick_next(now=None, mark=True):
         db.insert("INSERT INTO decisions(t, area, decision, evidence) VALUES(?,?,?,?)", now, "topic",
                   f"picked #{best['id']}: {best['title']}",
                   json.dumps({"score": best["score"], "effective": best["effective_score"], "pillar": best["pillar"],
-                              "kind": best["kind"], "recent_pillars": last3}))
+                              "kind": best["kind"], "recent_pillars": last3, "nudge": analytics.nudge(best["pillar"])}))
     return best
 
 
