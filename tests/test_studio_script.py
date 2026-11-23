@@ -26,6 +26,9 @@ class FakeClaude:
         self.wrong_calc = False
         self.too_long = False       # the writer returns about 140 words
         self.fits = 0
+        self.bad_reviews = 0        # this many reviews fail before one passes
+        self.orig = 8
+        self.standard_only = False
 
     def __call__(self, prompt, timeout, web):
         if prompt.startswith("This Short script is"):
@@ -49,12 +52,17 @@ class FakeClaude:
                 "titles": ["Why rockets throw parts away"]})
         assert prompt.startswith("You are a strict fact-checker") and web
         self.reviews += 1
-        bad = self.always_bad or (self.bad_first and self.reviews == 1)
+        bad = self.always_bad or (self.bad_first and self.reviews == 1) or self.reviews <= self.bad_reviews
+        if self.standard_only:
+            return json.dumps({"claims": [{"line": 2, "verdict": "standard", "note": "Kepler's third law"}],
+                               "hooks": {str(i): {"curiosity": 9, "clarity": 8, "specificity": 8, "honesty": 9, "speed": 8}
+                                         for i in range(5)}, "originality": 8, "inauthentic_risk": "low", "problems": []})
         return json.dumps({
             "claims": [{"line": 2, "verdict": "wrong" if bad else "supported", "fact": "F1", "note": "NASA says 2,950" if bad else ""},
                        {"line": 3, "verdict": "supported", "fact": "F2", "note": ""}, {"line": 7, "verdict": "n/a"}],
             "hooks": {str(i): {"curiosity": 9 - i, "clarity": 8, "specificity": 8, "honesty": 9, "speed": 8} for i in range(5)},
-            "originality": 8, "inauthentic_risk": "low", "problems": []})
+            "originality": self.orig, "originality_fix": "the rocket-as-a-bottle idea is the usual one; compare it to a "
+            "hiker dropping empty water bottles", "inauthentic_risk": "low", "problems": []})
 
 
 @pytest.fixture
@@ -199,3 +207,41 @@ def test_hook_scene_shows_the_hooks_number():
     keep = {"type": "number", "value": "88", "unit": "%", "label": "thrown away"}
     assert video.hook_scene("88 percent of every rocket is thrown away", keep) is keep
     assert video.hook_scene("Why do rockets fall apart?")["type"] == "headline"
+
+
+def test_two_rewrites_before_giving_up(fakes):
+    from studio import jobs, script, topics
+    fc, tid = fakes
+    fc.bad_reviews = 2
+    vid = jobs.create(tid)
+    row = script.make(topics.topic(tid), vid, progress=lambda s: None)
+    assert fc.writes == 3 and row["version"] == 3 and row["status"] == "passed"
+
+
+def test_textbook_law_is_fine_but_verifies_nothing_alone(fakes):
+    from studio import script, topics
+    fc, tid = fakes
+    draft = script.write(topics.topic(tid))
+    fc.standard_only = True
+    rev = script.review(draft, topics.topic(tid))
+    assert not any("is standard" in p for p in rev["problems"])
+    assert any("no checkable claims" in p for p in rev["hard_problems"])
+
+
+def test_originality_fail_says_how_to_fix_it(fakes):
+    from studio import script, topics
+    fc, tid = fakes
+    fc.orig = 5
+    rev = script.review(script.write(topics.topic(tid)), topics.topic(tid))
+    p = [x for x in rev["hard_problems"] if x.startswith("originality 5/10")]
+    assert p and "hiker" in p[0]
+
+
+def test_writer_is_told_about_general_science_and_own_example(fakes, monkeypatch):
+    from studio import claude, script, topics
+    fc, tid = fakes
+    seen = []
+    real = claude.RUNNER
+    monkeypatch.setattr(claude, "RUNNER", lambda p, timeout, web: (seen.append(p), real(p, timeout, web))[1])
+    script.write(topics.topic(tid))
+    assert '["general"]' in seen[0] and "everyday example" in seen[0]
