@@ -170,3 +170,13 @@ def test_memory_need_is_halved_under_normal_mac_pressure(studio_home, monkeypatc
     assert engines.enough_memory("chatterbox")[0]                     # needs 1.5 GB when pressure is normal
     monkeypatch.setattr(engines, "_pressure_normal", lambda: False)
     assert not engines.enough_memory("chatterbox")[0]                 # 3 GB under pressure
+
+
+def test_tools_find_an_ffmpeg_command(studio_home, monkeypatch, tmp_path):  # noqa: F811
+    import os
+    from studio import engines
+    monkeypatch.setattr(engines, "TOOLS", tmp_path / "tools")
+    monkeypatch.setattr(engines.shutil, "which", lambda name: None)
+    b = engines._tool_bin()
+    assert (b / "ffmpeg").exists() and os.access(b / "ffmpeg", os.X_OK)
+    assert any("setuptools" in p for p in engines.SPECS["chatterbox"]["pip"])   # perth needs pkg_resources

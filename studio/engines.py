@@ -37,7 +37,7 @@ DEFAULTS = {"voice": "kokoro", "align": "whisper", "visuals": "classic", "compos
 UPGRADED = {"voice": "chatterbox", "align": "whisperx", "visuals": "manim", "compose": "remotion"}
 # what each tool needs: its environment's python, the packages, free memory (GB) and a time limit (s)
 SPECS = {
-    "chatterbox": {"python": "3.11", "pip": ["chatterbox-tts==0.1.7"], "mem_gb": 3.0, "timeout": 1500},
+    "chatterbox": {"python": "3.11", "pip": ["chatterbox-tts==0.1.7", "setuptools<81"], "mem_gb": 3.0, "timeout": 1500},
     "whisperx": {"python": "3.12", "pip": ["whisperx==3.8.6", "num2words==0.5.14"], "mem_gb": 1.5, "timeout": 600},
     "manim": {"conda": ["python=3.12", "manim"], "mem_gb": 1.0, "timeout": 1200},
     "remotion": {"node": True, "mem_gb": 1.5, "timeout": 1800},
@@ -165,6 +165,25 @@ def heavy(what, wait=900):
 
 # ---------- running a worker ----------
 
+def _tool_bin():
+    """tools/bin with an "ffmpeg" that points at the ffmpeg Jarvis already has (imageio-ffmpeg's), for tools
+    that call the ffmpeg command (whisperX loads audio that way). Nothing outside tools/ changes."""
+    b = TOOLS / "bin"
+    b.mkdir(parents=True, exist_ok=True)
+    link = b / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    if not link.exists() and not shutil.which("ffmpeg"):
+        try:
+            import imageio_ffmpeg
+            exe = imageio_ffmpeg.get_ffmpeg_exe()
+            try:
+                link.symlink_to(exe)
+            except OSError:
+                shutil.copy(exe, link)
+        except Exception:
+            pass
+    return b
+
+
 def run(tool, worker, payload, timeout=None):
     """Runs studio/workers/<worker>.py inside the tool's environment with a JSON payload; returns its
     JSON answer. Raises EngineError on any problem (the caller falls back)."""
@@ -183,6 +202,7 @@ def run(tool, worker, payload, timeout=None):
         env = dict(os.environ, PYTHONNOUSERSITE="1", TOKENIZERS_PARALLELISM="false",
                    HF_HUB_DISABLE_TELEMETRY="1", JV_WORKERS=str(WORKERS))
         env.pop("PYTHONPATH", None)
+        env["PATH"] = str(_tool_bin()) + os.pathsep + env.get("PATH", "")
         cmd = [str(python(tool)), "-I", str(WORKERS / f"{worker}.py"), str(pin), str(pout)]
         try:
             p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=tmp)
