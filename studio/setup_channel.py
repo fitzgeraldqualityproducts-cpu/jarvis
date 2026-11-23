@@ -64,6 +64,15 @@ for the research key ("Jarvis Business"):
     shows an "unverified app" warning at sign-in; that's expected for your own app.
  4. Clients > Create client > "Desktop app" > Create > Download JSON.
 """
+PUBLISH_NOTE = """
+Using the Google sign-in app you already made for the clipper. Two one-time checks in that Google
+Cloud project (pick it at the top of the page; its client id starts with the same numbers):
+ 1. YouTube Analytics API: press Enable (page opening now; skip if it says Manage).
+ 2. Google Auth Platform > Audience: if it says "Testing", press "Publish app" and confirm.
+    Otherwise Google blocks the new business account (Error 403: access_denied) and signs it out
+    every 7 days. Google then shows an "unverified app" warning at sign-in: press Advanced >
+    Go to (app name). That's expected for your own app.
+"""
 GOOGLE_PAGES = ["https://console.cloud.google.com/apis/library/youtubeanalytics.googleapis.com",
                 "https://console.cloud.google.com/auth/overview",
                 "https://console.cloud.google.com/auth/audience",
@@ -84,6 +93,12 @@ def connect_flow():
         path = setup_youtube.find_download() or input("Drag the .json file here and press Enter: ").strip().strip("'\"")
         youtube.save_client(path)
         print("Saved (only on this computer).")
+    else:
+        print(PUBLISH_NOTE)
+        for p in GOOGLE_PAGES[:1] + GOOGLE_PAGES[2:3]:
+            webbrowser.open(p)
+            time.sleep(1.2)
+        input("Press Enter once the app is published (or the new account is a test user)...")
     if not guard.protected_channels():
         print("\nFirst, so Jarvis can NEVER post to your existing channel:")
         h = input("Type your EXISTING channel's handle (like @yourname), or press Enter if you have none: ").strip()
