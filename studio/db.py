@@ -175,6 +175,17 @@ def conn():
     return c
 
 
+def close_thread():
+    """Closes this thread's connection (helper threads call it as they finish, so a later thread that
+    gets the same id never inherits a connection it isn't allowed to use)."""
+    c = _conns.pop((threading.get_ident(), str(path())), None)
+    if c is not None:
+        try:
+            c.close()
+        except Exception:
+            pass
+
+
 def reset_connections():
     for c in list(_conns.values()):
         try:

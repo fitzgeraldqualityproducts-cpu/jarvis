@@ -18,6 +18,8 @@ def studio_home(tmp_path, monkeypatch):
     cfg.write_text(json.dumps({"studio": {"tick_seconds": 0}}))
     monkeypatch.setattr(config, "CONFIG", cfg)
     monkeypatch.setattr(config, "PLATFORM", "darwin")
+    from studio import topics
+    monkeypatch.setattr(topics, "PAGE", lambda url: "")      # tests never open real web pages
     jobs.STAGES.clear()
     jobs.IDLE.clear()
     jobs._stop.clear()
