@@ -37,6 +37,23 @@ def blank_stretches(path, every=1.0):
     return bad
 
 
+def edge_frames(path):
+    """The first and last frames of the video (BGR arrays), or (None, None)."""
+    import cv2
+    cap = cv2.VideoCapture(str(path))
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    ok, first = cap.read()
+    last = None
+    for back in (1, 2, 3):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, n - back))
+        ok2, fr = cap.read()
+        if ok2:
+            last = fr
+            break
+    cap.release()
+    return (first if ok else None), last
+
+
 def check(video_id):
     from clipper import media
     from studio import script, video as vid_mod
@@ -53,21 +70,31 @@ def check(video_id):
     _add(checks, "frame rate", abs(info["fps"] - 30) < 0.5, info["fps"])
     _add(checks, "length", 15 <= info["duration"] <= 60, f"{info['duration']:.1f} s")
     voice = db.one("SELECT seconds FROM voiceovers WHERE video_id=? ORDER BY id DESC LIMIT 1", video_id)
+    rep = meta.get("render") or {}
     if voice:
-        _add(checks, "audio complete", info["duration"] >= voice["seconds"] - 0.3,
+        need = voice["seconds"] - float(rep.get("trimmed_lead") or 0) - 0.5     # silence trimmed at the start/end
+        _add(checks, "audio complete", info["duration"] >= need,
              f"video {info['duration']:.1f} s, narration {voice['seconds']:.1f} s")
     lufs, peak = media.loudness(path)
     _add(checks, "loudness", lufs is not None and -18 <= lufs <= -10, f"{lufs} LUFS")
     _add(checks, "peak", peak is not None and peak <= -0.5, f"{peak} dBTP")
     blanks = blank_stretches(path)
     _add(checks, "no blank picture", not blanks, f"blank at {blanks[:5]} s" if blanks else "")
+    first, last = edge_frames(path)
+    if first is not None:
+        _add(checks, "fast start", float(np.std(first)) >= 4.0 and (rep.get("speech_start") is None or rep["speech_start"] <= 0.35),
+             f"speech starts at {rep.get('speech_start')} s")
+    if first is not None and last is not None:
+        diff = float(np.mean(np.abs(first.astype(np.int16) - last.astype(np.int16))))
+        tail = rep.get("tail_seconds")
+        _add(checks, "seamless loop", diff <= 14.0 and (tail is None or tail <= 0.6),
+             f"last frame differs from the first by {diff:.1f}; {tail} s after the last word")
     _add(checks, "file size", os.path.getsize(path) < 256 * 1024 * 1024, f"{os.path.getsize(path) / 1e6:.1f} MB")
     row = script.latest(video_id, "passed")
     _add(checks, "fact-checked script", bool(row), "" if row else "no passed script")
     sup = db.one("SELECT COUNT(DISTINCT url) n FROM sources WHERE video_id=? AND verdict='supported'", video_id)["n"]
     bad = db.one("SELECT COUNT(*) n FROM sources WHERE video_id=? AND verdict IN ('wrong','unsupported')", video_id)["n"]
     _add(checks, "sources", sup >= 2 and bad == 0, f"{sup} supporting sources, {bad} problems")
-    rep = meta.get("render") or {}
     _add(checks, "captions complete", rep.get("words") and rep.get("caption_words_shown", 0) >= rep["words"] * 0.98,
          f"{rep.get('caption_words_shown')} of {rep.get('words')} words shown")
     tm = rep.get("timing") or {}

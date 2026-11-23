@@ -91,6 +91,8 @@ def test_full_short_passes_qa(fakes, fake_voice, monkeypatch):
     assert (info["width"], info["height"], info["vcodec"], info["acodec"]) == (1080, 1920, "h264", "aac")
     failed = db.q("SELECT check_name, detail FROM qa_checks WHERE video_id=? AND passed=0", vid)
     assert not failed, [dict(r) for r in failed]
+    names = {r["check_name"] for r in db.q("SELECT check_name FROM qa_checks WHERE video_id=?", vid)}
+    assert {"fast start", "seamless loop"} <= names                    # hooks start at once, endings loop back
     assets = db.q("SELECT * FROM assets WHERE video_id=?", vid)
     cov = json.loads(db.video(vid)["meta"])["cover"]
     assert os.path.isfile(cov["path"]) and cov["bottom_clear"] and cov["text"]

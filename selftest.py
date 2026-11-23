@@ -141,7 +141,7 @@ def _studio():
     ok, detail = _py("import json, os, tempfile\n"
                      "try:\n"
                      "    os.environ['JARVIS_STUDIO_DATA'] = tempfile.mkdtemp()\n"
-                     "    from studio import config, db, guard, health, jobs, status, narration, toolchain, claude, ytpublic, niche, ytauth, branding, setup_channel, topics, script, pipeline, video, qa, publish, analytics, eligibility, autopilot, lessons\n"
+                     "    from studio import config, db, guard, health, jobs, status, narration, toolchain, claude, ytpublic, niche, ytauth, branding, setup_channel, topics, script, pipeline, video, qa, publish, analytics, eligibility, autopilot, lessons, timing, playlists\n"
                      "    db.migrate(db.conn())\n"
                      "    guard.register_built_ins()\n"
                      "    status.overview()\n"

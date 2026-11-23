@@ -144,6 +144,7 @@ def verify():
     scopes = granted_scopes()
     rep["can_upload"] = guard.SCOPES[0] in scopes
     rep["can_read_analytics"] = guard.SCOPES[2] in scopes
+    rep["can_manage_playlists"] = guard.SCOPES[3] in scopes
     rep["extra_scopes"] = [s for s in scopes if s.startswith("https://www.googleapis.com/auth/") and s not in guard.SCOPES]
     rep["ok"] = rep["destination_ok"] and rep["can_upload"] and not rep["extra_scopes"]
     return rep

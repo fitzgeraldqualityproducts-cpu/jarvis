@@ -315,7 +315,8 @@ def report(now=None, save=True):
     from studio import eligibility
     if eligibility.latest():
         lines += [""] + eligibility.text().rstrip("\n").split("\n")
-    from studio import lessons
+    from studio import lessons, timing
+    lines += ["", "## Best posting times", "", timing.text(now)]
     lines += ["", "## Mistakes Jarvis is learning from", "", lessons.summary(now)]
     lines += ["", "Numbers come from YouTube itself (Data API and YouTube Analytics). Revenue is never read."]
     text = "\n".join(lines) + "\n"

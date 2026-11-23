@@ -20,7 +20,8 @@ import time
 from studio import db, guard
 
 WORDS_MIN, WORDS_MAX = 60, 105          # 25-45 s: Kokoro am_michael at 1.05 reads about 143 words a minute
-HOOK_MAX_WORDS = 16
+HOOK_MAX_WORDS = 12          # about 4 seconds; the grabbing part must come in the first few words
+HOOK_GRAB_WORDS = 6
 CLICKBAIT = ("you won't believe", "you wont believe", "shocking", "insane", "mind-blowing", "mind blowing",
              "nobody is talking about", "they don't want you to know", "100% true", "in this video", "hey guys",
              "make sure to subscribe", "wait for it", "gone wrong")
@@ -106,8 +107,12 @@ def hook_checks(hook):
             problems.append(f"clickbait phrase \"{c}\"")
     if not (re.search(r"\d", h) or "?" in h or re.search(r"\b(why|how|what|which|if)\b", low)):
         problems.append("no concrete number or question")
-    if low.startswith(("so,", "so ", "hi", "hello", "today")):
+    if low.startswith(("so,", "so ", "hi", "hello", "today", "in this video", "have you ever", "let's", "did you know")):
         problems.append("slow start")
+    first = " ".join(h.split()[:HOOK_GRAB_WORDS])
+    if not problems and not (re.search(r"\d", first) or "?" in first and len(h.split()) <= HOOK_GRAB_WORDS or
+                             re.search(r"\b(why|how|what|which|if|never|only|every|no)\b", first.lower())):
+        problems.append(f"the grabbing part comes too late (put the number or the question in the first {HOOK_GRAB_WORDS} words)")
     return problems
 
 
@@ -167,8 +172,11 @@ FACTS YOU MAY USE (nothing else; never invent numbers, dates, names or quotes):
 Rules:
 - {WORDS_MIN}-{WORDS_MAX} words in total (aim for {WORDS_MIN + 20}-{WORDS_MAX - 10}; count them before answering),
   read aloud by one narrator (no stage directions in the text).
-- Structure: hook (the first line, under 4 seconds), the setup, the calculation step by step with real
-  numbers, the payoff, and a closing line that makes people want to rewatch or think (no "like and subscribe").
+- Structure: hook (the first line, at most {HOOK_MAX_WORDS} words, with the surprising number or the question in its
+  first {HOOK_GRAB_WORDS} words, no warm-up like "did you know" or "in this video"), the setup, the calculation step by
+  step with real numbers, the payoff, and a LOOP ending: the last line must lead straight back into the first line,
+  so when the Short repeats it plays as one continuous thought (for example the last line sets up the hook's
+  question again, or ends mid-thought that the hook completes). No outro, no "like and subscribe".
 - Every factual line lists the fact ids it relies on. Every number you work out must appear in "calcs"
   as a plain arithmetic expression (e.g. "384400/3474") with its result and unit, using only the facts' numbers.
 - Plain words, short sentences, US spelling and units with metric where useful. No hype words, no clickbait.
@@ -273,13 +281,14 @@ arithmetic from sourced numbers), "unsupported" (no source backs it) or "wrong" 
 correct statement and the URL). Opinion or transition lines get "n/a".
 Rate each hook 0-10 on curiosity, clarity, specificity, honesty (10 = fully delivered by the script, no bait) and
 speed (gets to the point at once).
-Also: "originality" 0-10 (own explanation and wording vs a generic or copied explainer), "inauthentic_risk"
+Also: "loop" 0-10 (read the LAST line and then the FIRST line: does it flow back into the start as one continuous
+thought, so a viewer would keep watching when it repeats?), "originality" 0-10 (own explanation and wording vs a generic or copied explainer), "inauthentic_risk"
 "low/medium/high" (does it read like mass-produced template content?), and "problems": anything else a careful
 editor would fix (confusing step, misleading simplification, unit mistake).
 
 JSON only: {{"claims": [{{"line": 1, "verdict": "supported|unsupported|wrong|n/a", "fact": "F1", "note": "..."}}],
 "hooks": {{"0": {{"curiosity": 0, "clarity": 0, "specificity": 0, "honesty": 0, "speed": 0}}}},
-"originality": 0, "inauthentic_risk": "low", "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
+"loop": 0, "originality": 0, "inauthentic_risk": "low", "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
     if not isinstance(ans, dict):
         raise ScriptRejected("the fact-check didn't return a result")
     problems = []
@@ -314,6 +323,9 @@ JSON only: {{"claims": [{{"line": 1, "verdict": "supported|unsupported|wrong|n/a
         problems.append(f"{words} words; it must be {WORDS_MIN}-{WORDS_MAX} (25-45 seconds): "
                         + ("cut about " + str(words - WORDS_MAX + 8) if words > WORDS_MAX else
                            "add about " + str(WORDS_MIN - words + 8)) + " words")
+    loop = ans.get("loop")
+    if isinstance(loop, (int, float)) and loop < 5:
+        problems.append(f"editor: the ending doesn't lead back into the hook (loop {loop}/10); make the last line set up the first")
     orig = ans.get("originality")
     if isinstance(orig, (int, float)) and orig < 6:
         problems.append(f"originality {orig}/10: needs its own explanation")
@@ -325,7 +337,7 @@ JSON only: {{"claims": [{{"line": 1, "verdict": "supported|unsupported|wrong|n/a
     problems += [f"editor: {p}" for p in ans.get("problems") or [] if isinstance(p, str) and p.strip()][:5]
     hard = [p for p in problems if not p.startswith("editor: ")]
     return {"ok": not hard, "problems": problems, "hard_problems": hard, "claims": claims, "hook_ratings": ratings,
-            "hook_index": hi, "hook_score": hs, "hook": hook, "body": body, "words": words, "calcs": calcs,
+            "hook_index": hi, "hook_score": hs, "hook": hook, "body": body, "words": words, "calcs": calcs, "loop": loop,
             "originality": orig, "inauthentic_risk": ans.get("inauthentic_risk"), "similar": [sim, sim_vid]}
 
 
@@ -367,7 +379,7 @@ def check_step(topic, video_id=None, max_revisions=1):
     draft = _draft_of(row)
     rev = review(draft, topic, video_id)
     checks = {k: rev[k] for k in ("ok", "problems", "hard_problems", "claims", "hook_ratings", "hook_index",
-                                  "hook_score", "words", "originality", "inauthentic_risk", "similar")}
+                                  "hook_score", "words", "loop", "originality", "inauthentic_risk", "similar")}
     st = json.loads(row["structure"] or "{}")
     st["calcs"] = rev["calcs"]
     db.run("UPDATE scripts SET hook=?, body=?, structure=?, checks=?, status=? WHERE id=?", rev["hook"], rev["body"],

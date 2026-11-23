@@ -93,9 +93,13 @@ def test_google_scopes_limited():
     from studio import guard
     assert guard.check_scopes(youtube.SCOPES)
     for extra in ("https://www.googleapis.com/auth/youtube.force-ssl", "https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
-                  "https://www.googleapis.com/auth/youtube"):
+                  "https://www.googleapis.com/auth/youtubepartner"):
         with pytest.raises(guard.Forbidden):
             guard.check_scopes(list(youtube.SCOPES) + [extra])
+    # playlists (Connor approved 2026-11-23); comment actions stay refused by the never-list
+    assert guard.check_scopes(list(youtube.SCOPES) + ["https://www.googleapis.com/auth/youtube"])
+    with pytest.raises(guard.Forbidden):
+        guard.allow("youtube.comment_reply")
 
 
 def test_channel_lock_protects_existing_channel():

@@ -5,7 +5,8 @@ public service, and nobody else signs in to it.
 
 **What it accesses.** With the owner's permission, it uses Google's official YouTube APIs to upload
 videos to the owner's own channel (youtube.upload), to read that channel's public details
-(youtube.readonly) and to read that channel's own analytics (yt-analytics.readonly).
+(youtube.readonly), to read that channel's own analytics (yt-analytics.readonly), and to organise the
+channel's own videos into playlists (youtube). It uses that last permission only for playlists.
 
 **Where data goes.** Sign-in tokens and analytics are stored only on the owner's computer, in files
 only the owner's account can read. Nothing is sold, shared with third parties or sent to any server

@@ -535,6 +535,16 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   less (at most 8 points, fading after 30 days), and ideas sure to fail (fewer than 2 working sources)
   are skipped before any of your Claude plan is spent. `python -m studio lessons` and the weekly report
   show what was learned. No extra Claude calls.
+- Hooks and loops: the hook is at most 12 words with the surprising number or question in its first 6,
+  on screen big from the very first frame (with a quick punch-in), and speech starts at once. The last
+  line leads back into the first, the last moments blend into the first frame, there's no silent tail and
+  no progress bar, so a replay plays as one continuous Short. QA checks "fast start" and "seamless loop";
+  the fact-check rates each loop.
+- Best posting times: YouTube's API doesn't say when viewers are online, so Jarvis tests public Shorts
+  at noon, 5 PM and 8 PM Central and compares their views about 24 hours later. After 3 Shorts per time
+  he posts mostly at the best one and still tests the others 1 time in 4 (weekly report shows it).
+- Series playlists: each pillar is a public playlist and every public Short is added to its series
+  (needs the playlist permission: Connect YouTube Business asks for it; comment actions stay refused).
 - Google Drive backup: double-click **Connect Google Drive** once, pick the Google account whose Drive
   should hold the backups and press Allow. Jarvis asks for one permission only (drive.file): it can see
   and change only the files it puts there, nothing else in your Drive. If Google says the Drive API is

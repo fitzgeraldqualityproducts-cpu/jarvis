@@ -181,3 +181,21 @@ def test_too_long_draft_is_fitted_before_the_fact_check(fakes):
     assert fc.fits == 1 and fc.reviews == 1 and row["status"] == "passed"
     assert script.WORDS_MIN <= len(row["body"].split()) <= script.WORDS_MAX
 
+
+
+def test_hooks_must_grab_in_the_first_words():
+    from studio import script
+    assert not script.hook_checks("88 percent of a rocket is thrown away. Here's why.")
+    assert not script.hook_checks("Why do rockets throw away 88 percent?")
+    assert any("too late" in p for p in script.hook_checks("Rockets are tall machines that carry 88 percent fuel"))
+    assert any("slow start" in p for p in script.hook_checks("Did you know rockets drop 88 percent?"))
+    assert any("words (max" in p for p in script.hook_checks("Why " + "very " * 12 + "long?"))
+
+
+def test_hook_scene_shows_the_hooks_number():
+    from studio import video
+    sc = video.hook_scene("88 percent of every rocket is thrown away", {"type": "compare", "items": []})
+    assert sc["type"] == "number" and sc["value"] == "88"
+    keep = {"type": "number", "value": "88", "unit": "%", "label": "thrown away"}
+    assert video.hook_scene("88 percent of every rocket is thrown away", keep) is keep
+    assert video.hook_scene("Why do rockets fall apart?")["type"] == "headline"
