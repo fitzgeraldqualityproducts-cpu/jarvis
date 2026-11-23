@@ -179,7 +179,39 @@ JSON only: {{"hooks": ["..." x5], "lines": [{{"text": "...", "facts": ["F1"], "v
         raise ScriptRejected("Claude didn't return a script")
     ans["lines"] = [ln for ln in ans["lines"] if isinstance(ln, dict) and str(ln.get("text", "")).strip()]
     ans["hooks"] = [str(h) for h in (ans.get("hooks") or []) if str(h).strip()][:5]
+    for _ in range(2):                            # wrong length: fix it here, before a costly fact-check
+        n = len(text_of(ans, ans["hooks"][0] if ans["hooks"] else None).split())
+        if WORDS_MIN <= n <= WORDS_MAX:
+            break
+        ans = _fit_length(ans, n) or ans
     return ans
+
+
+def _fit_length(draft, n):
+    """Asks Claude to shorten (or lengthen) the lines to fit, keeping every fact id, number and calc."""
+    from studio import claude
+    goal = "Cut" if n > WORDS_MAX else "Add"
+    target = f"{WORDS_MAX - 15}-{WORDS_MAX - 5}" if n > WORDS_MAX else f"{WORDS_MIN + 10}-{WORDS_MIN + 25}"
+    ans = claude.ask_json(f"""This Short script is {n} words with its first hook as line 1; it must be {WORDS_MIN}-{WORDS_MAX}.
+{goal} words so the whole thing is {target} words. Keep every number, fact id and the calculation; keep the
+meaning and the closing line. Change nothing else. Each hook must stay under {HOOK_MAX_WORDS} words.
+
+{json.dumps(draft)[:6000]}
+
+JSON only, the same shape: {{"hooks": [...], "lines": [{{"text": "...", "facts": [...], "visual": "..."}}],
+"calcs": [...], "titles": [...]}}""", timeout=300, web=False, purpose="script length")
+    if not isinstance(ans, dict) or not ans.get("lines"):
+        return None
+    lines = [ln for ln in ans["lines"] if isinstance(ln, dict) and str(ln.get("text", "")).strip()]
+    if not lines:
+        return None
+    out = dict(draft, lines=lines)
+    hooks = [str(h) for h in (ans.get("hooks") or []) if str(h).strip()][:5]
+    if hooks:
+        out["hooks"] = hooks
+    if ans.get("calcs"):
+        out["calcs"] = ans["calcs"]
+    return out
 
 
 def text_of(draft, hook=None):
@@ -261,11 +293,18 @@ JSON only: {{"claims": [{{"line": 1, "verdict": "supported|unsupported|wrong|n/a
     if hi is None:
         problems.append("no hook passes the rules: " + "; ".join(f"\"{h}\": {', '.join(hook_checks(h))}"
                                                               for h in draft["hooks"][:3]))
+    if hi is not None and not WORDS_MIN <= len(text_of(draft, draft["hooks"][hi]).split()) <= WORDS_MAX:
+        fits = [(hook_score(ratings.get(i) or {}), i) for i, h in enumerate(draft["hooks"])
+                if not hook_checks(h) and WORDS_MIN <= len(text_of(draft, h).split()) <= WORDS_MAX]
+        if fits:                                  # a slightly lower-rated hook that keeps it in length
+            hs, hi = max(fits)
     hook = draft["hooks"][hi] if hi is not None else (draft["lines"][0]["text"] if draft["lines"] else "")
     body = text_of(draft, hook)
     words = len(body.split())
     if not WORDS_MIN <= words <= WORDS_MAX:
-        problems.append(f"{words} words; it must be {WORDS_MIN}-{WORDS_MAX} (25-45 seconds)")
+        problems.append(f"{words} words; it must be {WORDS_MIN}-{WORDS_MAX} (25-45 seconds): "
+                        + ("cut about " + str(words - WORDS_MAX + 8) if words > WORDS_MAX else
+                           "add about " + str(WORDS_MIN - words + 8)) + " words")
     orig = ans.get("originality")
     if isinstance(orig, (int, float)) and orig < 6:
         problems.append(f"originality {orig}/10: needs its own explanation")

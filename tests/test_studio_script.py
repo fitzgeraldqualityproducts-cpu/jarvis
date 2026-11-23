@@ -24,8 +24,16 @@ class FakeClaude:
         self.bad_first = False      # first review finds a wrong claim
         self.always_bad = False
         self.wrong_calc = False
+        self.too_long = False       # the writer returns about 140 words
+        self.fits = 0
 
     def __call__(self, prompt, timeout, web):
+        if prompt.startswith("This Short script is"):
+            assert not web and "Keep every number" in prompt
+            self.fits += 1
+            return json.dumps({"hooks": ["Why do rockets throw away 88 percent of themselves?"],
+                               "lines": [{"text": t, "facts": ["F1"], "visual": "diagram"} for t in BODY],
+                               "calcs": [{"expr": "2290/2970", "result": 0.77, "unit": "", "says": "share"}]})
         if prompt.startswith("Write a YouTube Short script"):
             assert not web and "FACTS YOU MAY USE" in prompt and "F1." in prompt
             self.writes += 1
@@ -36,7 +44,7 @@ class FakeClaude:
                           "You won't believe what rockets do!!!",
                           "Rockets are amazing and today we will talk about them in a lot of detail okay",
                           "What if a rocket kept its empty tanks?", "2,970 tonnes, gone in minutes."],
-                "lines": [{"text": t, "facts": ["F1"], "visual": "diagram"} for t in BODY],
+                "lines": [{"text": t, "facts": ["F1"], "visual": "diagram"} for t in (BODY + BODY[1:4] if self.too_long else BODY)],
                 "calcs": [{"expr": "2290/2970", "result": 0.5 if self.wrong_calc else 0.77, "unit": "", "says": "share"}],
                 "titles": ["Why rockets throw parts away"]})
         assert prompt.startswith("You are a strict fact-checker") and web
@@ -163,3 +171,13 @@ def test_worker_runs_research_to_narration(fakes, fake_voice):
     assert fake_voice["voice"] == "am_michael" and "88 percent" in fake_voice["text"]
     assert db.one("SELECT status, video_id FROM topics WHERE id=?", tid)["video_id"] == vid
     assert "rendering" in jobs.STAGES                            # Phase 7 picks it up from here
+
+
+def test_too_long_draft_is_fitted_before_the_fact_check(fakes):
+    from studio import script, topics
+    fc, tid = fakes
+    fc.too_long = True
+    row = script.make(topics.topic(tid))
+    assert fc.fits == 1 and fc.reviews == 1 and row["status"] == "passed"
+    assert script.WORDS_MIN <= len(row["body"].split()) <= script.WORDS_MAX
+

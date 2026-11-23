@@ -154,11 +154,11 @@ def _studio():
 CHECKS = {"code": _code, "parts": _parts, "voice": _voice, "brain": _brain, "mic": _mic, "speaker": _speaker, "display": _display, "clipper": _clipper, "studio": _studio}
 
 
-def run(skip=()):
-    """Runs every check. Returns {name: {"ok": bool, "detail": str, "extra": [...]}}."""
+def run(skip=(), only=None):
+    """Runs every check (or just `only`). Returns {name: {"ok": bool, "detail": str, "extra": [...]}}."""
     results, start = {}, time.time()
     for name, check in CHECKS.items():
-        if name in skip:
+        if name in skip or (only is not None and name not in only):
             continue
         try:
             ok, detail, extra = check()
@@ -187,6 +187,12 @@ def regressions(before, after):
         elif name == "voice" and now["ok"] and was["extra"] and was["extra"][0] and now["extra"] != was["extra"]:
             out.append(name)
     return out
+
+
+def timed_out(results, names):
+    """The checks among `names` that failed only because they took too long (often the
+    computer being busy, or another app holding the mic for a moment), not a real breakage."""
+    return [n for n in names if results.get(n, {}).get("detail") == "took too long"]
 
 
 def missing_packages(results, names):
