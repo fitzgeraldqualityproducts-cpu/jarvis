@@ -166,3 +166,12 @@ def test_a_wrong_reconnect_keeps_the_working_sign_in(google, monkeypatch):
     assert ytauth.connected() and _json.loads(ytauth._path().read_text())["refresh_token"] == good
     assert guard.locked_channel()["youtube_channel_id"] == "UC_BIZ"
     assert not ytauth._path().with_name(ytauth._path().name + ".previous").exists()
+
+
+def test_the_business_channel_can_never_be_protected(monkeypatch):
+    from studio import ytauth, ytpublic
+    guard.lock_channel("UC_BIZ", "HussUniversity")
+    monkeypatch.setattr(ytpublic, "get", lambda res, p: {"items": [{"id": "UC_BIZ", "snippet": {"title": "HussUniversity"}}]})
+    with pytest.raises(ValueError, match="business channel itself"):
+        ytauth.protect_existing("@hussuniversityfr")
+    assert "UC_BIZ" not in guard.protected_channels()
