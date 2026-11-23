@@ -31,6 +31,16 @@ def fake_claude(prompt, timeout, web):
                             "why": "people ask", "keywords": t.lower().split()[:4],
                             "facts": [{"claim": f"fact {i}", "url": u, "source": "pub"} for i, u in enumerate(urls)]}
                            for t, k, urls in IDEAS[pillar]])
+    if prompt.startswith("Use web search. For each Shorts topic"):
+        assert web
+        out = {}
+        for line in prompt.splitlines():
+            m = re.match(r"(\d+)\. (.+?):", line)
+            if m:
+                dead = "cloud" in m.group(2).lower()
+                out[m.group(1)] = [{"claim": "extra", "url": f"https://{'dead.example.org' if dead else 'www.nist.gov'}/{m.group(1)}-{abs(hash(m.group(2))) % 999}",
+                                    "source": "x"}]
+        return json.dumps(out)
     assert prompt.startswith("Rate these") and not web
     out = {}
     for line in prompt.splitlines():
@@ -87,8 +97,10 @@ def test_scoring_is_deterministic():
     low, f = topics.score_one({"relevance": 5}, 0.0)
     assert f["interest"]["score"] is None and low == round(10 * (0.14 * 5) / (0.14 + 0.10), 1)
     assert sum(topics.WEIGHTS.values()) == pytest.approx(1.0)
-    assert topics.reliability([{"tier": 3, "http_status": 200}, {"tier": 2, "http_status": 403},
-                               {"tier": 3, "http_status": 404}]) == round(10 * 5 / 6, 1)
+    assert topics.reliability([{"url": "a", "tier": 3, "http_status": 200}, {"url": "b", "tier": 2, "http_status": 403},
+                               {"url": "c", "tier": 3, "http_status": 404}]) == round(10 * 5 / 6, 1)
+    same = [{"url": "https://x.gov/a", "tier": 3, "http_status": 200}, {"url": "https://x.gov/a/", "tier": 3, "http_status": 200}]
+    assert len(topics._working(same)) == 1                     # the same page twice is one source
     assert topics.tier("https://www.cdc.gov/x") == 3 and topics.tier("https://en.wikipedia.org/x") == 2
     assert topics.tier("https://randomblog.net/x") == 1 and topics.tier("not a url") == 0
 
@@ -182,3 +194,23 @@ def test_offline_keeps_nothing_instead_of_rejecting(setup, monkeypatch):
     with pytest.raises(jobs.Transient):
         topics.discover(["Run It Yourself"], progress=lambda s: None)
     assert db.one("SELECT COUNT(*) n FROM topics")["n"] == 0
+
+
+def test_thin_sources_get_a_second_search_and_old_rejects_come_back(setup, monkeypatch):
+    from studio import db
+    topics = setup
+    IDEAS_ONE = {"Run It Yourself": [("Moon's same face, explained", "evergreen", ["https://science.nasa.gov/moon/facts/"])],
+                 "Real Space Data": []}
+    monkeypatch.setitem(IDEAS, "Run It Yourself", IDEAS_ONE["Run It Yourself"])
+    res = topics.discover(["Run It Yourself"], progress=lambda s: None)
+    assert [r["title"] for r in res["added"]] == ["Moon's same face, explained"]          # found a 2nd source
+    assert db.one("SELECT COUNT(*) n FROM sources WHERE url LIKE 'https://www.nist.gov/%'")["n"] == 1
+    # an idea rejected earlier only for sources gets one more try (and only one)
+    tid = db.insert("INSERT INTO topics(title, fingerprint, pillar, kind, score, scores, status, reject_reason) VALUES(?,?,?,?,?,?,?,?)",
+                    "Saturn gravity puzzle", "gravity puzzle saturn", "Real Space Data", "evergreen", 70,
+                    json.dumps({"factors": {"relevance": {"score": 8}, "interest": {"score": 7}, "copyright_safety": {"score": 9}}}),
+                    "rejected", "only 1 working source")
+    db.insert("INSERT INTO sources(topic_id, url, tier, http_status) VALUES(?,?,?,?)", tid, "https://nssdc.gsfc.nasa.gov/x", 3, 200)
+    revived = topics.retry_rejected(progress=lambda s: None)
+    assert [r["id"] for r in revived] == [tid] and db.one("SELECT status FROM topics WHERE id=?", tid)["status"] == "idea"
+    assert topics.retry_rejected(progress=lambda s: None) == []

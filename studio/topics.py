@@ -180,9 +180,93 @@ def _reachable(status):
     return 200 <= status < 400 or status in (401, 403, 429)
 
 
+def _working(sources):
+    """Reachable sources, each URL counted once."""
+    seen, out = set(), []
+    for s in sources:
+        u = str(s.get("url") or "").rstrip("/").lower()
+        if u and u not in seen and _reachable(s.get("http_status") or 0):
+            seen.add(u)
+            out.append(s)
+    return out
+
+
+def _check(fct):
+    url = str(fct.get("url") or "")
+    return {"claim": str(fct.get("claim", ""))[:400], "url": url[:500], "title": str(fct.get("source", ""))[:200],
+            "domain": domain(url), "tier": tier(url), "http_status": check_url(url)}
+
+
+def more_sources(items):
+    """One Claude call (web on) that finds extra sources for topics with fewer than 2 working ones.
+    items: [{"title", "angle", "_checked"}]. Adds the checked new sources to each item's "_checked"."""
+    from studio import claude
+    if not items:
+        return 0
+    lines = "\n".join(f"{i}. {c['title']}: {c.get('angle', '')} (already have: "
+                      f"{', '.join(s['url'] for s in _working(c['_checked'])) or 'nothing that works'})"
+                      for i, c in enumerate(items))
+    ans = claude.ask_json(
+        "Use web search. For each Shorts topic below, find 2 MORE reliable sources (primary sources such as NASA, "
+        "universities, journals or standards bodies first, then reputable science media or Wikipedia) that support its "
+        "key numbers. Only URLs you actually opened, different from the ones it already has.\n\n" + lines +
+        '\n\nJSON object keyed by the number: {"0": [{"claim": "the fact this page supports", "url": "https://...", '
+        '"source": "publisher"}], ...}', timeout=600, web=True, purpose="more sources")
+    added = 0
+    for k, facts in (ans.items() if isinstance(ans, dict) else []):
+        if not str(k).isdigit() or int(k) >= len(items) or not isinstance(facts, list):
+            continue
+        have = {str(s["url"]).rstrip("/").lower() for s in items[int(k)]["_checked"]}
+        for fct in facts[:3]:
+            if isinstance(fct, dict) and str(fct.get("url") or "").rstrip("/").lower() not in have:
+                items[int(k)]["_checked"].append(_check(fct))
+                added += 1
+    return added
+
+
+def retry_rejected(progress=print):
+    """Ideas rejected ONLY for too few working sources get one more search for sources."""
+    rows = [dict(r) for r in db.q("SELECT * FROM topics WHERE status='rejected' AND reject_reason LIKE 'only % working source%' "
+                                  "AND reject_reason NOT LIKE '%;%' AND (scores NOT LIKE '%\"retried\": true%')")]
+    if not rows:
+        return []
+    for t in rows:
+        t["_checked"] = [dict(s) for s in db.q("SELECT claim, url, title, domain, tier, http_status FROM sources WHERE topic_id=?",
+                                                t["id"])]
+        t["_before"] = len(t["_checked"])
+    progress(f"Looking for more sources for {len(rows)} earlier ideas")
+    more_sources(rows)
+    revived = []
+    now = time.time()
+    for t in rows:
+        for s in t["_checked"][t["_before"]:]:
+            db.insert("INSERT INTO sources(topic_id, claim, url, title, retrieved, verdict, note, domain, tier, http_status) "
+                      "VALUES(?,?,?,?,?,?,?,?,?,?)", t["id"], s["claim"], s["url"], s["title"], now,
+                      "reachable" if _reachable(s["http_status"]) else "unreachable", "", s["domain"], s["tier"], s["http_status"])
+        sc = json.loads(t["scores"] or "{}")
+        sc["retried"] = True
+        f = sc.get("factors") or {}
+        r = {k: (v or {}).get("score") for k, v in f.items() if k not in ("source_reliability", "copyright_safety")}
+        if (f.get("copyright_safety") or {}).get("score") is not None:
+            r["copyright_risk"] = 10 - f["copyright_safety"]["score"]
+        n = len(_working(t["_checked"]))
+        if n >= 2:
+            overall, factors = score_one(r, reliability(t["_checked"]))
+            sc.update(factors=factors, version=SCORING_VERSION)
+            db.run("UPDATE topics SET status='idea', reject_reason=NULL, score=?, scores=?, sources=?, updated=?, "
+                   "fresh_until=CASE WHEN kind='trending' THEN ? ELSE fresh_until END WHERE id=?",
+                   overall, json.dumps(sc), json.dumps([s["url"] for s in t["_checked"]]), now,
+                   now + TRENDING_DAYS * 86400, t["id"])
+            revived.append({"id": t["id"], "title": t["title"], "score": overall})
+        else:
+            db.run("UPDATE topics SET scores=?, updated=? WHERE id=?", json.dumps(sc), now, t["id"])
+    progress(f"Brought back {len(revived)} of {len(rows)}")
+    return revived
+
+
 def reliability(sources):
     """0-10 from the checked sources: the best two reachable ones, by publisher tier."""
-    tiers = sorted((s["tier"] for s in sources if _reachable(s.get("http_status") or 0)), reverse=True)[:2]
+    tiers = sorted((s["tier"] for s in _working(sources)), reverse=True)[:2]
     if not tiers:
         return 0.0
     return round(10 * sum(tiers) / (3 * 2), 1)
@@ -321,7 +405,7 @@ def gate(c, r, src_reliability, factors):
         why.append("copyright risk")
     if (factors["feasibility"]["score"] or 0) < 4:
         why.append("can't be made with code-made graphics")
-    good = [f for f in c.get("_checked", []) if _reachable(f["http_status"])]
+    good = _working(c.get("_checked", []))
     if len(good) < 2:
         why.append(f"only {len(good)} working source{'s' if len(good) != 1 else ''}")
     return why
@@ -341,7 +425,7 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
             if t["pillar"] in ready:
                 ready[t["pillar"]] += 1
         pillar_names = sorted(ready, key=lambda n: (ready[n], n))[:2]
-    summary = {"added": [], "duplicates": 0, "rejected": []}
+    summary = {"added": [], "duplicates": 0, "rejected": [], "revived": retry_rejected(progress)}
     for name in pillar_names:
         p = all_p.get(name)
         if not p:
@@ -360,16 +444,16 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
             cands.append(c)
         progress(f"{name}: {len(cands)} new ideas ({dups} repeats dropped); checking sources")
         for c in cands:
-            c["_checked"] = []
-            for fct in (c.get("facts") or [])[:4]:
-                url = str(fct.get("url") or "")
-                c["_checked"].append({"claim": str(fct.get("claim", ""))[:400], "url": url[:500],
-                                      "title": str(fct.get("source", ""))[:200], "domain": domain(url),
-                                      "tier": tier(url), "http_status": check_url(url)})
+            c["_checked"] = [_check(fct) for fct in (c.get("facts") or [])[:4] if isinstance(fct, dict)]
         checked = [f["http_status"] for c in cands for f in c["_checked"]]
         if len(checked) >= 3 and not any(checked):
             from studio.jobs import Transient            # offline: keep nothing rather than reject good ideas
             raise Transient("couldn't reach any source website to check the facts (is the Mac offline?)")
+        thin = [c for c in cands if len(_working(c["_checked"])) < 2]
+        if thin:
+            progress(f"{name}: finding more sources for {len(thin)} ideas")
+            more_sources(thin)
+            calls += 1
         ratings = rate(cands) if cands else {}
         scored = []
         for i, c in enumerate(cands):
