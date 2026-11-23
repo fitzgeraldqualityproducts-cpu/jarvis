@@ -27,6 +27,8 @@ W, H, FPS = 1080, 1920, 30
 BOX = {"x0": 80, "x1": W - 150, "y0": 250, "y1": 1150}       # visuals; captions sit below, Shorts UI around
 CAPTION_Y = 0.70
 FADE = 0.25
+LOOP_BLEND = 0.35        # the last moments blend back into the first frame, so a replay is seamless
+PUNCH = 0.06             # the first frame starts slightly zoomed and settles: motion from frame one
 TEMPLATES = {
     "headline": "big statement: {text, label?}",
     "number": "one huge number: {value, unit, label}",
@@ -195,7 +197,17 @@ Lines:
     for i, line in enumerate(lines):
         s = scenes[i] if i < len(scenes) else None
         out.append(s if _valid(s) else _fallback(line))
+    if out:
+        out[0] = hook_scene(lines[0], out[0])
     return out
+
+
+def hook_scene(hook, planned=None):
+    """The first frame: readable in a glance. The hook's own number big on screen, else the hook itself."""
+    if isinstance(planned, dict) and planned.get("type") == "number" and _valid(planned) and \
+            str(planned.get("value", "")).replace(",", "") in hook.replace(",", ""):
+        return planned
+    return _fallback(hook)
 
 
 # ---------- drawing ----------
@@ -425,10 +437,21 @@ def render(video_id, progress=lambda s: None):
         db.insert("INSERT INTO assets(video_id, kind, path, origin, source_url, license, attribution, sha256, created) "
                   "VALUES(?,?,?,?,?,?,?,?,?)", video_id, f"scene:{sc.get('type')}", str(p), "generated", None,
                   "original (drawn by Jarvis from shapes and text)", "", _sha(p), time.time())
-    dur = media.probe(voice["path"])["duration"]
-    starts = line_starts(lines, words) + [dur + 0.4]
+    voice_path = voice["path"]
+    lead = float(words[0]["s"] or 0) if words else 0.0
+    if lead > 0.25:                                           # speech must start at once: trim the silence before it
+        cut = round(lead - 0.08, 3)
+        trimmed = folder / "voice_trim.wav"
+        media.run(["-y", "-ss", f"{cut:.3f}", "-i", voice["path"], "-ar", "48000", str(trimmed)])
+        voice_path = str(trimmed)
+        for w in words:
+            w["s"], w["e"] = max(0.0, w["s"] - cut), max(0.0, w["e"] - cut)
+    dur = media.probe(voice_path)["duration"]
+    last_word = max((float(w["e"] or 0) for w in words), default=dur)
+    speech_end = _speech_span(voice_path)[1]
+    end = min(dur, max(last_word, speech_end) + 0.2) + 0.12   # no long silent tail: the replay starts right away
+    starts = line_starts(lines, words) + [end]
     starts[0] = 0.0
-    end = dur + 0.4
     brand = {"color": pal["cyan"], "highlight": pal["amber"]}
     stl = captions.resolve("highlight", {"brand": brand}, {"y": CAPTION_Y})
     stl["y"] = CAPTION_Y
@@ -436,11 +459,13 @@ def render(video_id, progress=lambda s: None):
     out = folder / "short.mp4"
     tmp = folder / "short.tmp.mp4"
     padded = folder / "voice_end.wav"                         # a short silent tail so the last scene can settle
-    media.run(["-y", "-i", voice["path"], "-af", f"apad=pad_dur={end - dur + 0.2:.2f}", "-ar", "48000", str(padded)])
+    media.run(["-y", "-i", voice_path, "-af", f"apad=pad_dur=0.3,atrim=0:{end + 0.05:.3f},afade=t=out:st={max(0.0, end - 0.08):.3f}:d=0.08",
+               "-ar", "48000", str(padded)])
     wr = media.FrameWriter(tmp, W, H, FPS, padded)
     n = int(math.ceil(end * FPS))
     cyan = np.array(_rgb(pal["cyan"])[::-1], dtype=np.uint8)
     caption_boxes = []
+    first = _zoom(imgs[0], 1.0 + PUNCH)                             # exactly the first frame
     progress("Rendering")
     try:
         for f in range(n):
@@ -448,13 +473,17 @@ def render(video_id, progress=lambda s: None):
             k = max(i for i in range(len(scenes)) if starts[i] <= t or i == 0)
             span = max(0.5, starts[k + 1] - starts[k])
             z = 1.0 + 0.035 * min(1.0, (t - starts[k]) / span)
+            if k == 0:                                              # punch-in on the hook: it settles in 0.4 s
+                z += PUNCH * max(0.0, 1.0 - t / 0.4)
             frame = _zoom(imgs[k], z)
             if k > 0 and t - starts[k] < FADE:                      # crossfade from the previous scene
                 a = (t - starts[k]) / FADE
                 prev = _zoom(imgs[k - 1], 1.035)
                 frame = cv2.addWeighted(frame, a, prev, 1 - a, 0)
-            frame = frame.copy()
-            frame[96:104, : int(W * min(1.0, t / end))] = cyan       # progress bar
+            if end - t < LOOP_BLEND and len(imgs) > 1:              # blend into the first frame for the loop
+                a = 1.0 - (end - t) / LOOP_BLEND
+                frame = cv2.addWeighted(first, a, frame, 1 - a, 0)
+            frame = frame.copy()                                    # (no progress bar: it tells people it's ending)
             cb = cap.draw(frame, t)
             if cb:
                 caption_boxes.append(cb)
@@ -463,6 +492,9 @@ def render(video_id, progress=lambda s: None):
         wr.close()
     tmp.replace(out)
     rep = {"path": str(out), "duration": round(end, 2), "frames": n, "scenes": len(scenes), "timing": timing,
+           "speech_start": round(float(words[0]["s"] or 0), 2) if words else None,
+           "tail_seconds": round(end - max(last_word, speech_end), 2),
+           "trimmed_lead": round(lead - 0.08, 3) if lead > 0.25 else 0.0,
            "scene_boxes": boxes, "caption_boxes": caption_boxes[:: max(1, len(caption_boxes) // 40)],
            "caption_words_shown": len(cap.shown_words), "words": len(words)}
     meta["render"] = rep

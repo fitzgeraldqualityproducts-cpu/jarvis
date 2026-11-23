@@ -396,10 +396,12 @@ def next_slot(now=None):
                    if r["publish_at"])
     last = taken[-1] if taken else 0
     tz = datetime.timezone(datetime.timedelta(hours=-6))
+    from studio import timing
+    hour = timing.hour(now)                       # learned from this channel's own results (timing.py)
     t = max(now + 3 * 3600, last + s["min_hours_between"] * 3600)
     for _ in range(60):
         d = datetime.datetime.fromtimestamp(t, tz)
-        cand = d.replace(hour=int(s["publish_hour"]), minute=0, second=0, microsecond=0)
+        cand = d.replace(hour=hour, minute=0, second=0, microsecond=0)
         if cand.timestamp() < t:
             cand += datetime.timedelta(days=1)
         c = cand.timestamp()

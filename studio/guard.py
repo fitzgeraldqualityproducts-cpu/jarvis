@@ -34,6 +34,7 @@ ACTIONS = {
     "youtube.set_thumbnail": "set the cover image of the studio's own uploaded Short",
     "youtube.read_video": "read the processing status of the studio's own video",
     "youtube.analytics": "read the locked channel's own analytics (no revenue)",
+    "youtube.playlist": "make the studio's series playlists and add its own public Shorts to them",
     "claude.ask": "ask Claude Code on Connor's plan, with no file or shell tools",
     "web.read": "read a public web page or open-data API for research and fact-checks",
     "media.local": "make audio, images and video on this Mac",
@@ -42,7 +43,10 @@ ACTIONS = {
 
 SCOPES = ("https://www.googleapis.com/auth/youtube.upload",
           "https://www.googleapis.com/auth/youtube.readonly",
-          "https://www.googleapis.com/auth/yt-analytics.readonly")
+          "https://www.googleapis.com/auth/yt-analytics.readonly",
+          # playlists (Connor approved 2026-11-23). Google's playlist permission also covers comments;
+          # comment actions stay refused by the never-list above, whatever the permission allows.
+          "https://www.googleapis.com/auth/youtube")
 
 # Never registered as tools, whatever their price page says today.
 BANNED_TOOLS = ("elevenlabs", "openai", "anthropic-api", "midjourney", "runway", "pictory", "invideo",
@@ -87,8 +91,8 @@ def check_scopes(scopes):
     extra = [s for s in scopes if s not in SCOPES]
     if extra:
         audit("google.scopes", False, {"refused": extra})
-        raise Forbidden("The studio only asks Google for upload, read-only channel and read-only analytics "
-                        f"permission; refused: {', '.join(extra)}")
+        raise Forbidden("The studio only asks Google for upload, read-only channel, read-only analytics and "
+                        f"playlist permission; refused: {', '.join(extra)}")
     return True
 
 

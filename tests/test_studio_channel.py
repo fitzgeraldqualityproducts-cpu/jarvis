@@ -10,7 +10,7 @@ import pytest
 from test_studio_foundation import studio_home  # noqa: F401
 from studio import guard
 
-UPLOAD, READ, ANALYTICS = guard.SCOPES
+UPLOAD, READ, ANALYTICS, PLAYLISTS = guard.SCOPES
 
 
 class FakeGoogle:

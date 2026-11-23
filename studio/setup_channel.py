@@ -111,7 +111,10 @@ def connect_flow():
     if ytauth.connected() and guard.locked_channel() and "--again" not in sys.argv:
         try:
             me = ytauth.whoami()
-            if me["id"] == guard.locked_channel()["youtube_channel_id"]:
+            missing = [x for x in guard.SCOPES if x not in ytauth.granted_scopes()]
+            if missing:
+                print("\nThe saved sign-in is missing a permission Jarvis now uses (series playlists), so let's sign in again.")
+            elif me["id"] == guard.locked_channel()["youtube_channel_id"]:
                 print(f"\nAlready connected to {me['title']}. Nothing to do. (To sign in again anyway: add --again.)")
                 return 0
         except Exception as e:
