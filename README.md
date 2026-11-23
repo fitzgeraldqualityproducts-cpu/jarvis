@@ -463,3 +463,12 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   nothing is made twice. `python -m studio next` shows what Jarvis would make next: pillars take turns,
   trending topics stay under 30% and expire after 10 days. With the studio on, ideas top up by
   themselves when fewer than 12 are ready.
+- Phase 6 (done): scripts and narration. Double-click **Write a Test Script** (or `python -m studio script`).
+  Claude writes 5 hooks and a 60-105 word script (25-45 s) using ONLY the idea's checked sources, with
+  every worked-out number given as a calculation. A separate Claude pass with web search fact-checks every
+  line against its source and scores the hooks; Jarvis re-runs every calculation itself, picks the best
+  hook that passes the hard rules (short, concrete, no clickbait) and refuses remakes of earlier scripts.
+  One revision is allowed; if it still fails, the idea is dropped. The passed script is narrated in the
+  channel voice and the audio is checked. The page `studio_data/videos/<id>/script.md` shows the script,
+  calculations, verdicts and other hooks. With the studio on, the worker runs these as resumable stages
+  (researching, scripting, fact_checking, generating_audio) and waits at rendering until Phase 7.
