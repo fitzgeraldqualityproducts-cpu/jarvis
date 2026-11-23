@@ -108,6 +108,17 @@ def free_gb():
     return None
 
 
+def _free_local_brain():
+    """Heavy jobs get the memory: the local brain's model (Ollama) is unloaded first; it reloads when next needed."""
+    try:
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        import local_brain
+        local_brain.unload()
+    except Exception:
+        pass
+
+
 @contextmanager
 def heavy(what, wait=900):
     """One heavy job at a time (Chatterbox, whisperX, Manim, Remotion, a render): waits for the lock."""
@@ -132,6 +143,7 @@ def heavy(what, wait=900):
         f.truncate()
         f.write(f"{os.getpid()} {what} {time.time():.0f}\n")
         f.flush()
+        _free_local_brain()
         yield
     finally:
         f.close()

@@ -89,8 +89,76 @@ def _note(usage, seconds, purpose):
         tag = (purpose or "other").split(":")[0].strip()[:40] or "other"
         d.setdefault("by", {})[tag] = d.get("by", {}).get(tag, 0) + 1
         db.put(key, d)
+        kind = LOCAL_KINDS.get(tag)
+        if kind:                                  # so the local brain's "tokens saved" uses real sizes
+            local = _local()
+            if local:
+                local.claude_used(kind, sum(int(u.get(k) or 0) for k in (
+                    "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")))
     except Exception:
         pass
+
+
+LOCAL_KINDS = {"json repair": "studio_json", "script length": "studio_length", "script": "studio_draft"}
+
+
+def _local():
+    """local_brain (Ollama on this computer), or None."""
+    try:
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        import local_brain
+        return local_brain
+    except Exception:
+        return None
+
+
+def _words(text):
+    import re
+    return re.findall(r"[a-z0-9]+(?:\.[0-9]+)?", str(text).lower())
+
+
+def _values(obj):
+    if isinstance(obj, dict):
+        return " ".join(f"{k} {_values(v)}" for k, v in obj.items())
+    if isinstance(obj, list):
+        return " ".join(_values(v) for v in obj)
+    if obj is None or isinstance(obj, bool):
+        return json.dumps(obj)
+    return str(obj)
+
+
+def local_json_repair(prompt, text):
+    """The local model turns a broken JSON answer into valid JSON, or None. Used only if it kept the answer
+    word for word: every word it gives back was in the answer, and it dropped almost nothing."""
+    local = _local()
+    if not local or not local.ready("studio_json")[0]:
+        return None
+    from clipper import llm
+    size = len(text)
+    if size > 16000:
+        return None
+    ans = local.chat([{"role": "system", "content": "You fix broken JSON. Rewrite the answer as valid JSON in the shape "
+                                                    "asked for. Keep every value and word exactly as it is; add nothing, "
+                                                    "drop nothing. Answer with ONLY the JSON."},
+                      {"role": "user", "content": "The shape asked for:\n" + _shape(prompt) + "\n\nThe answer:\n" + text.strip()}],
+                     json_mode=True, max_tokens=int(size / 2.5) + 300, timeout=180, first_timeout=60,
+                     num_ctx=min(16384, 2048 + int(size / 2)), temperature=0)
+    if not ans:
+        return None
+    try:
+        fixed = llm.parse_json(ans)
+    except llm.LLMError:
+        return None
+    raw = text.strip()
+    a, b = min([i for i in (raw.find("{"), raw.find("[")) if i >= 0] or [0]), max(raw.rfind("}"), raw.rfind("]"))
+    before, after = _words(raw[a:b + 1] if b > a else raw), _words(_values(fixed))
+    have = set(_words(raw))
+    if not after or any(w not in have for w in after) or len(after) < 0.9 * len(before):
+        print("(local brain: its JSON fix changed the answer, asking Claude instead)")
+        return None
+    local.saved("studio_json")
+    return fixed
 
 
 _OLD = []
@@ -182,6 +250,9 @@ def ask_json(prompt, timeout=300, web=False, purpose=""):
     except llm.LLMError:
         pass
     if text.strip():
+        fixed = local_json_repair(prompt, text)          # on this computer first: no Claude call
+        if fixed is not None:
+            return fixed
         fixed = ask("Rewrite the answer below as valid JSON in exactly the shape asked for. Keep every value and "
                     "word as it is; add nothing, drop nothing. Answer with ONLY the JSON.\n\nThe shape asked for:\n"
                     + _shape(prompt) + "\n\nThe answer:\n" + text.strip()[-20000:], 180, False, "json repair")

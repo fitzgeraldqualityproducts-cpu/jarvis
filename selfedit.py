@@ -56,6 +56,7 @@ repairs.json
 clipper_data/
 models/fonts/
 studio_data/
+local_brain_data/
 config.json
 config.json.bak*
 .claude-budget.*

@@ -13,6 +13,7 @@ def clipper_home(tmp_path, monkeypatch):
     monkeypatch.setenv("JARVIS_CLIPPER_DATA", str(tmp_path / "clipper_data"))
     monkeypatch.delenv("JARVIS_CLIPPER_PARENT", raising=False)
     monkeypatch.setenv("JARVIS_BUDGET_FILE", str(tmp_path / "claude-budget.json"))
+    monkeypatch.setenv("JARVIS_NO_LOCAL_BRAIN", "1")       # never talks to a real Ollama while testing
     from clipper import db, settings
     db.reset_connections()
     cfg = tmp_path / "config.json"

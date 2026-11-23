@@ -3,3 +3,4 @@ __pycache__/
 models/
 tools/
 studio/remotion/node_modules/
+local_brain_data/

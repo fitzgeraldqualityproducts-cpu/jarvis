@@ -200,7 +200,11 @@ Also write 5 different hooks (each could replace line 1) and 3 title options (un
 
 JSON only: {{"hooks": ["..." x5], "lines": [{{"text": "...", "facts": ["F1"], "visual": "..."}}],
 "calcs": [{{"expr": "...", "result": 0.0, "unit": "...", "says": "what it shows"}}], "titles": ["..." x3]}}"""
-    ans = claude.ask_json(prompt, timeout=600, web=False, purpose=f"script: {topic['title']}")
+    ans = None
+    if not feedback and not previous and _local_draft_turn():
+        ans = _local_draft(prompt, facts)              # the trial: a first draft written on this computer
+    if ans is None:
+        ans = claude.ask_json(prompt, timeout=600, web=False, purpose=f"script: {topic['title']}")
     if not isinstance(ans, dict) or not ans.get("lines"):
         raise ScriptRejected("Claude didn't return a script")
     ans["lines"] = [ln for ln in ans["lines"] if isinstance(ln, dict) and str(ln.get("text", "")).strip()]
@@ -218,6 +222,9 @@ def _fit_length(draft, n):
     from studio import claude
     goal = "Cut" if n > WORDS_MAX else "Add"
     target = f"{WORDS_MAX - 15}-{WORDS_MAX - 5}" if n > WORDS_MAX else f"{WORDS_MIN + 10}-{WORDS_MIN + 25}"
+    fitted = _local_fit(draft, n, goal, target)        # on this computer first, checked before it's used
+    if fitted:
+        return fitted
     ans = claude.ask_json(f"""This Short script is {n} words with its first hook as line 1; it must be {WORDS_MIN}-{WORDS_MAX}.
 {goal} words so the whole thing is {target} words. Keep every number, fact id and the calculation; keep the
 meaning and the closing line. Change nothing else. Each hook must stay under {HOOK_MAX_WORDS} words.
@@ -238,6 +245,191 @@ JSON only, the same shape: {{"hooks": [...], "lines": [{{"text": "...", "facts":
     if ans.get("calcs"):
         out["calcs"] = ans["calcs"]
     return out
+
+
+# ---------- the local brain (Ollama on this computer, local_brain.py) ----------
+# Claude still fact-checks every script. The local model only writes some first drafts (a measured trial
+# that turns itself off if its drafts do worse than Claude's) and fixes the word count, and both are
+# checked here before they're used.
+
+TRIAL_KEY = "local_draft_trial"
+TRIAL_MIN = 5                     # finished scripts from each writer before the trial decides
+
+
+def _local():
+    try:
+        from studio.claude import _local as get
+        return get()
+    except Exception:
+        return None
+
+
+def _numbers(text):
+    return set(re.findall(r"\d+(?:[.,]\d+)*", str(text).replace(",", "")))
+
+
+def _trial():
+    d = db.get(TRIAL_KEY, {}) or {}
+    for k in ("local", "claude"):
+        d.setdefault(k, {"n": 0, "passed": 0, "reviews": 0})
+    d.setdefault("invalid", 0)
+    d.setdefault("tried", 0)
+    return d
+
+
+def _local_draft_turn():
+    """Should the local model write this first draft? "on", "off", or "trial": every other draft until
+    the trial has enough finished scripts to decide, then whatever it decided."""
+    local = _local()
+    if not local:
+        return False
+    mode = str(local.cfg().get("studio_drafts", "trial")).lower()
+    if mode in ("off", "false") or not local.ready("studio_drafts")[0]:
+        return False
+    if mode in ("on", "true"):
+        return True
+    d = _trial()
+    if d.get("verdict"):
+        return d["verdict"] == "on"
+    if d["tried"] >= 4 and d["invalid"] / d["tried"] > 0.6:
+        return False                              # it mostly can't write a usable draft: not worth the wait
+    turn = d.get("next", "local")
+    d["next"] = "claude" if turn == "local" else "local"
+    db.put(TRIAL_KEY, d)
+    return turn == "local"
+
+
+def _local_draft(prompt, facts):
+    """A first draft from the local model, or None (Claude writes it). Only kept if it follows the rules
+    the code can check: fact ids that exist, calculations that re-run correctly, no number from nowhere."""
+    from studio import claude
+    local = _local()
+    d = _trial()
+    d["tried"] += 1
+    ans = local.chat_json([{"role": "system", "content": claude.SYSTEM.format(date=time.strftime("%B %d, %Y"))},
+                           {"role": "user", "content": prompt}],
+                          max_tokens=1600, timeout=300, first_timeout=90, num_ctx=8192, temperature=0.7)
+    why = _draft_problem(ans, facts)
+    if why:
+        d["invalid"] += 1
+        db.put(TRIAL_KEY, d)
+        print(f"(local brain: its draft wasn't usable ({why}), Claude is writing it)")
+        return None
+    db.put(TRIAL_KEY, d)
+    ans["by"] = "local"
+    local.saved("studio_draft")
+    print("(local brain wrote the first draft; Claude will fact-check it)")
+    return ans
+
+
+def _draft_problem(ans, facts):
+    if not isinstance(ans, dict) or not isinstance(ans.get("lines"), list) or len(ans["lines"]) < 4:
+        return "no script"
+    ids = {f"F{i + 1}" for i in range(len(facts))} | {"general"}
+    hooks = [str(h) for h in ans.get("hooks") or [] if str(h).strip()]
+    if len(hooks) < 3:
+        return "too few hooks"
+    for ln in ans["lines"]:
+        if not isinstance(ln, dict) or not str(ln.get("text", "")).strip():
+            return "an empty line"
+        used = [str(f) for f in ln.get("facts") or []]
+        if any(f not in ids for f in used):
+            return "a fact id that doesn't exist"
+    calcs = check_calcs(ans.get("calcs"))
+    if not calcs or not all(c["ok"] for c in calcs):
+        return "a calculation that doesn't re-run"
+    known = set().union(*[_numbers(f.get("claim", "")) for f in facts]) if facts else set()
+    for c in calcs:
+        known |= _numbers(c.get("expr", "")) | _numbers(c.get("result", ""))
+        try:
+            v = float(c.get("actual"))
+            known |= {f"{v:g}", str(round(v)), str(int(v)), f"{v:.1f}", f"{v:.2f}", str(round(v * 100))}
+        except (TypeError, ValueError):
+            pass
+    said = _numbers(" ".join(str(ln["text"]) for ln in ans["lines"]) + " " + " ".join(hooks))
+    loose = {n for n in said if n not in known and not (n.isdigit() and int(n) <= 12)}
+    if loose:
+        return "numbers that aren't in the facts: " + ", ".join(sorted(loose)[:4])
+    return None
+
+
+def _local_fit(draft, n, goal, target):
+    """The word count fixed on this computer, or None. Kept only if every number, fact id and the closing
+    line's numbers survive and it now fits."""
+    local = _local()
+    if not local or not local.ready("studio_length")[0]:
+        return None
+    lines = "\n".join(f"L{i + 1}. {ln['text']}" for i, ln in enumerate(draft["lines"]))
+    ans = local.chat_json([{"role": "user", "content": f"""This Short script is {n} words; it must be {target} words.
+{goal} words: reword or {"shorten" if goal == "Cut" else "lengthen"} lines. Keep every number exactly, keep every line's
+meaning and the last line. Don't add any new fact or number. Each hook must stay under {HOOK_MAX_WORDS} words.
+
+Hooks:
+""" + "\n".join(f"H{i}. {h}" for i, h in enumerate(draft["hooks"])) + f"""
+
+Lines:
+{lines}
+
+JSON only: {{"hooks": ["..."], "lines": ["line 1 text", "line 2 text", ...]}} with the same number of lines ({len(draft["lines"])}) in order."""}],
+                          max_tokens=900, timeout=120, first_timeout=60, num_ctx=4096, temperature=0.3)
+    if not ans:
+        return None
+    new = [str(x).strip() for x in ans.get("lines") or []]
+    hooks = [str(h).strip() for h in ans.get("hooks") or [] if str(h).strip()]
+    if len(new) != len(draft["lines"]) or not all(new) or (hooks and len(hooks) != len(draft["hooks"])):
+        return None
+    for old, now in zip(draft["lines"], new):
+        if _numbers(old["text"]) != _numbers(now):
+            return None
+    for old, now in zip(draft["hooks"], hooks):
+        if _numbers(old) != _numbers(now) or len(now.split()) > HOOK_MAX_WORDS:
+            return None
+    out = dict(draft, lines=[dict(old, text=now) for old, now in zip(draft["lines"], new)])
+    if hooks:
+        out["hooks"] = hooks
+    words = len(text_of(out, out["hooks"][0] if out.get("hooks") else None).split())
+    if not WORDS_MIN <= words <= WORDS_MAX:
+        return None
+    local.saved("studio_length")
+    print(f"(local brain fitted the script to {words} words)")
+    return out
+
+
+def _trial_outcome(topic, video_id, passed):
+    """Records how a finished script did, by who wrote its first draft, and decides the trial when there's enough."""
+    try:
+        first = db.one("SELECT structure FROM scripts WHERE video_id IS ? ORDER BY version LIMIT 1", video_id)
+        if not first:
+            return
+        by = json.loads(first["structure"] or "{}").get("by") or "claude"
+        reviews = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status IN ('passed','failed')",
+                         video_id)["n"]
+        d = _trial()
+        key = f"{topic.get('id')}:{video_id}"
+        done = d.setdefault("done", [])
+        if key in done:
+            return
+        done.append(key)
+        del done[:-100]
+        e = d[by]
+        e["n"] += 1
+        e["passed"] += 1 if passed else 0
+        e["reviews"] += reviews
+        if not d.get("verdict") and d["local"]["n"] >= TRIAL_MIN and d["claude"]["n"] >= TRIAL_MIN:
+            lr, cr = (d[k]["passed"] / d[k]["n"] for k in ("local", "claude"))
+            lrev, crev = (d[k]["reviews"] / d[k]["n"] for k in ("local", "claude"))
+            d["verdict"] = "on" if lr >= cr and lrev <= crev + 0.5 else "off"
+            d["decided"] = time.time()
+            print(f"(local draft trial decided: {d['verdict']}; local passed {lr:.0%} in {lrev:.1f} reviews, "
+                  f"Claude {cr:.0%} in {crev:.1f})")
+        db.put(TRIAL_KEY, d)
+    except Exception as e:
+        print(f"(local draft trial: couldn't record: {e})")
+
+
+def trial_report():
+    """The local-draft trial so far, for the dashboard and 'python -m studio usage'."""
+    return _trial()
 
 
 def text_of(draft, hook=None):
@@ -377,7 +569,8 @@ def draft_step(topic, video_id=None, feedback=None, previous=None, draft=None):
     hook = draft["hooks"][0] if draft["hooks"] else draft["lines"][0]["text"]
     return db.insert("INSERT INTO scripts(video_id, version, hooks, hook, body, structure, checks, status, created) "
                      "VALUES(?,?,?,?,?,?,?,?,?)", video_id, v + 1, json.dumps(draft["hooks"]), hook, text_of(draft),
-                     json.dumps({"lines": draft["lines"], "calcs": draft.get("calcs") or [], "titles": draft.get("titles") or []}),
+                     json.dumps({"lines": draft["lines"], "calcs": draft.get("calcs") or [], "titles": draft.get("titles") or [],
+                                 "by": draft.get("by") or "claude"}),
                      "{}", "draft", time.time())
 
 
@@ -404,6 +597,7 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
            json.dumps(st), json.dumps(checks), "passed" if rev["ok"] else "failed", row["id"])
     row = dict(db.one("SELECT * FROM scripts WHERE id=?", row["id"]))
     if rev["ok"]:
+        _trial_outcome(topic, video_id, True)
         _record_claims(topic, video_id, rev)
         topics.set_status(topic["id"], script_status="passed")
         guard.audit("script.passed", True, {"topic": topic["id"], "video": video_id, "version": row["version"]})
@@ -412,6 +606,7 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     lessons.record("script", rev["hard_problems"], topic, video_id)
     tries = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status='failed'", video_id)["n"]
     if tries > max_revisions:
+        _trial_outcome(topic, video_id, False)
         topics.set_status(topic["id"], script_status="failed")
         guard.audit("script.failed", True, {"topic": topic["id"], "video": video_id, "problems": rev["hard_problems"][:5]})
         raise ScriptRejected("the script still failed the fact-check: " + "; ".join(rev["hard_problems"][:4]))
