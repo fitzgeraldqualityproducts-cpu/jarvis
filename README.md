@@ -481,3 +481,13 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   Education category) and runs the QA gate: format, length, loudness, blank frames, fact-checked script
   and sources, every caption word shown and in sync, visuals and captions in the safe area, licences,
   title rules and remake check. Only a full pass makes a Short "ready". Nothing is uploaded.
+- Phase 8 (done): publishing, official YouTube Data API only. Double-click **Upload Test Video (Private)**
+  to upload the newest finished Short as private after you confirm. Every upload first checks the signed-in
+  channel is the locked business channel, needs a full QA pass, and is resumable: the session is saved
+  before any bytes go, so a crash or restart continues the same upload. Each video carries a private tag,
+  so an upload whose reply was lost is found on the channel instead of being sent twice. Afterwards Jarvis
+  reads the video back (processing, privacy, channel). `python -m studio publish-mode` sets how finished
+  Shorts go out: manual (default, they wait), private (uploaded privately for review) or public (only
+  after typing PUBLIC: uploaded private with a publish time, about 3 a week at 5 PM Central, at least 40
+  hours apart, then confirmed public). Note: Google may keep uploads from an unaudited API project
+  private; the first private test shows what applies to this project.

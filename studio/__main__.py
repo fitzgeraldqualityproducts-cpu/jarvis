@@ -16,7 +16,10 @@
   script      makes one real script for the next idea: hooks, fact-check, narration (never uploads)
               (--topic <id> picks the idea; --no-voice skips narration)
   video       makes a finished test Short: the waiting narrated script (or a new one), visuals, captions,
-              render, metadata and the QA gate (--video <id>); never uploads"""
+              render, metadata and the QA gate (--video <id>); never uploads
+  upload      uploads the newest finished Short as PRIVATE to the business channel, after you confirm
+              (--video <id>); then checks YouTube processed it
+  publish-mode  shows or sets how finished Shorts go out: manual (default), private, public"""
 import json
 import sys
 import time
@@ -96,6 +99,68 @@ def _video(argv):
     return 0 if res["ok"] else 1
 
 
+def _upload(argv):
+    from studio import db, guard, publish
+    health.startup()
+    if "--video" in argv:
+        vid = int(argv[argv.index("--video") + 1])
+    else:
+        r = db.one("SELECT id FROM videos WHERE state IN ('ready','uploading','processing') ORDER BY id DESC LIMIT 1")
+        if not r:
+            print("No finished Short is waiting. Double-click Make a Test Video first.")
+            return 1
+        vid = r["id"]
+    v = db.video(vid)
+    ch = guard.locked_channel()
+    if not ch:
+        print("The business channel isn't connected. Double-click Connect YouTube Business first.")
+        return 1
+    up = json.loads(v["meta"] or "{}").get("upload") or {}
+    print(f"Video {vid}: {up.get('title') or v['title']}\nChannel: {ch['title']} ({ch['youtube_channel_id']})")
+    if input("Upload it as PRIVATE (only you can see it)? (y/n) ").strip().lower() != "y":
+        print("Nothing uploaded.")
+        return 0
+    db.set_video(vid, state="uploading")
+    yid = publish.upload(vid, "private", progress=lambda f: print(f"  uploaded {f:.0%}"))
+    print(f"Uploaded: https://youtu.be/{yid}\nWaiting for YouTube to process it...")
+    db.set_video(vid, state="processing")
+    for _ in range(40):
+        r = publish.verify(vid)
+        if r["state"] not in ("processing", "missing"):
+            break
+        time.sleep(15)
+    print(f"YouTube says: {r['state']} (privacy {r.get('privacy')}, processing {r.get('processing')})")
+    if r["state"] == "private":
+        db.set_video(vid, state="published", stage_done="processing", finished=time.time())
+        print(f"\nCheck it in YouTube Studio: https://studio.youtube.com/video/{yid}/edit")
+    elif r["state"] == "failed":
+        db.set_video(vid, state="failed", error=f"YouTube: {r.get('problem')}", finished=time.time())
+    return 0
+
+
+def _publish_mode(argv):
+    from studio import config, publish
+    if len(argv) < 2:
+        print(f"Publish mode: {publish.mode()}  (manual | private | public)")
+        return 0
+    m = argv[1]
+    if m not in publish.MODES:
+        print("Use manual, private or public.")
+        return 1
+    if m == "public":
+        s = publish.settings()
+        print(f"Public means Jarvis publishes finished Shorts by itself, about {s['posts_per_week']} a week at "
+              f"{s['publish_hour']}:00 Central, each only after passing every check.")
+        if input('Type PUBLIC to allow that: ').strip() != "PUBLIC":
+            print("Unchanged.")
+            return 0
+    config.set_values(publish_mode=m)
+    from studio import guard
+    guard.audit("publish.mode", True, {"mode": m})
+    print(f"Publish mode is now {m}.")
+    return 0
+
+
 def main(argv):
     cmd = argv[0] if argv else "status"
     if cmd == "status":
@@ -159,6 +224,10 @@ def main(argv):
         return _script(argv)
     elif cmd == "video":
         return _video(argv)
+    elif cmd == "upload":
+        return _upload(argv)
+    elif cmd == "publish-mode":
+        return _publish_mode(argv)
     elif cmd == "brand":
         from studio import setup_channel
         return setup_channel.brand_flow()

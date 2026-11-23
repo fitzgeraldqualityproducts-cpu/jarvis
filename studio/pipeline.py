@@ -4,7 +4,15 @@ researching       picks the best ready idea (topics.pick_next) unless the job al
 scripting         writes the first draft (script.draft_step)
 fact_checking     checks the newest draft; one revision, then it must pass or the job stops
 generating_audio  narrates the passed script in the channel voice and validates the audio
-Later phases add rendering and validating; until then a job waits at "rendering"."""
+rendering         visual plan, word timings, original scenes, captions -> short.mp4
+validating        upload metadata + the QA gate; a pass makes it "ready"
+ready             waits for its publishing slot (publish_mode "manual" = waits for Connor)
+uploading         resumable, idempotent upload to the locked channel (publish.upload)
+processing        until YouTube finishes processing; then scheduled / published
+scheduled         until the publish time, then confirms it really went public"""
+import json
+import time
+
 from studio import data_dir, db, jobs, script, topics
 
 
@@ -86,9 +94,65 @@ def validating(v, ctx):
     return "ready"
 
 
+def ready(v, ctx):
+    from studio import publish
+    m = publish.mode()
+    if m == "manual":
+        raise jobs.Wait("ready; waiting for Connor (publish mode is manual)", time.time() + 6 * 3600)
+    meta = json.loads(v.get("meta") or "{}")
+    if m == "private":
+        meta["publish_plan"] = {"privacy": "private", "publish_at": None}
+    else:
+        slot = publish.next_slot()
+        if slot - time.time() > 36 * 3600:
+            raise jobs.Wait("waiting for its publishing slot", slot - 30 * 3600)
+        meta["publish_plan"] = {"privacy": "private", "publish_at": slot}
+    db.set_video(v["id"], meta=json.dumps(meta))
+    return "uploading"
+
+
+def uploading(v, ctx):
+    from studio import publish
+    plan = json.loads(v.get("meta") or "{}").get("publish_plan") or {"privacy": "private", "publish_at": None}
+    publish.upload(v["id"], plan["privacy"], plan.get("publish_at"), progress=lambda f: ctx.beat(f"uploaded {f:.0%}"),
+                   stop=ctx.stopping)
+    return "processing"
+
+
+def processing(v, ctx):
+    from studio import publish
+    r = publish.verify(v["id"])
+    if r["state"] in ("processing", "missing"):
+        raise jobs.Wait("YouTube is still processing it", time.time() + 300)
+    if r["state"] == "failed":
+        raise jobs.Permanent(f"YouTube rejected the upload: {r.get('problem')}")
+    if r["state"] == "scheduled":
+        return "scheduled"
+    if v.get("topic_id"):
+        topics.set_status(v["topic_id"], "published" if r["state"] == "published" else "uploaded_private",
+                          publish_status=r["state"])
+    return "published"
+
+
+def scheduled(v, ctx):
+    from studio import publish
+    r = publish.verify(v["id"])
+    if r["state"] == "scheduled":
+        at = (publish.job(v["id"]) or {}).get("publish_at")
+        raise jobs.Wait("scheduled on YouTube", (float(at) if at else time.time()) + 600)
+    if r["state"] == "failed":
+        raise jobs.Permanent(f"YouTube rejected the video: {r.get('problem')}")
+    if r["state"] != "published":
+        raise jobs.Wait(f"expected it to be public by now; YouTube says {r['state']}", time.time() + 1800)
+    if v.get("topic_id"):
+        topics.set_status(v["topic_id"], "published", publish_status="published")
+    return "published"
+
+
 def register():
     """Adds the stages (a stage that's already registered, e.g. by a test, is kept)."""
     for name, fn in (("researching", researching), ("scripting", scripting), ("fact_checking", fact_checking),
-                     ("generating_audio", generating_audio), ("rendering", rendering), ("validating", validating)):
+                     ("generating_audio", generating_audio), ("rendering", rendering), ("validating", validating), ("ready", ready), ("uploading", uploading),
+                     ("processing", processing), ("scheduled", scheduled)):
         if name not in jobs.STAGES:
             jobs.register(name, fn)

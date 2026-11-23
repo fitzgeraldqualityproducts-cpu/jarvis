@@ -18,7 +18,7 @@ from studio import data_dir
 STATES = ["researching", "scripting", "fact_checking", "generating_audio", "rendering", "validating",
           "ready", "uploading", "processing", "scheduled", "published", "failed", "rejected"]
 FINAL = ("published", "failed", "rejected")
-WORK_STATES = STATES[:6]                     # stages the worker runs
+WORK_STATES = STATES[:10]                    # stages the worker runs (researching ... scheduled)
 
 MIGRATIONS = [
     # 1: the full record set from the business spec (Part 16)

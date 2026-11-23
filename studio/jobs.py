@@ -60,6 +60,15 @@ class Interrupted(StudioError):
     kind = "interrupted"
 
 
+class Wait(StudioError):
+    """Not a problem: the job waits until a time (e.g. its publishing slot). Nothing is logged as an error."""
+    kind = "wait"
+
+    def __init__(self, msg, until):
+        super().__init__(msg)
+        self.until = until
+
+
 def register(state, handler):
     if state not in db.WORK_STATES:
         raise ValueError(f"{state} isn't a production stage")
@@ -160,6 +169,10 @@ def run_one(v):
 def _failed(v, stage, err):
     kind = classify(err)
     msg = guard.redact(f"{type(err).__name__}: {err}")[:800]
+    if kind == "wait":
+        db.set_video(v["id"], state=stage, owner=None, error=None, error_kind=None,
+                     not_before=max(getattr(err, "until", 0) or 0, time.time() + 60), meta=_note(v, str(err)))
+        return stage
     attempts = int(v["attempts"] or 0) + (0 if kind in ("interrupted", "quota", "resource") else 1)
     g = config.general()
     state, wait, recovery, remaining = stage, 0, "", ""
@@ -184,6 +197,13 @@ def _failed(v, stage, err):
     db.insert("INSERT INTO errors(t, kind, video_id, stage, detail, recovery, result, remaining) VALUES(?,?,?,?,?,?,?,?)",
               time.time(), kind, v["id"], stage, msg, recovery, state, remaining)
     return state
+
+
+def _note(v, msg):
+    import json
+    m = json.loads(db.video(v["id"])["meta"] or "{}")
+    m["waiting"] = msg
+    return json.dumps(m)
 
 
 def recover():
