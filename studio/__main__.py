@@ -235,6 +235,8 @@ def main(argv):
             try:
                 n = analytics.fetch()
                 analytics.channel()
+                from studio import eligibility
+                eligibility.check()
                 print(f"(read the latest numbers for {n} Short(s) from YouTube)")
             except Exception as e:
                 print(f"(couldn't reach YouTube just now, showing saved numbers: {e})")

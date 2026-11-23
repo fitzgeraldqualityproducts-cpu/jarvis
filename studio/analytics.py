@@ -312,6 +312,9 @@ def report(now=None, save=True):
                 lines.append(f"- {label} {k}: index {v['mean']:.0f} over {v['n']} Short(s)")
         lines.append("- Topic picking: " + (", ".join(f"{k} {v:+.1f} points" for k, v in sorted(nud.items()))
                                             if nud else f"no changes yet (needs {MIN_PER_PILLAR}+ measured Shorts per pillar)"))
+    from studio import eligibility
+    if eligibility.latest():
+        lines += [""] + eligibility.text().rstrip("\n").split("\n")
     lines += ["", "Numbers come from YouTube itself (Data API and YouTube Analytics). Revenue is never read."]
     text = "\n".join(lines) + "\n"
     if save:

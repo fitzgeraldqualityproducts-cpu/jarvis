@@ -499,3 +499,9 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   Shorts nudges idea picking by at most 6 points, and the idea finder hears what worked. A weekly report
   goes to studio_data/reports/ and Jarvis tells you about it. Double-click **Show YouTube Stats** or ask
   "how's the YouTube channel doing?". Revenue is never read.
+- Phase 10 (done): Partner Program progress, read-only. Once a day after something is public, Jarvis
+  compares subscribers, public uploads in 90 days and Shorts views in 90 days with YouTube's published
+  thresholds (fan funding and ad revenue; the 2027-02-01 change applies by itself). Shorts views are an
+  ESTIMATE from YouTube Analytics (YouTube's own count of qualifying views isn't available to apps), and
+  projections are labelled. It's in the weekly report, Show YouTube Stats, and "how close are we to
+  monetization?". If a tier is met Jarvis tells you; applying, terms, AdSense and money stay with you.
