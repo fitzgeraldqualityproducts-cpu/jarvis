@@ -19,7 +19,10 @@
               render, metadata and the QA gate (--video <id>); never uploads
   upload      uploads the newest finished Short as PRIVATE to the business channel, after you confirm
               (--video <id>); then checks YouTube processed it
-  publish-mode  shows or sets how finished Shorts go out: manual (default), private, public"""
+  publish-mode  shows or sets how finished Shorts go out: manual (default), private, public
+  drive       Google Drive backup: drive connect | drive (status) | drive backup | drive restore <video id>
+              backup copies finished Shorts and reports, checks each copy, then clears Mac copies that are
+              on YouTube and safe on Drive (after drive_keep_local_days; --now skips the wait)"""
 import json
 import sys
 import time
@@ -161,6 +164,45 @@ def _publish_mode(argv):
     return 0
 
 
+def _drive(argv):
+    from studio import drive
+    health.startup()
+    sub = argv[1] if len(argv) > 1 else "status"
+    try:
+        if sub == "connect":
+            print("Pick the Google account whose Drive should keep the backups, then press Allow.\n"
+                  "Jarvis only gets permission for files it creates itself; it can't see anything else in your Drive.")
+            me = drive.connect()
+            print(f"\nConnected to Google Drive{' (' + me['email'] + ')' if me.get('email') else ''}.")
+            if me.get("limit"):
+                print(f"Drive space used: {me['usage'] / (1 << 30):.1f} of {me['limit'] / (1 << 30):.0f} GB.")
+            sub = "backup"
+        if sub == "backup":
+            print("Backing up finished Shorts to Google Drive...")
+            res = drive.back_up(limit=1000, say=print)
+            if res["problem"] == "full":
+                print("Stopped: your Google Drive is nearly full. Nothing on the Mac was removed.")
+            freed = drive.free_local(urgent="--now" in argv, say=print)
+            print(f"\nCopied {res['copied']} file(s), {res['bytes'] / (1 << 20):.1f} MB. "
+                  f"Cleared {freed / (1 << 20):.1f} MB from the Mac.")
+        elif sub == "restore":
+            n = drive.restore(int(argv[2]))
+            print(f"Restored {n} file(s).")
+        elif sub != "status":
+            print(__doc__)
+            return 2
+        print(drive.say())
+    except drive.DriveOff as e:
+        print(f"\nGoogle Drive isn't switched on for Jarvis's Google project yet. Open {e.link}, press Enable, "
+              "then double-click Connect Google Drive again.")
+        return 1
+    except Exception as e:
+        from studio import guard
+        print("\nThat didn't work: " + guard.redact(str(e)))
+        return 1
+    return 0
+
+
 def main(argv):
     cmd = argv[0] if argv else "status"
     if cmd == "status":
@@ -266,6 +308,8 @@ def main(argv):
     elif cmd == "protect":
         from studio import ytauth
         print(ytauth.protect_existing(argv[1]))
+    elif cmd == "drive":
+        return _drive(argv)
     elif cmd == "run":
         jobs.start()
         try:

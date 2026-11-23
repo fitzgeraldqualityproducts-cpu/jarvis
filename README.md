@@ -513,3 +513,14 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   Restart drills are tested: a crash mid-render resumes at rendering, and a stop mid-upload continues
   the same upload session (never a second upload). Starting Jarvis at login is your choice:
   run **Install Jarvis Extras** (it asks) or add "Jarvis at Login.command" in System Settings > Login Items.
+- Google Drive backup: double-click **Connect Google Drive** once, pick the Google account whose Drive
+  should hold the backups and press Allow. Jarvis asks for one permission only (drive.file): it can see
+  and change only the files it puts there, nothing else in your Drive. If Google says the Drive API is
+  off, the window opens the Enable page for Jarvis's own Google project; press Enable and it carries on.
+  From then on, every 30 minutes, finished Shorts (video, narration, thumbnail, script, metadata) and the
+  weekly reports are copied to "Jarvis YouTube Backups" in that Drive, and each copy is checked against
+  the Mac's file (size + MD5). Mac copies of the big files are removed only when the Short is on YouTube,
+  its Drive copy is verified again right before deleting, and it went up 7 days ago or more (sooner when
+  disk space is low). Shorts waiting for upload are never removed. It stops before Drive gets within
+  1 GB of full and tells you. **Back Up Shorts to Drive** runs it now; `python -m studio drive restore <id>`
+  brings a Short's files back. Ask "are my Shorts backed up?". Free: Drive API + your free 15 GB.

@@ -37,3 +37,23 @@ def youtube_partner_progress():
     if not config.enabled():
         return "The YouTube business module is off."
     return eligibility.text()
+
+
+@tool("Google Drive backup of the YouTube business's finished Shorts: how many are backed up, how much space "
+      "was cleared from the Mac, and anything still to copy. Use for 'are my Shorts backed up', 'Drive backup'.")
+def youtube_drive_backup_status():
+    from studio import drive
+    return drive.say()
+
+
+@tool("Back up the YouTube business's finished Shorts to Google Drive now. Every copy is checked against the "
+      "Mac's file; Mac copies are only cleared once a Short is on YouTube and verified on Drive.")
+def back_up_shorts_to_drive():
+    from studio import drive
+    if not drive.connected():
+        return drive.say()
+    res = drive.back_up(limit=1000)
+    freed = drive.free_local()
+    note = " Your Google Drive is nearly full, so I stopped." if res["problem"] == "full" else ""
+    return (f"Copied {res['copied']} file(s) ({res['bytes'] / (1 << 20):.0f} MB) to Google Drive and cleared "
+            f"{freed / (1 << 20):.0f} MB from the Mac.{note} " + drive.say())

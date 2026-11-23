@@ -36,6 +36,7 @@ ACTIONS = {
     "claude.ask": "ask Claude Code on Connor's plan, with no file or shell tools",
     "web.read": "read a public web page or open-data API for research and fact-checks",
     "media.local": "make audio, images and video on this Mac",
+    "drive.backup": "copy finished Shorts and reports to Connor's own Google Drive (only files Jarvis made)",
 }
 
 SCOPES = ("https://www.googleapis.com/auth/youtube.upload",
@@ -195,6 +196,8 @@ BUILT_IN_TOOLS = [
     ("youtube-analytics-api", "the channel's own analytics", "Google APIs terms", False, True, "free quota; no revenue scope"),
     ("wikipedia-api", "fact-check sources", "free API; text CC BY-SA, cited not copied", False, False, "polite rate"),
     ("wikimedia-commons", "licensed images", "per-file licence, recorded", False, False, "polite rate"),
+    ("google-drive-api", "backups of finished Shorts", "Google APIs terms (free; Connor's free 15 GB)", False, True,
+     "drive.file permission only: sees just the files Jarvis made"),
 ]
 
 
