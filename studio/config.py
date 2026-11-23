@@ -9,6 +9,7 @@ import sys
 from studio import ROOT
 
 CONFIG = ROOT / "config.json"
+PLATFORM = sys.platform
 
 # Connor's permanent project rules (2026-11-23). guard.py enforces them.
 RULES = {
@@ -34,6 +35,8 @@ DEFAULTS = {
     "claude_calls_per_day": 60,         # cap on Claude Code calls (Connor's plan is shared with Jarvis)
     "tick_seconds": 30,                 # how often the worker looks for work
     "notify_cooldown_minutes": 180,     # the same alert is spoken at most this often
+    "voice": "af_heart",                # the channel's Kokoro voice (US English); keep it once videos are public
+    "voice_speed": 1.05,
 }
 
 
@@ -85,4 +88,4 @@ def enabled():
     s = general()
     if not s["enabled"]:
         return False
-    return sys.platform != "win32" or s["allow_windows"]
+    return PLATFORM != "win32" or s["allow_windows"]
