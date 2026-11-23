@@ -454,3 +454,12 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   YouTube Business**: it protects your existing channel by handle, signs in with only upload,
   read-only and analytics-read permissions (own token in `studio_data/secrets/`), and locks the studio
   to that one channel. It refuses your existing channel. `python -m studio verify` re-checks it.
+- Phase 5 (done): video ideas. Double-click **Find Video Ideas** (or `python -m studio ideas`, `--all`
+  for every pillar). For the pillars with the fewest ideas, Claude (web search, on your plan) proposes
+  evergreen topics, recent developments and real audience questions, each with 2+ sources; the top
+  Shorts for the pillar (official API) are shown only as gaps to beat. Every source link is opened once
+  and graded by publisher. Ideas are scored on 10 factors (fixed weights, reproducible), banned areas,
+  copyright risk, weak sources and repeats are rejected, and everything is kept in the idea database so
+  nothing is made twice. `python -m studio next` shows what Jarvis would make next: pillars take turns,
+  trending topics stay under 30% and expire after 10 days. With the studio on, ideas top up by
+  themselves when fewer than 12 are ready.
