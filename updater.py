@@ -256,6 +256,14 @@ def _selftest(before, fix=False):
             return selftest.run()
         after = selftest.run()
         broken = selftest.regressions(before, after)
+        for _ in range(2):                        # a busy computer can make a check time out: try those again
+            slow = selftest.timed_out(after, broken)
+            if not slow:
+                break
+            print(f"(self-check: {', '.join(slow)} took too long, trying again in a moment)")
+            time.sleep(20)
+            after.update(selftest.run(only=slow))
+            broken = selftest.regressions(before, after)
         if broken and fix and selftest.missing_packages(after, broken):
             print("(self-check: something's missing, reinstalling packages)")
             if not _pip_install():
