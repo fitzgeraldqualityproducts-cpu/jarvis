@@ -44,7 +44,8 @@ GLOBAL_DEFAULTS = {
     "max_video_hours": 12,
     "ask_permission": False,           # True = videos that aren't yours wait for your OK before clipping
     "youtube_daily_quota": 10000,      # Google's free daily API quota
-    "youtube_upload_cost": 1600,       # units one upload costs (Google's published price)
+    "youtube_daily_uploads": 100,      # uploads have their own daily bucket (100 a day, since 2026)
+    "youtube_daily_searches": 100,     # so do searches
     "discovery_every_hours": 6,
     "analytics_every_hours": 24,
 }

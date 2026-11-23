@@ -1138,6 +1138,20 @@ def start_clipper():
         print(f"(clipper didn't start: {e})")
 
 
+def start_studio():
+    """Starts the YouTube business module's worker. It's off unless config.json has
+    "studio": {"enabled": true}, and it's Mac-only unless "allow_windows" is true."""
+    try:
+        from studio import config as studio_config
+        if studio_config.enabled():
+            import atexit
+            from studio import jobs as studio_jobs
+            studio_jobs.start(is_busy)
+            atexit.register(studio_jobs.shutdown, 3)
+    except Exception as e:
+        print(f"(YouTube business module didn't start: {e})")
+
+
 def clipper_news():
     """Finished clips, failures and questions from the clipper, as one sentence (or None)."""
     try:
@@ -1523,6 +1537,7 @@ def main():
         updater.verify_on_start(restart_jarvis, is_busy)      # after an update: check the new version works
         learn.start(is_busy)
         start_clipper()
+        start_studio()
         nightschool.start(lambda: is_busy() or workforce.busy())
         import recall
         recall.start()

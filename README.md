@@ -415,10 +415,25 @@ its JSON. The script finds it in Downloads, opens Google's sign-in, and stores t
 computer (`clipper_data/secrets`, never in git). Private uploads can then be switched on; public stays off.
 
 **Good to know:**
-- Google keeps videos uploaded by an app it hasn't audited locked to private. Private and unlisted
-  work right away; to publish publicly from Jarvis, request Google's free YouTube API audit for your
-  Cloud project (https://support.google.com/youtube/contact/yt_api_form). Jarvis tells you if a clip got locked.
-- The free API quota allows about 6 uploads a day (each costs 1,600 of 10,000 units). Jarvis tracks it.
+- Google used to lock videos uploaded by apps it hadn't audited to private. Its upload page now says
+  they aren't locked (checked 2026-11-23). Jarvis reads each video's status back, and if one did get
+  locked it tells you; the fix is Google's free YouTube API audit
+  (https://support.google.com/youtube/contact/yt_api_form).
+- The free API quota allows 100 uploads and 100 searches a day, plus 10,000 units for everything
+  else. Jarvis tracks each one.
 - Settings: `config.json` "clipper" (worker, disk limits, whisper model, retries); per-channel settings
   live in the dashboard. Background music is only used from a folder of licensed tracks you choose.
 - Tests: `.venv/bin/python -m pytest tests` (YouTube is tested against a fake Google server).
+
+## YouTube Business Studio (in progress)
+
+A separate module (`studio/`) that will run ONE new, dedicated YouTube Shorts channel: niche research,
+original fact-checked scripts, narration, original visuals, a quality gate, publishing through
+Google's official API, analytics and learning. It never touches your existing channel, never spends
+money, and never posts comments. It's built in phases; the plan is in the Phase 0 audit.
+
+- Off by default. Turn it on with `"studio": {"enabled": true}` in `config.json` (Mac only).
+- Its data lives in `studio_data/` (database `studio.db`, backed up daily, never part of an update).
+- Status: `.venv/bin/python -m studio status`. Tests: `.venv/bin/python -m pytest tests/test_studio_*.py`.
+- Phase 1 (done): database with migrations, job queue with retries and restart recovery, the
+  permission guard (allow-list, one-channel lock, $0 tool registry, audit log), health and disk limits.

@@ -25,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 SKIP = {"mac", "menubar", "inbox"} if sys.platform == "win32" else {"win", "menubar_win", "wincal"}
 NAMES = {"code": "my code", "parts": "some of my parts", "voice": "my voice", "brain": "my brain",
          "mic": "the microphone", "speaker": "the speaker", "display": "my display",
-         "clipper": "my Shorts clipper"}
+         "clipper": "my Shorts clipper", "studio": "my YouTube business module"}
 
 
 def _py(code, timeout):
@@ -137,7 +137,21 @@ def _clipper():
     return ok, detail, []
 
 
-CHECKS = {"code": _code, "parts": _parts, "voice": _voice, "brain": _brain, "mic": _mic, "speaker": _speaker, "display": _display, "clipper": _clipper}
+def _studio():
+    ok, detail = _py("import json, os, tempfile\n"
+                     "try:\n"
+                     "    os.environ['JARVIS_STUDIO_DATA'] = tempfile.mkdtemp()\n"
+                     "    from studio import config, db, guard, health, jobs, status\n"
+                     "    db.migrate(db.conn())\n"
+                     "    guard.register_built_ins()\n"
+                     "    status.overview()\n"
+                     "    print('@@' + json.dumps([True, 'YouTube business module loads, database and guard work']))\n"
+                     "except Exception as e:\n"
+                     "    print('@@' + json.dumps([False, f'{type(e).__name__}: {e}'[:200]]))", 60)
+    return ok, detail, []
+
+
+CHECKS = {"code": _code, "parts": _parts, "voice": _voice, "brain": _brain, "mic": _mic, "speaker": _speaker, "display": _display, "clipper": _clipper, "studio": _studio}
 
 
 def run(skip=()):
