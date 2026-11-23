@@ -16,7 +16,11 @@ tool is missing, too slow, short of memory or fails, the studio uses what it use
 Config: "studio": {"engines": {"voice": ..., "align": ..., "visuals": ..., "compose": ...}}.
 `python -m studio engines install` sets the tools up (free downloads, a few GB), `... status` shows
 them. Only one heavy job runs at a time (a lock shared with renders), and a tool that needs more free
-memory than the Mac has right now is skipped for that job."""
+memory than the computer has right now is skipped for that job.
+
+Windows PC with an NVIDIA card: Chatterbox and whisperX get the CUDA build of PyTorch (so they run on
+the graphics card), Manim comes from PyPI (its drawing libraries have Windows wheels) and Remotion
+uses Node.js (installed with winget if it's missing)."""
 import json
 import os
 import platform
@@ -42,6 +46,8 @@ SPECS = {
     "manim": {"conda": ["python=3.12", "manim"], "mem_gb": 1.0, "timeout": 1200},
     "remotion": {"node": True, "mem_gb": 1.5, "timeout": 1800},
 }
+GPU_TOOLS = ("chatterbox", "whisperx")         # these run on an NVIDIA card when there is one
+CUDA_BACKEND = "cu126"
 TOOL_FOR = {"voice": "chatterbox", "align": "whisperx", "visuals": "manim", "compose": "remotion"}
 RUNNER = None          # tests swap this: (tool, worker, payload, timeout) -> dict
 
@@ -74,15 +80,50 @@ def python(tool):
 
 def installed(tool):
     if tool == "remotion":
-        return (REMOTION / "node_modules" / "@remotion" / "cli").exists() and bool(shutil.which("npx") or _npx())
+        return (REMOTION / "node_modules" / "@remotion" / "cli").exists() and bool(_npx())
     return python(tool).exists()
 
 
-def _npx():
-    for p in ("/usr/local/bin/npx", "/opt/homebrew/bin/npx"):
-        if Path(p).exists():
-            return p
+NODE_DIRS = ("/usr/local/bin", "/opt/homebrew/bin", r"C:\Program Files\nodejs")
+
+
+def _node_tool(name):
+    """npm / npx: on PATH, or where the Node.js installer puts them (Windows: npm.cmd, npx.cmd)."""
+    found = shutil.which(name)
+    if found:
+        return found
+    for d in NODE_DIRS:
+        for n in ((name + ".cmd", name) if os.name == "nt" else (name,)):
+            if Path(d, n).exists():
+                return str(Path(d, n))
     return None
+
+
+def _npx():
+    return _node_tool("npx")
+
+
+_GPU = []
+
+
+def nvidia():
+    """{"name", "vram_gb"} for an NVIDIA graphics card with a working driver, else None (always None on a Mac)."""
+    if _GPU:
+        return _GPU[0]
+    gpu = None
+    if sys.platform != "darwin":
+        smi = shutil.which("nvidia-smi") or (r"C:\Windows\System32\nvidia-smi.exe" if os.name == "nt" else None)
+        if smi and Path(smi).exists():
+            try:
+                out = subprocess.run([smi, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+                                     capture_output=True, text=True, timeout=20).stdout.strip().splitlines()
+                if out:
+                    name, mib = [x.strip() for x in out[0].split(",")[:2]]
+                    gpu = {"name": name, "vram_gb": round(float(mib) / 1024, 1)}
+            except Exception:
+                gpu = None
+    _GPU.append(gpu)
+    return gpu
 
 
 # ---------- memory and the one-heavy-job lock ----------
@@ -152,19 +193,10 @@ def heavy(what, wait=900):
     f = open(path, "a+")
     t0 = time.time()
     try:
-        try:
-            import fcntl
-        except ImportError:                       # Windows: no lock, the studio runs one job at a time anyway
-            fcntl = None
-        if fcntl:
-            while True:
-                try:
-                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except OSError:
-                    if time.time() - t0 > wait:
-                        raise EngineError(f"another heavy job kept the Mac busy, so {what} was skipped")
-                    time.sleep(2)
+        while not _try_lock(f):
+            if time.time() - t0 > wait:
+                raise EngineError(f"another heavy job kept the computer busy, so {what} was skipped")
+            time.sleep(2)
         f.seek(0)
         f.truncate()
         f.write(f"{os.getpid()} {what} {time.time():.0f}\n")
@@ -172,7 +204,43 @@ def heavy(what, wait=900):
         _free_local_brain()
         yield
     finally:
+        _unlock(f)
         f.close()
+
+
+def _try_lock(f):
+    """Exclusive, non-blocking lock on the open lock file. macOS/Linux: flock. Windows: a lock on its
+    first byte (msvcrt), which other processes and other open handles in this one respect too."""
+    try:
+        import fcntl
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            return False
+    except ImportError:
+        pass
+    import msvcrt
+    try:
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        return True
+    except OSError:
+        return False
+
+
+def _unlock(f):
+    try:
+        import fcntl  # noqa: F401  (flock is released when the file closes)
+        return
+    except ImportError:
+        pass
+    try:
+        import msvcrt
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    except Exception:
+        pass
 
 
 # ---------- running a worker ----------
@@ -240,7 +308,7 @@ def remotion_render(props, public_dir, out, timeout=None):
         raise EngineError(f"Remotion needs about {need:.1f} GB of free memory and only {free:.1f} GB is free")
     pf = Path(public_dir) / "remotion_props.json"
     pf.write_text(json.dumps(props))
-    npx = shutil.which("npx") or _npx()
+    npx = _npx()
     cmd = [npx, "remotion", "render", "src/index.ts", "Short", str(out), f"--props={pf}",
            f"--public-dir={public_dir}", "--concurrency=2", "--codec=h264", "--audio-codec=aac",
            "--log=error", "--overwrite"]
@@ -297,14 +365,18 @@ def install(tool, log=print):
     TOOLS.mkdir(exist_ok=True)
     spec = SPECS[tool]
     if tool == "remotion":
-        npm = shutil.which("npm") or "/usr/local/bin/npm"
-        if not Path(npm).exists():
+        npm = _node_tool("npm")
+        if not npm and os.name == "nt":
+            npm = _winget_node(log)
+        if not npm or not Path(npm).exists():
             raise EngineError("Node.js isn't installed, so Remotion can't be set up")
         log("Installing Remotion (Node packages, about 300 MB)...")
         subprocess.run([npm, "install", "--no-audit", "--no-fund", "--loglevel=error"], cwd=REMOTION, check=True)
         log("Downloading Remotion's headless browser...")
-        subprocess.run([shutil.which("npx") or _npx(), "remotion", "browser", "ensure"], cwd=REMOTION, check=False)
+        subprocess.run([_npx(), "remotion", "browser", "ensure"], cwd=REMOTION, check=False)
         return
+    if "conda" in spec and sys.platform != "darwin":
+        spec = {"python": "3.12", "pip": ["manim==0.22.1"]}       # PyPI has Windows/Linux wheels for its drawing libraries
     if "conda" in spec:
         mm = _micromamba()
         if not mm:
@@ -317,9 +389,33 @@ def install(tool, log=print):
     uv = _uv()
     if not uv:
         raise EngineError("uv isn't installed (it's what Jarvis uses to make Python environments)")
-    log(f"Installing {tool} (Python {spec['python']}, a few hundred MB)...")
-    subprocess.run([uv, "venv", "-q", "--python", spec["python"], str(env_dir(tool))], check=True)
-    subprocess.run([uv, "pip", "install", "-q", "--python", str(python(tool)), *spec["pip"]], check=True)
+    gpu = nvidia() if tool in GPU_TOOLS else None
+    log(f"Installing {tool} (Python {spec['python']}, " +
+        (f"for the {gpu['name']} graphics card, about 3 GB)..." if gpu else "a few hundred MB)..."))
+    subprocess.run([uv, "venv", "-q", "--clear", "--python", spec["python"], str(env_dir(tool))], check=True)
+    cmd = [uv, "pip", "install", "-q", "--python", str(python(tool)), *spec["pip"]]
+    if gpu:
+        # the CUDA build of PyTorch from pytorch.org (PyPI's Windows build is CPU-only). cu126 has both
+        # torch 2.6 (Chatterbox) and 2.8 (whisperX) and runs on every NVIDIA card from the GTX 900s up.
+        if subprocess.run(cmd + ["--torch-backend", CUDA_BACKEND]).returncode == 0:
+            return
+        log("That didn't work; updating uv and trying once more...")
+        subprocess.run([uv, "self", "update"], capture_output=True)
+        if subprocess.run(cmd + ["--torch-backend", CUDA_BACKEND]).returncode == 0:
+            return
+        log(f"Couldn't get the graphics-card version, so installing the slower processor-only {tool}.")
+    subprocess.run(cmd, check=True)
+
+
+def _winget_node(log=print):
+    """Windows: installs Node.js LTS (free) with winget, the PC's built-in app installer."""
+    winget = shutil.which("winget")
+    if not winget:
+        return None
+    log("Installing Node.js (free, for Remotion) with winget...")
+    subprocess.run([winget, "install", "-e", "--id", "OpenJS.NodeJS.LTS", "--silent",
+                    "--accept-package-agreements", "--accept-source-agreements"], check=False)
+    return _node_tool("npm")
 
 
 def check(tool):
@@ -328,7 +424,7 @@ def check(tool):
         return False, "not installed"
     if tool == "remotion":
         try:
-            p = subprocess.run([shutil.which("npx") or _npx(), "remotion", "versions"], cwd=REMOTION,
+            p = subprocess.run([_npx(), "remotion", "versions"], cwd=REMOTION,
                                capture_output=True, text=True, timeout=120)
             return p.returncode == 0, (p.stdout or p.stderr).strip().splitlines()[-1:] and \
                 (p.stdout or p.stderr).strip().splitlines()[-1][:120]
@@ -343,7 +439,8 @@ def check(tool):
 
 def status():
     s = settings()
-    out = {"settings": s, "free_memory_gb": None if free_gb() is None else round(free_gb(), 1), "tools": {}}
+    out = {"settings": s, "free_memory_gb": None if free_gb() is None else round(free_gb(), 1),
+           "gpu": nvidia(), "tools": {}}
     for area, tool in TOOL_FOR.items():
         out["tools"][tool] = {"for": area, "installed": installed(tool), "in_use": s[area] == UPGRADED[area]}
     return out

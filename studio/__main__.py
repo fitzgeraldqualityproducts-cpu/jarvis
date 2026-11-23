@@ -26,14 +26,29 @@
               backup copies finished Shorts and reports, checks each copy, then clears Mac copies that are
               on YouTube and safe on Drive (after drive_keep_local_days; --now skips the wait)
   engines     the upgraded video tools (Chatterbox voice, whisperX timing, Manim animation, Remotion captions):
-              engines (status) | engines install [tool|all] | engines check | engines use on|off
+              engines (status) | engines install [tool|all] | engines check | engines use on|off [area...] [--if-ready]
+  handover    moves the business to another computer: handover export (old one; switches it off there)
+              | handover import [zip] [--replace] (new one; autopilot stays off) | handover undo
   sample      makes a side-by-side sample with the upgraded tools from a finished Short (--video <id>):
               its voice and video next to the current ones; changes nothing and uploads nothing"""
 import json
+import os
 import sys
 import time
 
 from studio import health, jobs, status
+
+
+def _reveal(path):
+    """Opens a file or folder in the computer's own app (Finder / Explorer / the default player)."""
+    import subprocess
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["open", str(path)])
+        elif sys.platform == "win32":
+            os.startfile(str(path))
+    except Exception:
+        pass
 
 
 def _engines(argv):
@@ -54,7 +69,19 @@ def _engines(argv):
             print(f"{tool}: {'ok' if ok else 'not ready'} ({why})")
     elif sub == "use":
         on = len(argv) < 3 or argv[2] != "off"
-        print(json.dumps(engines.use(on), indent=2))
+        areas = [a for a in argv[3:] if a in engines.DEFAULTS] or None
+        if on and "--if-ready" in argv:                  # only switch on the tools that pass their check here
+            keep = []
+            for area in areas or list(engines.DEFAULTS):
+                ok, why = engines.check(engines.TOOL_FOR[area])
+                print(f"{area} ({engines.TOOL_FOR[area]}): {'switching on' if ok else 'not ready, left as it is'} ({why})")
+                if ok:
+                    keep.append(area)
+            areas = keep
+            if not areas:
+                print(json.dumps(engines.status(), indent=2))
+                return 0
+        print(json.dumps(engines.use(on, areas), indent=2))
     print(json.dumps(engines.status(), indent=2))
     return 0
 
@@ -97,8 +124,7 @@ def _sample(argv):
     print(f"\nDone: {rep['duration']} s, speech starts at {rep['speech_start']} s, loop difference "
           f"{diff if diff is None else round(diff, 1)}, {rep['caption_words_shown']} of {rep['words']} words captioned.")
     print(f"Compare them in {out}: short_current.mp4 vs short_upgraded.mp4, voice_current.wav vs voice_upgraded.wav")
-    if sys.platform == "darwin":
-        subprocess.run(["open", str(out)])
+    _reveal(str(out))
     return 0
 
 
@@ -135,10 +161,8 @@ def _script(argv):
         rec = narration.narrate(script.latest(vid)["body"], folder / "voice.wav", vid)
         db.set_video(vid, state="rendering", stage_done="generating_audio", duration=rec["seconds"])
         print(f"Narration: {rec['seconds']} s, {rec['checks']['wpm']} words a minute, {rec['loudness']} LUFS. Checks passed.")
-        if sys.platform == "darwin":
-            subprocess.run(["open", str(folder / "voice.wav")])
-    if sys.platform == "darwin":
-        subprocess.run(["open", str(page)])
+        _reveal(str(folder / "voice.wav"))
+    _reveal(str(page))
     print(f"\nSaved in {folder}. Nothing was uploaded.")
     return 0
 
@@ -168,8 +192,7 @@ def _video(argv):
         print(f"  {'PASS' if c['passed'] else 'FAIL'}  {c['name']}  {c['detail']}")
     db.set_video(vid, state="ready" if res["ok"] else "validating", stage_done="validating" if res["ok"] else "rendering")
     print("\nReady to publish (Phase 8 will do that)." if res["ok"] else "\nNot ready: it failed the checks above.")
-    if sys.platform == "darwin":
-        subprocess.run(["open", rep["path"]])
+    _reveal(rep["path"])
     print(f"Video: {rep['path']}\nNothing was uploaded.")
     return 0 if res["ok"] else 1
 
@@ -410,13 +433,23 @@ def main(argv):
         from studio import setup_channel
         return setup_channel.connect_flow()
     elif cmd == "verify":
-        from studio import ytauth
-        print(json.dumps(ytauth.verify(), indent=2, default=str))
+        from studio import guard, ytauth
+        try:
+            rep = ytauth.verify()
+        except Exception as e:
+            print("Not connected: " + guard.redact(str(e)))
+            return 1
+        print(json.dumps(rep, indent=2, default=str))
+        return 0 if rep.get("ok") else 1
     elif cmd == "protect":
         from studio import ytauth
         print(ytauth.protect_existing(argv[1]))
     elif cmd == "drive":
         return _drive(argv)
+    elif cmd == "handover":
+        from studio import handover
+        health.startup()
+        return handover.main(argv)
     elif cmd == "engines":
         return _engines(argv)
     elif cmd == "sample":

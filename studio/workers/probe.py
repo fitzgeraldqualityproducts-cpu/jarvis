@@ -18,6 +18,10 @@ try:
         v = manim.__version__
     else:
         raise ValueError(tool)
+    if tool in ("chatterbox", "whisperx"):
+        import torch
+        if torch.cuda.is_available():
+            v += f" on {torch.cuda.get_device_name(0)}"
     json.dump({"version": v}, open(pout, "w"))
 except Exception as e:
     json.dump({"error": f"{type(e).__name__}: {e}"}, open(pout, "w"))

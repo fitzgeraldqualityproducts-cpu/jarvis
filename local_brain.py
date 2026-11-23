@@ -131,12 +131,23 @@ def heavy_running():
     try:
         import fcntl
     except ImportError:
-        return False
+        fcntl = None
     try:
         from studio import home
         path = home() / "heavy.lock"
         if not path.exists():
             return False
+        if fcntl is None:                        # Windows: the studio locks the file's first byte
+            import msvcrt
+            with open(path, "a+") as f:
+                f.seek(0)
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                except OSError:
+                    return True
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                return False
         with open(path, "a+") as f:
             try:
                 fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)

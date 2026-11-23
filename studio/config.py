@@ -23,7 +23,7 @@ RULES = {
 
 DEFAULTS = {
     "enabled": False,                   # the whole module is off until Connor turns it on
-    "allow_windows": False,             # the business runs on the Mac
+    "allow_windows": False,             # the business runs on the Mac unless it was handed over to the PC
     "min_free_gb": 6,                   # production pauses below this much free disk
     "max_disk_gb": 15,                  # studio_data/ size limit
     "max_memory_pressure": 0.85,        # pause heavy work above this share of memory in use
@@ -93,6 +93,6 @@ def set_values(**changes):
 
 def enabled():
     s = general()
-    if not s["enabled"]:
+    if not s["enabled"] or s.get("handed_over"):       # handed over to another computer: off here for good
         return False
     return PLATFORM != "win32" or s["allow_windows"]

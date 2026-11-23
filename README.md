@@ -459,7 +459,17 @@ original fact-checked scripts, narration, original visuals, a quality gate, publ
 Google's official API, analytics and learning. It never touches your existing channel, never spends
 money, and never posts comments. It's built in phases; the plan is in the Phase 0 audit.
 
-- Off by default. Turn it on with `"studio": {"enabled": true}` in `config.json` (Mac only).
+- Off by default. Turn it on with `"studio": {"enabled": true}` in `config.json` (Mac only, unless it was handed over to the PC).
+- **Moving it to the Windows PC** (only one computer ever runs the business):
+  1. On the Mac, double-click **Hand YouTube Studio to PC**. It switches the Mac's studio off first, then
+     saves `Jarvis Studio Handover.zip` on the Desktop: the database, brand kit, lessons, settings, the
+     protected channels and the Shorts not on YouTube yet. The YouTube sign-in is NOT in it.
+  2. Copy the zip to the PC (USB stick, or your own Google Drive or email), then double-click
+     **Take Over YouTube Studio** on the PC. The studio turns on there with the autopilot OFF.
+  3. On the PC: **Connect YouTube Business** (sign in to the business account; the channel lock checks
+     it's the same channel), then **Install Studio Tools** (Chatterbox and whisperX on the NVIDIA card,
+     Manim, Remotion; free, about 10 GB), then **Start YouTube Autopilot** (it checks the sign-in first).
+  To give it back to the Mac later: switch the PC's studio off, then `python -m studio handover undo` on the Mac.
 - Its data lives in `studio_data/` (database `studio.db`, backed up daily, never part of an update).
 - Status: `.venv/bin/python -m studio status`. Tests: `.venv/bin/python -m pytest tests/test_studio_*.py`.
 - Phase 1 (done): database with migrations, job queue with retries and restart recovery, the
