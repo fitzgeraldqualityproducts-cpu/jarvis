@@ -31,6 +31,7 @@ ACTIONS = {
     "youtube.read_public": "read public channel and video statistics for research",
     "youtube.upload": "upload a finished, validated Short to the locked channel",
     "youtube.set_video": "set title, description, privacy or schedule of the studio's own video",
+    "youtube.set_thumbnail": "set the cover image of the studio's own uploaded Short",
     "youtube.read_video": "read the processing status of the studio's own video",
     "youtube.analytics": "read the locked channel's own analytics (no revenue)",
     "claude.ask": "ask Claude Code on Connor's plan, with no file or shell tools",

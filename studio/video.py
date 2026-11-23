@@ -465,6 +465,11 @@ def render(video_id, progress=lambda s: None):
     meta["render"] = rep
     db.set_video(video_id, path=str(out), duration=round(end, 2), meta=json.dumps(meta))
     media.save_jpeg(imgs[0], folder / "thumb.jpg", width=540)
+    try:                                                      # the Short's own cover (Canva template layout)
+        from studio import cover
+        rep["cover"] = str(cover.make(video_id))
+    except Exception as e:                                    # a cover problem never stops the video
+        rep["cover_error"] = str(e)[:200]
     return rep
 
 
