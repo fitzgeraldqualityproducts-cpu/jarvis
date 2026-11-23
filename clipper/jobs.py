@@ -102,6 +102,18 @@ def _end_orphan(pid):
 
 # ---------- the worker ----------
 
+def _studio_busy():
+    """True while the YouTube studio is making a Short in this Jarvis. The studio already waits for
+    the clipper; this is the other half, so the two never render at once (8 GB of memory can't do
+    both and still answer quickly). The studio is only asked if it's running here."""
+    import sys
+    jobs = sys.modules.get("studio.jobs")
+    try:
+        return bool(jobs and jobs.busy())
+    except Exception:
+        return False
+
+
 def claim():
     """The next job to run, marked as started (or None). Nothing is claimed while stopped/paused,
     or when the disk is too full."""
@@ -111,6 +123,8 @@ def claim():
     with _lock:
         running = len([p for p in _children.values() if p.poll() is None])
         if running >= int(g.get("max_parallel_jobs", 1)):
+            return None
+        if _studio_busy():                                 # one heavy video job at a time on the computer
             return None
         home = data_dir()
         if acquire.free_gb(home) < float(g.get("min_free_gb", 4)):

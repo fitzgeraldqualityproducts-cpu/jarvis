@@ -17,9 +17,9 @@ def overview(channel=None):
         return db.one(sql, *args)["n"]
     return {
         "videos": n(f"SELECT COUNT(*) n FROM videos{w}", *a),
-        "processed": n(f"SELECT COUNT(*) n FROM jobs WHERE state IN ('done','published','awaiting_approval','uploading')"
+        "processed": n("SELECT COUNT(*) n FROM jobs WHERE state IN ('done','published','awaiting_approval','uploading')"
                        + (" AND channel=?" if channel else ""), *a),
-        "clips": n(f"SELECT COUNT(*) n FROM clips WHERE state NOT IN ('rejected','regenerate')" + (" AND channel=?" if channel else ""), *a),
+        "clips": n("SELECT COUNT(*) n FROM clips WHERE state NOT IN ('rejected','regenerate')" + (" AND channel=?" if channel else ""), *a),
         "published": n("SELECT COUNT(*) n FROM clips WHERE youtube_id IS NOT NULL" + (" AND channel=?" if channel else ""), *a),
         "active": n("SELECT COUNT(*) n FROM jobs WHERE state IN ({})".format(",".join("?" * len(db.ACTIVE_STATES))), *db.ACTIVE_STATES),
         "queued": n("SELECT COUNT(*) n FROM jobs WHERE state='queued'"),

@@ -442,6 +442,11 @@ def _run(prompt, tools, cwd, timeout, label, node=None, task=None):
     if not claude:
         raise RuntimeError("I can't find Claude Code")
     node = node or label
+    try:                                             # counted in the shared daily total, never blocked:
+        import budget                                # team missions are work Connor asked for
+        budget.spend("team")
+    except Exception:
+        pass
     start = time.time()
     _emit("agent", node=node, task=task, status="analyzing", activity="thinking")
     text, streamed = "", False

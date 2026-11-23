@@ -170,13 +170,13 @@ def fix(goal, role, task, error, extra="", mission=None):
         npm = ["npm install", "npm ci", "npm rebuild", "npm run build", "npx prisma generate"]
         allowed = ["Read", "Edit", "Write", "Glob", "Grep"] + [f"Bash({c}:*)" for c in npm] + [f"Bash({c})" for c in npm]
         try:
-            out = brain.run_claude(
+            out = brain.run_background(
                 [claude, "-p", PROMPT.format(sf=sf, goal=goal[:300], role=role, error=error[:3000],
                                              task=(task or "")[:600], extra=(extra or "")[:3000]),
                  "--permission-mode", "acceptEdits", "--add-dir", sf,
                  "--allowedTools", ",".join(allowed),
                  "--disallowedTools", "WebSearch,WebFetch,Task,NotebookEdit"],
-                timeout=900, cwd=HERE)
+                timeout=900, cwd=HERE, who="self-repair")
             text = out.stdout or ""
         except subprocess.TimeoutExpired:
             text = ""

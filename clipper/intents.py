@@ -113,7 +113,7 @@ def parse(t, original=""):
     if re.search(rf"\b(?:find|get|pull|make|generate|create|cut|clip|give me)\b.*\b{CLIP}\b.*\b(?:from|of|in|out of)\b", t) and \
             (url or re.search(rf"\b{SOURCE}\b", t)):
         return "clip", {"url": url.group(1) if url else None, "count": _count(t)}
-    if re.search(rf"^(?:clip|clipper)\b", t) and url:
+    if re.search(r"^(?:clip|clipper)\b", t) and url:
         return "clip", {"url": url.group(1), "count": _count(t)}
     m = re.search(r"\bi have permission (?:for|to clip) (?:video|job) (?:number )?(\d+)\b", t)
     if m:

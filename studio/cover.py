@@ -169,7 +169,7 @@ def draw(text, calc, pill, channel, pal):
     img = background(pal).convert("RGBA")
     _vignette(img, pal)
     d = ImageDraw.Draw(img)
-    white, cyan, amber, muted = _rgb(pal["text"]), _rgb(pal["cyan"]), _rgb(pal["amber"]), _rgb(pal["muted"])
+    white, cyan, amber = _rgb(pal["text"]), _rgb(pal["cyan"]), _rgb(pal["amber"])
 
     words = (text.upper().split() or ["RUN", "THE", "MATH"])[:16]
     f, lines, size = _fit_hook(d, words, RIGHT - LEFT, HOOK_BOTTOM - HOOK_TOP)
