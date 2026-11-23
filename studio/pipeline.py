@@ -59,16 +59,48 @@ def fact_checking(v, ctx):
     return "generating_audio"
 
 
+def _plan_ahead(vid, row):
+    """Plans the visuals (a Claude call) in the background while the narration is made on the Mac,
+    so rendering doesn't wait for it. Returns a function that waits and saves the plan."""
+    import threading
+    from studio import video
+    if "scenes" in json.loads(db.video(vid).get("meta") or "{}"):
+        return lambda: None
+    box = {}
+
+    def work():
+        try:
+            box["scenes"] = video.plan(row)
+        except Exception:
+            pass                                    # render() plans it again the usual way
+        finally:
+            db.close_thread()
+    t = threading.Thread(target=work, daemon=True, name=f"studio-plan-{vid}")
+    t.start()
+
+    def finish():
+        t.join(600)
+        if box.get("scenes"):
+            meta = json.loads(db.video(vid).get("meta") or "{}")
+            if "scenes" not in meta:
+                meta["scenes"] = box["scenes"]
+                db.set_video(vid, meta=json.dumps(meta))
+    return finish
+
+
 def generating_audio(v, ctx):
     from studio import narration
     row = script.latest(v["id"], "passed")
     if not row:
         raise jobs.Permanent("there's no fact-checked script to narrate")
     out = data_dir("videos", str(v["id"])) / "voice.wav"
+    planned = _plan_ahead(v["id"], row)
     try:
         rec = narration.narrate(row["body"], out, v["id"])
     except narration.NarrationError as e:
         raise jobs.Transient(str(e))
+    finally:
+        planned()
     if rec["seconds"] > 60:
         raise jobs.Permanent(f"the narration is {rec['seconds']:.0f} s; Shorts here must stay under a minute")
     db.set_video(v["id"], duration=rec["seconds"])

@@ -165,7 +165,8 @@ FACTS YOU MAY USE (nothing else; never invent numbers, dates, names or quotes):
 {fact_list}
 
 Rules:
-- {WORDS_MIN}-{WORDS_MAX} words in total, read aloud by one narrator (no stage directions in the text).
+- {WORDS_MIN}-{WORDS_MAX} words in total (aim for {WORDS_MIN + 20}-{WORDS_MAX - 10}; count them before answering),
+  read aloud by one narrator (no stage directions in the text).
 - Structure: hook (the first line, under 4 seconds), the setup, the calculation step by step with real
   numbers, the payoff, and a closing line that makes people want to rewatch or think (no "like and subscribe").
 - Every factual line lists the fact ids it relies on. Every number you work out must appear in "calcs"
@@ -245,13 +246,18 @@ def similar_script(text, video_id=None):
 def review(draft, topic, video_id=None):
     """Independent check. Returns {"ok", "problems", "claims", "hooks", "hook", "calcs", ...}."""
     from studio import claude
+    from studio import topics
     facts = _facts(topic)
-    fact_list = "\n".join(f"F{i + 1}. {s['claim']} <{s['url']}>" for i, s in enumerate(facts))
+    seen = topics.excerpts(facts)                 # the pages' own words, so the checker needn't fetch them all
+    fact_list = "\n".join(f"F{i + 1}. {s['claim']} <{s['url']}>\n    page text: "
+                          + (f'"{seen[i]}"' if seen[i] else "(couldn't read it here: open the page yourself)")
+                          for i, s in enumerate(facts))
     lines = "\n".join(f"L{i + 1}. {ln['text']}  [uses: {', '.join(map(str, ln.get('facts') or [])) or 'none'}]"
                       for i, ln in enumerate(draft["lines"]))
     hooks = "\n".join(f"H{i}. {h}" for i, h in enumerate(draft["hooks"]))
-    ans = claude.ask_json(f"""You are a strict fact-checker and editor for a science Shorts channel. Use web search to open the
-sources and confirm. Do not trust the writer.
+    ans = claude.ask_json(f"""You are a strict fact-checker and editor for a science Shorts channel. Each source below comes with
+text Jarvis just read from that page. Use it, and open the page or search the web whenever that text doesn't
+clearly settle a claim, or a source has none. Do not trust the writer.
 
 Sources:
 {fact_list}

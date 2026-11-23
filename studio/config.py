@@ -33,6 +33,7 @@ DEFAULTS = {
     "breaker_cooldown_minutes": 30,
     "stall_minutes": 45,                # a stage with no heartbeat for this long is retried
     "claude_calls_per_day": 60,         # cap on Claude Code calls (Connor's plan is shared with Jarvis)
+    "lean_claude": True,                # slim Claude calls: only the tools a job needs, a short studio system prompt
     "tick_seconds": 30,                 # how often the worker looks for work
     "notify_cooldown_minutes": 180,     # the same alert is spoken at most this often
     "voice": "am_michael",              # the channel's Kokoro voice (US English), picked by Connor 2026-11-23; keep it once videos are public

@@ -1,5 +1,6 @@
 """python -m studio status | check | run | toolchain | test-short [folder]
   run         the worker in the foreground (Ctrl+C stops it safely)
+  usage       the studio's Claude use per day (calls, tokens, seconds, web searches, by job)
   toolchain   checks every free tool is installed, with versions and licences
   test-short  makes one real 1080x1920 test Short with narration and times each step (never uploads)
   add-key     saves a read-only YouTube Data API key for research (reads it from the keyboard)
@@ -230,6 +231,9 @@ def main(argv):
     cmd = argv[0] if argv else "status"
     if cmd == "status":
         print(json.dumps(status.overview(), indent=2, default=str))
+    elif cmd == "usage":
+        from studio import claude
+        print(json.dumps(claude.usage(int(argv[1]) if len(argv) > 1 else 7), indent=2))
     elif cmd == "check":
         print(json.dumps(health.startup(), indent=2, default=str))
     elif cmd == "toolchain":

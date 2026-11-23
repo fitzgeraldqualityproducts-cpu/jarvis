@@ -175,6 +175,66 @@ def check_url(url):
         return 0
 
 
+PAGE = None         # tests swap this: url -> the page's plain text
+
+
+def page_text(url, limit=600_000):
+    """The readable text of a public web page ("" if it can't be read, e.g. a PDF or a blocked site)."""
+    if not str(url).startswith(("http://", "https://")):
+        return ""
+    guard.allow("web.read", url[:200], record=False)
+    if PAGE:
+        return PAGE(url)
+    from clipper import youtube
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh) research-check",
+                                               "Accept": "text/html,*/*"})
+    try:
+        with urllib.request.urlopen(req, timeout=12, context=youtube._ctx()) as r:
+            if "html" not in (r.headers.get("Content-Type") or "html").lower():
+                return ""
+            raw = r.read(limit).decode(r.headers.get_content_charset() or "utf-8", "replace")
+    except Exception:
+        return ""
+    import html as _html
+    raw = re.sub(r"(?is)<(script|style|noscript|svg|head)\b.*?</\1>", " ", raw)
+    raw = re.sub(r"(?s)<[^>]+>", " ", raw)
+    return re.sub(r"\s+", " ", _html.unescape(raw)).strip()
+
+
+def _nums(text):
+    return {n.replace(",", "") for n in re.findall(r"\d[\d,]*(?:\.\d+)?", str(text)) if len(n.replace(",", "")) >= 2}
+
+
+def excerpt(text, claim, n=3, width=300):
+    """Up to n sentences of the page that share the claim's numbers or words, in page order ("" if none)."""
+    if not text:
+        return ""
+    nums, words = _nums(claim), {w for w in re.findall(r"[a-z]{4,}", str(claim).lower())}
+    sents = [x.strip() for x in re.split(r"(?<=[.!?])\s+", text) if 20 <= len(x.strip()) <= 1200]
+    scored = []
+    for i, x in enumerate(sents):
+        sc = 3 * len(nums & _nums(x)) + len(words & set(re.findall(r"[a-z]{4,}", x.lower())))
+        if sc >= 2:
+            scored.append((sc, i))
+    keep = sorted(i for _, i in sorted(scored, reverse=True)[:n])
+    return " … ".join(sents[i][:width] for i in keep)
+
+
+def excerpts(facts):
+    """The source text behind each fact (same order), read from the pages at the same time."""
+    from concurrent.futures import ThreadPoolExecutor
+    if not facts:
+        return []
+
+    def one(f):
+        try:
+            return excerpt(page_text(f.get("url")), f.get("claim", ""))
+        except Exception:
+            return ""
+    with ThreadPoolExecutor(max_workers=min(8, len(facts))) as pool:
+        return list(pool.map(one, facts))
+
+
 def _reachable(status):
     # 401/403/429 mean the site exists but turns away robots (common for journals): still a real source
     return 200 <= status < 400 or status in (401, 403, 429)
@@ -189,6 +249,16 @@ def _working(sources):
             seen.add(u)
             out.append(s)
     return out
+
+
+def check_all(facts):
+    """_check for many facts at once (up to 8 pages opened at the same time; same order back)."""
+    facts = [f for f in facts if isinstance(f, dict)]
+    if len(facts) < 2:
+        return [_check(f) for f in facts]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(8, len(facts))) as pool:
+        return list(pool.map(_check, facts))
 
 
 def _check(fct):
@@ -217,10 +287,9 @@ def more_sources(items):
         if not str(k).isdigit() or int(k) >= len(items) or not isinstance(facts, list):
             continue
         have = {str(s["url"]).rstrip("/").lower() for s in items[int(k)]["_checked"]}
-        for fct in facts[:3]:
-            if isinstance(fct, dict) and str(fct.get("url") or "").rstrip("/").lower() not in have:
-                items[int(k)]["_checked"].append(_check(fct))
-                added += 1
+        new = [f for f in facts[:3] if isinstance(f, dict) and str(f.get("url") or "").rstrip("/").lower() not in have]
+        items[int(k)]["_checked"] += check_all(new)
+        added += len(new)
     return added
 
 
@@ -451,8 +520,12 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
                 continue
             cands.append(c)
         progress(f"{name}: {len(cands)} new ideas ({dups} repeats dropped); checking sources")
+        wanted = [(c, fct) for c in cands for fct in (c.get("facts") or [])[:4] if isinstance(fct, dict)]
+        done = check_all([fct for _, fct in wanted])           # all the ideas' sources opened together
         for c in cands:
-            c["_checked"] = [_check(fct) for fct in (c.get("facts") or [])[:4] if isinstance(fct, dict)]
+            c["_checked"] = []
+        for (c, _), chk in zip(wanted, done):
+            c["_checked"].append(chk)
         checked = [f["http_status"] for c in cands for f in c["_checked"]]
         if len(checked) >= 3 and not any(checked):
             from studio.jobs import Transient            # offline: keep nothing rather than reject good ideas
