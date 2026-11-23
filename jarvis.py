@@ -699,6 +699,8 @@ def handle(text, _part=False):
         LAST_SELF_EDIT.clear()
         voice.say(do_self_edit(request))
         return True
+    if studio_dashboard_command(t):
+        return True
     if clipper_command(t, text):
         return True
     if ideas_command(t) or team_command(t) or predict_command(t):
@@ -1162,6 +1164,22 @@ def clipper_news():
     if not rows:
         return None, []
     return " ".join(r["msg"] for r in rows[:3]), [r["id"] for r in rows]
+
+
+STUDIO_VIEW = re.compile(r"\b(?:show|open|pull up|bring up|display|let me see|i want to see|can i see)(?: me)?(?: up)? "
+                         r"(?:the |my |your )?(?:youtube |channel |hussuniversity |huss university |business |studio )+"
+                         r"(?:business |channel |studio |production |assembly )?(?:dashboard|line|studio|progress|tracker|board)\b|"
+                         r"\b(?:watch|see) (?:the |my )?(?:youtube )?(?:channel|business|studio) (?:run|work|working|at work)\b|"
+                         r"\bwhere(?:'s| is| are) (?:the |my )?(?:youtube|channel'?s?|business) (?:shorts?|videos?) (?:at|in the process)\b")
+
+
+def studio_dashboard_command(t):
+    """"Show me the YouTube dashboard": opens the live production line (studio.html). True if handled."""
+    if not STUDIO_VIEW.search(t):
+        return False
+    display.open_page("/studio")
+    voice.say("Here's the channel's production line. Every Short moves along it live, from idea to YouTube.")
+    return True
 
 
 def studio_news():

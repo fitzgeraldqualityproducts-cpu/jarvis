@@ -37,3 +37,12 @@ def youtube_partner_progress():
     if not config.enabled():
         return "The YouTube business module is off."
     return eligibility.text()
+
+
+@tool("Open the live YouTube business dashboard: the production line showing every Short moving from idea to "
+      "script, fact-check, voice, video, quality check, upload and live. Use for 'show me the channel', "
+      "'where are the videos at', 'let me watch the business run'.")
+def open_youtube_dashboard():
+    import display
+    display.open_page("/studio")
+    return "Opened the YouTube business dashboard in the browser."

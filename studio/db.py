@@ -117,6 +117,10 @@ MIGRATIONS = [
     CREATE INDEX topics_status ON topics(status);
     CREATE INDEX sources_topic ON sources(topic_id)
     """,
+    # 3: when each job entered its current stage (the dashboard's "for 4 min")
+    """
+    ALTER TABLE videos ADD COLUMN state_since REAL
+    """,
 ]
 
 _conns = {}
@@ -219,5 +223,8 @@ def video(vid):
 
 def set_video(vid, **changes):
     changes["updated"] = time.time()
+    if "state" in changes:
+        run("UPDATE videos SET state_since=? WHERE id=? AND (state IS NOT ? OR state_since IS NULL)",
+            changes["updated"], vid, changes["state"])
     cols = ", ".join(f'"{k}"=?' for k in changes)
     run(f"UPDATE videos SET {cols} WHERE id=?", *changes.values(), vid)
