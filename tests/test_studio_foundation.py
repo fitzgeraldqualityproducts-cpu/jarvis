@@ -144,12 +144,13 @@ def test_secrets_never_logged():
 def test_job_runs_through_stages_and_is_idempotent():
     from studio import db, jobs
     _on()
-    for a, b in zip(db.WORK_STATES, db.WORK_STATES[1:] + ["ready"]):
+    make = db.STATES[:6]                                       # researching ... validating
+    for a, b in zip(make, make[1:] + ["ready"]):
         jobs.register(a, lambda v, ctx, b=b: (ctx.beat(), b)[1])
     vid = jobs.create(topic_id=7)
     assert jobs.create(topic_id=7) == vid                      # the same topic never makes two jobs
     seen = [jobs.tick() for _ in range(6)]
-    assert seen == db.WORK_STATES[1:] + ["ready"]
+    assert seen == make[1:] + ["ready"]
     assert jobs.tick() is None and db.video(vid)["state"] == "ready" and db.video(vid)["owner"] is None
 
 
