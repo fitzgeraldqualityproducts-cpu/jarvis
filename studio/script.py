@@ -159,8 +159,12 @@ def write(topic, feedback=None, previous=None):
     learned = ("\n\n" + learned) if learned else ""
     fix = ""
     if feedback:
-        fix = ("\n\nYour previous draft failed review. Fix EVERY problem below and change nothing else that was fine:\n"
-               + "\n".join(f"- {p}" for p in feedback) + "\n\nPrevious draft:\n" + json.dumps(previous)[:6000])
+        tips = [p.split("(", 1)[1].rstrip(")") for p in feedback if p.startswith("originality ") and "(" in p]
+        idea = ("\n\nThe reviewer found it too generic. Rebuild the Short around this idea, as one image that runs from "
+                "the hook to the last line: " + tips[-1]) if tips else ""
+        fix = ("\n\nYour previous draft failed review. Fix EVERY problem below and change nothing else that was fine. "
+               "Don't add any new claim while fixing:\n"
+               + "\n".join(f"- {p}" for p in feedback) + idea + "\n\nPrevious draft:\n" + json.dumps(previous)[:6000])
     prompt = f"""Write a YouTube Short script. Channel: {d.get('name', '')}. Positioning: {plan.get('positioning', '')}.
 Audience: {plan.get('audience', 'curious US adults')}. Style: {plan.get('style', 'calm, clear, conversational')}.
 Topic: {topic['title']}
@@ -180,6 +184,9 @@ Rules:
   question again, or ends mid-thought that the hook completes). No outro, no "like and subscribe".
 - Every factual line lists the fact ids it relies on. Every number you work out must appear in "calcs"
   as a plain arithmetic expression (e.g. "384400/3474") with its result and unit, using only the facts' numbers.
+- No made-up caveats or framing: never add a hedge, caveat or "honest uncertainty" line that claims anything the
+  facts don't say (like "the forecast could change" or "this is an average"). A transition is a question or a plain
+  link with no claim in it.
 - Plain words, short sentences, US spelling and units with metric where useful. No hype words, no clickbait.
 - Original: your own explanation and wording, not a summary of a known video. Make it yours with ONE concrete
   comparison or everyday example of your own (a kitchen, a car, a stadium, a phone) that carries the calculation,
@@ -362,10 +369,10 @@ def _check_topic(topic):
         raise ScriptRejected("the topic has fewer than 2 working sources")
 
 
-def draft_step(topic, video_id=None, feedback=None, previous=None):
+def draft_step(topic, video_id=None, feedback=None, previous=None, draft=None):
     """Writes (or revises) a draft and saves it as the next version. Returns the scripts row id."""
     _check_topic(topic)
-    draft = write(topic, feedback, previous)
+    draft = draft or write(topic, feedback, previous)
     v = db.one("SELECT MAX(version) v FROM scripts WHERE video_id IS ?", video_id)["v"] or 0
     hook = draft["hooks"][0] if draft["hooks"] else draft["lines"][0]["text"]
     return db.insert("INSERT INTO scripts(video_id, version, hooks, hook, body, structure, checks, status, created) "
@@ -411,9 +418,71 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     return "revise", row
 
 
+LINE_PROBLEM = re.compile(r"^line (\d+) is (unsupported|wrong)\b")
+
+
+def _best_failed(video_id):
+    """The failed version closest to passing (no originality problem, fewest hard problems, newest), so a rewrite
+    never starts from a version that went backwards."""
+    rows = [dict(r) for r in db.q("SELECT * FROM scripts WHERE video_id IS ? AND status='failed'", video_id)]
+    def key(r):
+        hard = json.loads(r["checks"] or "{}").get("hard_problems") or []
+        return (any(not LINE_PROBLEM.match(h) for h in hard), len(hard), -r["version"])
+    return min(rows, key=key) if rows else None
+
+
+def _fix_lines(draft, topic, problems):
+    """Repairs only the lines the fact-check flagged (reword to what the facts say, or drop), keeping every other
+    line word for word, so a near-miss doesn't lose what already passed."""
+    from studio import claude
+    facts = _facts(topic)
+    fact_list = "\n".join(f"F{i + 1}. {s['claim']} (source: {s['url']})" for i, s in enumerate(facts))
+    lines = "\n".join(f"L{i + 1}. {ln['text']}" for i, ln in enumerate(draft["lines"]))
+    ans = claude.ask_json(f"""A fact-checker flagged some lines of this Short script. Fix ONLY those lines: reword each so it says
+only what the facts below support (use the checker's correction), or delete it if the script reads fine without it.
+Never add a new claim, caveat or framing line. Every other line stays exactly as it is, word for word.
+
+Facts:
+{fact_list}
+
+Lines:
+{lines}
+
+Flagged:
+""" + "\n".join(f"- {p}" for p in problems) + """
+
+JSON only: {"lines": [{"line": 1, "text": "...", "delete": false}]} listing just the flagged lines.""",
+                          timeout=300, web=False, purpose=f"fix lines: {topic['title']}")
+    edits = {}
+    for e in (ans.get("lines") if isinstance(ans, dict) else None) or []:
+        if isinstance(e, dict) and str(e.get("line", "")).isdigit():
+            edits[int(e["line"])] = e
+    if not edits:
+        return None
+    out = []
+    for i, ln in enumerate(draft["lines"], 1):
+        e = edits.get(i)
+        if e and (e.get("delete") or not str(e.get("text", "")).strip()):
+            continue
+        out.append(dict(ln, text=str(e["text"]).strip()) if e else ln)
+    if not out:
+        return None
+    fixed = dict(draft, lines=out)
+    n = len(text_of(fixed, fixed["hooks"][0] if fixed.get("hooks") else None).split())
+    if not WORDS_MIN <= n <= WORDS_MAX:
+        fixed = _fit_length(fixed, n) or fixed
+    return fixed
+
+
 def revise_step(topic, video_id=None):
-    row = db.one("SELECT * FROM scripts WHERE video_id IS ? AND status='failed' ORDER BY version DESC LIMIT 1", video_id)
-    return draft_step(topic, video_id, json.loads(row["checks"] or "{}").get("problems") or [], _draft_of(row))
+    row = _best_failed(video_id)
+    checks = json.loads(row["checks"] or "{}")
+    hard = checks.get("hard_problems") or []
+    if hard and all(LINE_PROBLEM.match(h) for h in hard):     # a near-miss: repair just those lines
+        fixed = _fix_lines(_draft_of(row), topic, hard)
+        if fixed:
+            return draft_step(topic, video_id, draft=fixed)
+    return draft_step(topic, video_id, checks.get("problems") or [], _draft_of(row))
 
 
 def make(topic, video_id=None, progress=print, max_revisions=MAX_REVISIONS):
