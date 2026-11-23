@@ -37,6 +37,12 @@ DEFAULTS = {
     "notify_cooldown_minutes": 180,     # the same alert is spoken at most this often
     "voice": "am_michael",              # the channel's Kokoro voice (US English), picked by Connor 2026-11-23; keep it once videos are public
     "voice_speed": 1.05,
+    "autopilot": True,                  # keep making Shorts by itself (one at a time, a small buffer ahead)
+    "ready_buffer": 2,                  # finished Shorts kept waiting ahead of the schedule (private/public mode)
+    "manual_ready_buffer": 1,           # in manual mode: just one waiting, so the Claude plan isn't spent on a pile
+    "max_new_per_day": 3,               # new Shorts started per day at most
+    "stop_after_failures": 3,           # this many failed Shorts in a row pauses the autopilot and tells Connor
+    "keep_awake": True,                 # Mac: stop idle sleep while a stage is running (macOS caffeinate)
 }
 
 
