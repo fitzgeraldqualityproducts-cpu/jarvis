@@ -313,8 +313,9 @@ def look_ahead(when="for the rest of today"):
     now = datetime.datetime.now().strftime("%A %B %d, %I:%M %p")
     prompt = PROMPT.format(owner=owner, when=when, now=now, info=info)
     try:
-        out = brain.run_claude([claude, "-p", prompt, "--disallowedTools",
-                                "Read Glob Grep Edit Write NotebookEdit Bash WebSearch WebFetch Task"], timeout=120)
+        out = brain.run_background([claude, "-p", prompt, "--disallowedTools",
+                                    "Read Glob Grep Edit Write NotebookEdit Bash WebSearch WebFetch Task"],
+                                   timeout=120, who="routines")
     except Exception as e:
         print(f"(predict: look ahead failed: {e})")
         return None

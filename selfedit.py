@@ -53,6 +53,14 @@ team_lessons.json
 repairs.json
 clipper_data/
 models/fonts/
+studio_data/
+config.json
+config.json.bak*
+.claude-budget.*
+*.mp4
+*.mov
+*.wav
+*.m4a
 """
 PROMPT = """You are editing the source code of Jarvis, a Python voice assistant that lives in this folder.
 It runs on macOS and on Windows (Windows-only parts are in win.py and behind sys.platform == "win32"
@@ -87,9 +95,22 @@ def ensure_repo():
     missing = [l for l in GITIGNORE.splitlines() if l and l not in have.splitlines()]
     if missing:
         ignore.write_text(have + ("" if not have or have.endswith("\n") else "\n") + "\n".join(missing) + "\n")
+    _untrack_ignored()
     _git("add", "-A")
     if _git("status", "--porcelain").stdout.strip():
         _git("commit", "-q", "-m", "Snapshot before a voice edit")
+
+
+def _untrack_ignored():
+    """Stops tracking anything git is still tracking although it's now on the ignore list (your
+    settings, the YouTube business folder with its sign-in, videos, old update files). The files
+    stay exactly where they are. This matters: a tracked file is part of every snapshot, so putting
+    an older snapshot back (undoing an update) would delete or roll it back."""
+    r = _git("ls-files", "-z", "--cached", "--ignored", "--exclude-standard")
+    paths = [p for p in r.stdout.split("\0") if p]
+    for i in range(0, len(paths), 200):
+        _git("rm", "-q", "-r", "--cached", "--ignore-unmatch", "--", *paths[i:i + 200])
+    return paths
 
 
 def _changed_files():

@@ -56,7 +56,7 @@ def main():
     default = cfg.get("storeforge_path", "~/storeforge")
     folder = Path(os.path.expanduser(default))
     if not (folder / "package.json").is_file():
-        typed = input(f"Where is StoreForge? (folder path, e.g. ~/storeforge): ").strip().strip("'\"")
+        typed = input("Where is StoreForge? (folder path, e.g. ~/storeforge): ").strip().strip("'\"")
         folder = Path(os.path.expanduser(typed))
         if not (folder / "package.json").is_file():
             print("That doesn't look like StoreForge (no package.json there).")

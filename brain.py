@@ -207,7 +207,25 @@ def run_claude(cmd, timeout, cwd=None):
     out = _run_claude(slim, timeout, cwd)
     if slim != list(cmd) and out.returncode != 0 and not (out.stdout or "").strip() and lean_failed(out.stderr):
         out = _run_claude(list(cmd), timeout, cwd)
+    if out.returncode != 0:
+        try:
+            import budget
+            budget.saw((out.stderr or "") + (out.stdout or "")[-2000:])
+        except Exception:
+            pass
     return out
+
+
+def run_background(cmd, timeout, cwd=None, who="background"):
+    """run_claude for work Jarvis does on his own (clipper, team, night school, routines, repairs).
+    It counts toward one shared daily limit (budget.py) so background work never uses up Connor's
+    plan; when the limit is reached it returns a failed result instead of calling Claude."""
+    import budget
+    ok, why = budget.take(who)
+    if not ok:
+        print(f"({who}: skipped a Claude call: {why})")
+        return budget.refused(cmd, why)
+    return run_claude(cmd, timeout, cwd)
 
 
 def _drain(pipe, into):

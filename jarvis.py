@@ -478,7 +478,7 @@ def group_mode_command(t):
         cfg["group_mode"] = on
         Path(__file__).with_name("config.json").write_text(json.dumps(cfg, indent=2))
         friends = speaker.friends()
-        return (f"Group chat mode on. I'll keep your private stuff for you only"
+        return ("Group chat mode on. I'll keep your private stuff for you only"
                 + (f", and I know {', '.join(friends)} by voice." if friends else ".")) if on else \
             "Group chat mode off. I'll do anything for anyone again."
     if re.search(r"\bwho (am i|is (this|talking|speaking))\b|do you know (me|who i am)|whose voice", t):

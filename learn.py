@@ -214,9 +214,9 @@ def _ask_claude(misses, old, results=()):
                     + (f": {r['detail']}" if r.get("detail") else "") for r in list(results)[-25:])
     prompt = PROMPT.format(misses=listing or "- nothing this time", old="; ".join(old) or "none",
                            results=res or "- nothing recorded yet", rules="; ".join(rules()) or "none")
-    out = brain.run_claude([claude, "-p", prompt, "--allowedTools", "Read,Glob,Grep",
-                            "--disallowedTools", "Edit Write NotebookEdit Bash WebSearch WebFetch Task"],
-                           timeout=300, cwd=str(HERE))
+    out = brain.run_background([claude, "-p", prompt, "--allowedTools", "Read,Glob,Grep",
+                                "--disallowedTools", "Edit Write NotebookEdit Bash WebSearch WebFetch Task"],
+                               timeout=300, cwd=str(HERE), who="learning")
     m = re.search(r"\{.*\}", out.stdout or "", re.S)
     if not m:
         print(f"(upgrade idea: no answer: {(out.stderr or '')[-200:]})")

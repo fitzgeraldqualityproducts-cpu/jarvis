@@ -24,7 +24,7 @@ def _claude(prompt, timeout):
     model = settings.general().get("llm_model")
     if model:
         cmd += ["--model", model]
-    r = brain.run_claude(cmd, timeout)
+    r = brain.run_background(cmd, timeout, who="clipper")
     if r.returncode != 0:
         raise LLMError((r.stderr or r.stdout or "Claude Code failed").strip()[-300:])
     return r.stdout

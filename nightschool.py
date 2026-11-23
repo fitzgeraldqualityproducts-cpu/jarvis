@@ -147,9 +147,9 @@ def _pick(misses, errors, ideas, declined):
         errors="\n".join(f"- {e}" for e in errors) or "- none",
         ideas="\n".join(f"- {i.get('about')}: {i.get('request', '')[:300]}" for i in ideas) or "- none",
         declined="; ".join(d for d in declined if d) or "none")
-    out = brain.run_claude([claude, "-p", prompt, "--allowedTools", "Read,Glob,Grep",
-                            "--disallowedTools", "Edit Write NotebookEdit Bash WebSearch WebFetch Task"],
-                           timeout=420, cwd=str(HERE))
+    out = brain.run_background([claude, "-p", prompt, "--allowedTools", "Read,Glob,Grep",
+                                "--disallowedTools", "Edit Write NotebookEdit Bash WebSearch WebFetch Task"],
+                               timeout=420, cwd=str(HERE), who="night school")
     m = re.search(r"\{.*\}", out.stdout or "", re.S)
     if not m:
         return None
@@ -193,10 +193,10 @@ def _build(pick):
             shutil.copy2(HERE / name, wt / name)
             copied.append(name)
     try:
-        out = brain.run_claude(
+        out = brain.run_background(
             [claude, "-p", selfedit.PROMPT.format(request=pick["request"].replace('"', "'")),
              "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Glob,Grep"],
-            timeout=1200, cwd=str(wt))
+            timeout=1200, cwd=str(wt), who="night school")
         print(f"(night school: {out.stdout.strip()[-300:]})")
         if not [l for l in _git("status", "--porcelain", cwd=wt).stdout.splitlines()
                 if l[3:].strip() not in copied]:

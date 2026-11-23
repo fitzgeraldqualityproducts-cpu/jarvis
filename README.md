@@ -119,6 +119,16 @@ Your settings, memory, calendar, tokens and notes are never touched.
 - "Check for updates" checks right now; "what's new?" repeats the last update;
   "run a self check" tells you whether everything's working.
 - "auto_update": false in config.json turns it off; "update_repo" points it somewhere else.
+- His snapshots (the copies he keeps so an update or a voice edit can be undone) never include your
+  settings, the YouTube business folder (its sign-in, brand and videos) or video and audio files,
+  so undoing something can't delete or roll them back.
+
+## Claude usage
+Work Jarvis does on his own (the clipper, the YouTube studio, night school, routines, self-repair)
+shares one daily limit of Claude calls, "claude_background_per_day" in config.json (150; 0 = no
+limit), so it can never use up your plan. Answering you is never counted or blocked, and team
+missions you ask for are counted but never blocked. When Claude says your plan's limit is reached,
+background work waits an hour.
 
 ## Cut him off
 While he's talking, say **"stop"** or **"Jarvis"** (or "Hey Jarvis", or clap twice) and he stops

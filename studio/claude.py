@@ -126,6 +126,11 @@ def _claude(prompt, timeout, web, purpose=""):
         err = err.strip()[-300:]
         low = err.lower()
         if "limit" in low or "usage" in low or "overloaded" in low or "rate" in low:
+            try:
+                import budget
+                budget.saw(err)
+            except Exception:
+                pass
             raise QuotaWait(f"Claude is busy or the plan's limit is reached: {err}", time.time() + 3600)
         raise Transient(err)
     return text
@@ -134,12 +139,26 @@ def _claude(prompt, timeout, web, purpose=""):
 RUNNER = _claude          # tests swap this: (prompt, timeout, web) -> text
 
 
+def _shared_budget():
+    """The studio also counts toward Jarvis's one daily limit for background Claude calls (budget.py)."""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    import budget
+    ok, why = budget.check("studio")
+    if not ok:
+        until = budget.paused_until()
+        raise QuotaWait(f"waiting: {why}", until if until > time.time() else _tomorrow())
+    budget.spend("studio")
+
+
 def ask(prompt, timeout=300, web=False, purpose=""):
     """Claude's answer as text."""
     guard.allow("claude.ask", purpose or prompt[:120], record=False)
     cap = config.general()["claude_calls_per_day"]
     if used_today() >= cap:
         raise QuotaWait(f"the studio has used today's {cap} Claude calls", _tomorrow())
+    if RUNNER is _claude:
+        _shared_budget()
     db.put(f"claude_calls_{_today()}", used_today() + 1)
     if RUNNER is _claude:
         return _claude(prompt, timeout, web, purpose)
