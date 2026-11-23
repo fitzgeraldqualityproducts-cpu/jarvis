@@ -240,18 +240,14 @@ def tick(busy=lambda: False):
         return None
     ok, why = health.ok_to_work()
     if not ok:
-        if "disk" in why:
+        if "disk" in why or "studio folder" in why:
             health.notify("disk", f"I've paused the YouTube business because {why}.")
+            _chore(_drive_urgent)                    # Shorts safe on Google Drive can make room
         return None
     v = claim()
     if not v:
         for f in IDLE:                               # background chores when no Short is being made
-            try:
-                f()
-            except Exception as e:
-                db.insert("INSERT INTO errors(t, kind, stage, detail, recovery, result) VALUES(?,?,?,?,?,?)",
-                          time.time(), classify(e), getattr(f, "__name__", "idle"), guard.redact(str(e))[:800],
-                          "will try again later", "")
+            _chore(f)
         return None
     _running.set()
     try:
@@ -260,6 +256,20 @@ def tick(busy=lambda: False):
             return run_one(v)
     finally:
         _running.clear()
+
+
+def _drive_urgent():
+    from studio import drive
+    drive.maybe_run(urgent=True)
+
+
+def _chore(f, name=None):
+    try:
+        f()
+    except Exception as e:
+        db.insert("INSERT INTO errors(t, kind, stage, detail, recovery, result) VALUES(?,?,?,?,?,?)",
+                  time.time(), classify(e), name or getattr(f, "__name__", "idle"), guard.redact(str(e))[:800],
+                  "will try again later", "")
 
 
 def _loop(busy):
@@ -282,9 +292,10 @@ def start(busy=lambda: False):
         return False
     report = health.startup()
     recover()
-    from studio import analytics, autopilot, eligibility, pipeline, topics
+    from studio import analytics, autopilot, drive, eligibility, pipeline, topics
     pipeline.register()
-    for f in (topics.expire, topics.maybe_discover, analytics.maybe_run, eligibility.maybe_check, autopilot.maybe_make):
+    for f in (topics.expire, topics.maybe_discover, analytics.maybe_run, eligibility.maybe_check, drive.maybe_run,
+              autopilot.maybe_make):
         if f not in IDLE:
             IDLE.append(f)
     _stop.clear()
