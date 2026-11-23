@@ -26,6 +26,8 @@ class FakeClaude:
         self.wrong_calc = False
         self.too_long = False       # the writer returns about 140 words
         self.fits = 0
+        self.line_fixes = 0
+        self.orig_first = None       # originality of the first review only
         self.bad_reviews = 0        # this many reviews fail before one passes
         self.orig = 8
         self.standard_only = False
@@ -37,6 +39,10 @@ class FakeClaude:
             return json.dumps({"hooks": ["Why do rockets throw away 88 percent of themselves?"],
                                "lines": [{"text": t, "facts": ["F1"], "visual": "diagram"} for t in BODY],
                                "calcs": [{"expr": "2290/2970", "result": 0.77, "unit": "", "says": "share"}]})
+        if prompt.startswith("A fact-checker flagged"):
+            assert not web and "word for word" in prompt
+            self.line_fixes += 1
+            return json.dumps({"lines": [{"line": 2, "text": BODY[1], "delete": False}]})
         if prompt.startswith("Write a YouTube Short script"):
             assert not web and "FACTS YOU MAY USE" in prompt and "F1." in prompt
             self.writes += 1
@@ -61,7 +67,8 @@ class FakeClaude:
             "claims": [{"line": 2, "verdict": "wrong" if bad else "supported", "fact": "F1", "note": "NASA says 2,950" if bad else ""},
                        {"line": 3, "verdict": "supported", "fact": "F2", "note": ""}, {"line": 7, "verdict": "n/a"}],
             "hooks": {str(i): {"curiosity": 9 - i, "clarity": 8, "specificity": 8, "honesty": 9, "speed": 8} for i in range(5)},
-            "originality": self.orig, "originality_fix": "the rocket-as-a-bottle idea is the usual one; compare it to a "
+            "originality": self.orig_first if (self.orig_first is not None and self.reviews == 1) else self.orig,
+            "originality_fix": "the rocket-as-a-bottle idea is the usual one; compare it to a "
             "hiker dropping empty water bottles", "inauthentic_risk": "low", "problems": []})
 
 
@@ -126,7 +133,7 @@ def test_wrong_claim_gets_one_revision(fakes):
     fc.bad_first = True
     vid = jobs.create(tid)
     row = script.make(topics.topic(tid), vid, progress=lambda s: None)
-    assert fc.writes == 2 and row["version"] == 2 and row["status"] == "passed"
+    assert fc.writes == 1 and fc.line_fixes == 1 and row["version"] == 2 and row["status"] == "passed"
 
 
 def test_still_wrong_is_rejected_never_passed_on(fakes):
@@ -215,7 +222,7 @@ def test_two_rewrites_before_giving_up(fakes):
     fc.bad_reviews = 2
     vid = jobs.create(tid)
     row = script.make(topics.topic(tid), vid, progress=lambda s: None)
-    assert fc.writes == 3 and row["version"] == 3 and row["status"] == "passed"
+    assert fc.writes + fc.line_fixes == 3 and row["version"] == 3 and row["status"] == "passed"
 
 
 def test_textbook_law_is_fine_but_verifies_nothing_alone(fakes):
@@ -245,3 +252,31 @@ def test_writer_is_told_about_general_science_and_own_example(fakes, monkeypatch
     monkeypatch.setattr(claude, "RUNNER", lambda p, timeout, web: (seen.append(p), real(p, timeout, web))[1])
     script.write(topics.topic(tid))
     assert '["general"]' in seen[0] and "everyday example" in seen[0]
+
+
+def test_a_rewrite_starts_from_the_best_version_and_uses_the_reviewers_idea(fakes, monkeypatch):
+    from studio import claude, jobs, script, topics
+    fc, tid = fakes
+    fc.orig_first, fc.orig = 7, 5          # v1 original but one wrong line; later versions generic
+    fc.bad_reviews = 3
+    prompts = []
+    real = claude.RUNNER
+    monkeypatch.setattr(claude, "RUNNER", lambda p, timeout, web: (prompts.append(p), real(p, timeout, web))[1])
+    vid = jobs.create(tid)
+    with pytest.raises(script.ScriptRejected):
+        script.make(topics.topic(tid), vid, progress=lambda s: None)
+    rewrites = [p for p in prompts if p.startswith("Write a YouTube Short script") and "failed review" in p]
+    fixes = [p for p in prompts if p.startswith("A fact-checker flagged")]
+    assert len(fixes) == 2                 # both revisions repaired the near-miss v1, not the generic v2
+    assert not rewrites
+
+
+def test_rewrite_is_told_the_reviewers_idea_and_no_new_claims(fakes, monkeypatch):
+    from studio import claude, script, topics
+    fc, tid = fakes
+    seen = []
+    real = claude.RUNNER
+    monkeypatch.setattr(claude, "RUNNER", lambda p, timeout, web: (seen.append(p), real(p, timeout, web))[1])
+    script.write(topics.topic(tid), ["originality 5/10: needs its own explanation (use a hiker dropping bottles)"], {"lines": []})
+    assert "Rebuild the Short around this idea" in seen[0] and "hiker dropping bottles" in seen[0]
+    assert "Don't add any new claim" in seen[0] and "No made-up caveats" in seen[0]
