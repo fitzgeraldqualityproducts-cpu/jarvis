@@ -40,9 +40,11 @@ try:
         for p in spoken(w):
             pieces.append(p)
             owner.append(i)
-    model, meta = whisperx.load_align_model(language_code="en", device="cpu")
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"        # an NVIDIA card (Windows PC), else the processor
+    model, meta = whisperx.load_align_model(language_code="en", device=device)
     seg = [{"start": 0.0, "end": dur, "text": " ".join(pieces)}]
-    res = whisperx.align(seg, model, meta, audio, "cpu", return_char_alignments=False)
+    res = whisperx.align(seg, model, meta, audio, device, return_char_alignments=False)
     got = [w for s in res.get("segments", []) for w in s.get("words", [])]
     out = [{"w": w, "s": None, "e": None} for w in words]
     for k, g in enumerate(got[:len(owner)]):
@@ -52,6 +54,6 @@ try:
         if out[i]["s"] is None:
             out[i]["s"] = round(float(g["start"]), 3)
         out[i]["e"] = round(float(g.get("end", g["start"])), 3)
-    json.dump({"words": out, "aligned": sum(1 for o in out if o["s"] is not None)}, open(pout, "w"))
+    json.dump({"words": out, "aligned": sum(1 for o in out if o["s"] is not None), "device": device}, open(pout, "w"))
 except Exception as e:
     json.dump({"error": f"{type(e).__name__}: {e}"}, open(pout, "w"))

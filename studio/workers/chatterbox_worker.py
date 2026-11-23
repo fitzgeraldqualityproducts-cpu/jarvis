@@ -30,7 +30,7 @@ try:
     import torch
     from chatterbox.tts import ChatterboxTTS
     torch.manual_seed(int(job.get("seed", 7)))
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     t0 = time.time()
     try:
         model = ChatterboxTTS.from_pretrained(device=device)

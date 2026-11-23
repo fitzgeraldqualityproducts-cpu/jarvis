@@ -93,10 +93,19 @@ def maybe_make(now=None):
 
 
 class keep_awake:
-    """with keep_awake(): ... -> macOS won't idle-sleep inside the block (no-op elsewhere or if off)."""
+    """with keep_awake(): ... -> the computer won't idle-sleep inside the block (macOS: caffeinate;
+    Windows: SetThreadExecutionState; no-op elsewhere or if off). The screen may still turn off."""
 
     def __enter__(self):
         self.p = None
+        self.win = False
+        if sys.platform == "win32" and config.general().get("keep_awake", True):
+            try:
+                import ctypes
+                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)   # CONTINUOUS | SYSTEM_REQUIRED
+                self.win = True
+            except Exception:
+                self.win = False
         if sys.platform == "darwin" and config.general().get("keep_awake", True):
             try:
                 self.p = subprocess.Popen(["caffeinate", "-i"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -105,6 +114,12 @@ class keep_awake:
         return self
 
     def __exit__(self, *exc):
+        if self.win:
+            try:
+                import ctypes
+                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+            except Exception:
+                pass
         if self.p:
             try:
                 self.p.terminate()

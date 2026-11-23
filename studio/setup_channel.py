@@ -28,6 +28,8 @@ Then double-click "Connect YouTube Business".
 def _open(path):
     if sys.platform == "darwin":
         subprocess.run(["open", str(path)])
+    elif sys.platform == "win32":
+        os.startfile(str(path))
 
 
 def brand_flow():

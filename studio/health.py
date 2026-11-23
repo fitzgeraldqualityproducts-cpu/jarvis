@@ -36,8 +36,11 @@ def _folder_gb(path):
 
 
 def memory_pressure():
-    """Share of memory in use (0-1), or None if unknown. macOS: vm_stat (no extra packages)."""
+    """Share of memory in use (0-1), or None if unknown. macOS: vm_stat (no extra packages). Windows: psutil."""
     try:
+        if sys.platform == "win32":
+            import psutil
+            return psutil.virtual_memory().percent / 100
         if sys.platform == "darwin":
             out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5).stdout
             page = 16384 if "page size of 16384" in out else 4096
