@@ -9,7 +9,10 @@
   brand       channel names (handles checked), logo, banner, description, brand guide
   connect     signs in to the NEW business channel and locks the studio to it
   verify      checks the connection: right channel, upload and analytics permission (changes nothing)
-  protect     adds a channel (@handle or UC id) that the studio must never publish to"""
+  protect     adds a channel (@handle or UC id) that the studio must never publish to
+  ideas       finds new Short topics for the 2 pillars with the fewest ideas, scores them, lists the best
+              (--all every pillar; --list only lists; --pillar "<name>")
+  next        shows the idea Jarvis would make next (--take marks it as picked)"""
 import json
 import sys
 import time
@@ -49,6 +52,31 @@ def main(argv):
         d = niche.choose(run, force=bool(reason), reason=reason)
         print(f"\nNiche: {d.get('name') or d.get('niche')}")
         print(f"Report: {niche.run_dir(run) / 'report.html'}")
+    elif cmd == "ideas":
+        from studio import topics
+        health.startup()
+        if "--list" not in argv:
+            names = None
+            if "--all" in argv:
+                names = [p["name"] for p in topics.pillars()]
+            elif "--pillar" in argv:
+                names = [argv[argv.index("--pillar") + 1]]
+            topics.expire()
+            res = topics.discover(names)
+            print(f"\nKept {len(res['added'])} new ideas, rejected {len(res['rejected'])}, dropped {res['duplicates']} repeats.")
+            for r in res["rejected"]:
+                print(f"  rejected: {r['title']} ({'; '.join(r['why'])})")
+        print("\n" + topics.summary_text())
+    elif cmd == "next":
+        from studio import topics
+        t = topics.pick_next(mark="--take" in argv)
+        if not t:
+            print("No ideas ready. Run: .venv/bin/python -m studio ideas")
+        else:
+            full = topics.topic(t["id"])
+            print(f"#{t['id']} {t['title']}  (score {t['score']}, {t['pillar']}, {t['kind']})\nAngle: {t['angle']}\nHook: {t['hook']}")
+            for s_ in full["sources"]:
+                print(f"  [{s_['verdict']}, tier {s_['tier']}] {s_['claim']} <{s_['url']}>")
     elif cmd == "brand":
         from studio import setup_channel
         return setup_channel.brand_flow()

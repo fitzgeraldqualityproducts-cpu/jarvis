@@ -94,6 +94,29 @@ MIGRATIONS = [
     CREATE INDEX errors_t ON errors(t);
     CREATE INDEX audit_t ON audit(t);
     """,
+    # 2: content intelligence (Phase 5): the idea database, source checks, discovery runs
+    """
+    ALTER TABLE topics ADD COLUMN angle TEXT;
+    ALTER TABLE topics ADD COLUMN hook TEXT;
+    ALTER TABLE topics ADD COLUMN why TEXT;
+    ALTER TABLE topics ADD COLUMN keywords TEXT DEFAULT '[]';
+    ALTER TABLE topics ADD COLUMN origin TEXT;
+    ALTER TABLE topics ADD COLUMN fresh_until REAL;
+    ALTER TABLE topics ADD COLUMN similar_to INTEGER;
+    ALTER TABLE topics ADD COLUMN reject_reason TEXT;
+    ALTER TABLE topics ADD COLUMN script_status TEXT DEFAULT 'none';
+    ALTER TABLE topics ADD COLUMN publish_status TEXT DEFAULT 'none';
+    ALTER TABLE topics ADD COLUMN performance TEXT DEFAULT '{}';
+    ALTER TABLE topics ADD COLUMN selected REAL;
+    ALTER TABLE sources ADD COLUMN domain TEXT;
+    ALTER TABLE sources ADD COLUMN tier INTEGER;
+    ALTER TABLE sources ADD COLUMN http_status INTEGER;
+    CREATE TABLE discovery_runs (
+        id INTEGER PRIMARY KEY, t REAL, pillar TEXT, found INTEGER, added INTEGER, duplicates INTEGER,
+        rejected INTEGER, claude_calls INTEGER, youtube_searches INTEGER, detail TEXT DEFAULT '{}');
+    CREATE INDEX topics_status ON topics(status);
+    CREATE INDEX sources_topic ON sources(topic_id)
+    """,
 ]
 
 _conns = {}

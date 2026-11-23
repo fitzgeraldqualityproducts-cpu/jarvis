@@ -211,6 +211,9 @@ def busy():
     return _running.is_set()
 
 
+IDLE = []           # functions run when there's no job (e.g. topic discovery); each must be cheap to skip
+
+
 def tick(busy=lambda: False):
     """One pass of the worker. Returns the new state of the job it worked on, or None."""
     if not config.enabled() or busy():
@@ -222,6 +225,13 @@ def tick(busy=lambda: False):
         return None
     v = claim()
     if not v:
+        for f in IDLE:                               # background chores when no Short is being made
+            try:
+                f()
+            except Exception as e:
+                db.insert("INSERT INTO errors(t, kind, stage, detail, recovery, result) VALUES(?,?,?,?,?,?)",
+                          time.time(), classify(e), getattr(f, "__name__", "idle"), guard.redact(str(e))[:800],
+                          "will try again later", "")
         return None
     _running.set()
     try:
@@ -250,6 +260,10 @@ def start(busy=lambda: False):
         return False
     report = health.startup()
     recover()
+    from studio import topics
+    for f in (topics.expire, topics.maybe_discover):
+        if f not in IDLE:
+            IDLE.append(f)
     _stop.clear()
     _thread = threading.Thread(target=_loop, args=(busy,), daemon=True, name="studio-worker")
     _thread.start()

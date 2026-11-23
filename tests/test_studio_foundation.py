@@ -19,6 +19,7 @@ def studio_home(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CONFIG", cfg)
     monkeypatch.setattr(config, "PLATFORM", "darwin")
     jobs.STAGES.clear()
+    jobs.IDLE.clear()
     jobs._stop.clear()
     yield tmp_path
     jobs._stop.set()
