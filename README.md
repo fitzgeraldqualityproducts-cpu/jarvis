@@ -175,6 +175,23 @@ date", "thanks") he answers himself without asking Claude at all, and the self-i
 for a quiet 15 minutes and thinks at most 3 times a day. Older Claude Code that doesn't know the new
 options is spotted and gets the old way. "lean_claude": false in config.json turns it off.
 
+### Local brain (Ollama + Chroma, free, optional)
+Double-click **Install Local Brain** once (about 3 GB: Ollama, the qwen2.5:3b model and Chroma). After
+that, a small model on this computer takes the easy jobs so they don't use your Claude plan at all:
+- small talk, thanks, reactions and half-heard background chatter get a quick local reply
+- repeat general-knowledge questions ("what's a J-term?") are answered from the answer memory (Chroma),
+  but only timeless, non-personal ones, only the same question, and only for 30 days
+- the studio fixes broken JSON and script word counts locally, and every fix is checked before it's used
+- the studio tries local first drafts of Shorts scripts as a measured trial; Claude still fact-checks every
+  one, and the trial turns itself off if local drafts pass less often than Claude's
+
+Anything that needs knowledge, tools, web search, your projects or a fact-check still goes to Claude.
+If Ollama isn't running, is slow, memory is tight or a heavy studio job is running, everything goes to
+Claude exactly as before, and the model is unloaded before heavy studio work. Ask "how many tokens have
+you saved" or run `python local_brain.py stats`. `"local_brain": {"enabled": false}` in config.json turns
+it all off; `"chat"`, `"answer_cache"`, `"studio_json"`, `"studio_length"` (true/false) and
+`"studio_drafts"` ("trial", "on", "off") turn parts off.
+
 ## Perfect memory
 Every conversation you have with him (spoken or typed) is saved on this computer in memory.db and
 searchable by meaning, using a tiny free model (about 30 MB) that runs on your computer. Months later

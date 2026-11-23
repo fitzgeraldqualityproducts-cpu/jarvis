@@ -50,3 +50,4 @@ config.json.bak*
 *.mov
 *.wav
 *.m4a
+local_brain_data/

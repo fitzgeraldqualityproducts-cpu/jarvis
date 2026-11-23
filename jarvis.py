@@ -733,6 +733,10 @@ def handle(text, _part=False):
     if re.search(r"what('s| is| did you get) new|what (did|have) you (just )?update|what was (in )?(the|your) (last )?update", t):
         voice.say(updater.last_note())
         return True
+    if SAVED_RE.search(t):
+        import local_brain
+        voice.say(local_brain.report())
+        return True
     if re.search(r"what can you do|what are you able to do|help me out here|list your (skills|abilities)", t):
         voice.say(CAPABILITIES)
         return True
@@ -775,10 +779,49 @@ def handle(text, _part=False):
         voice.say(weather.report())
         predict.record(original_case(t), "weather")
         return True
+    said = local_answer(text)                    # small talk or a repeat question: no Claude call
+    if said:
+        voice.say(said)
+        return True
     display.update(status="thinking")
     # starts talking as soon as the first sentence is ready; with his skills, any wording works
     voice.say(brain.think_stream(text, unsure=HEARD_UNSURE.is_set(), tools=brain.tools_on()))
     return True
+
+
+SAVED_RE = re.compile(r"how (?:many|much) (?:claude )?(?:tokens|claude calls|calls) (?:have|did) you (?:save|saved)|"
+                      r"(?:local brain|ollama) (?:status|stats|savings)|how(?:'s| is) (?:your|the) local brain")
+
+
+def local_answer(text):
+    """Owner small talk from the local model (local_brain.py), or a repeat general-knowledge question from
+    the answer memory (vecstore.py). None means Claude answers as usual. Never for guests or open questions."""
+    if PENDING or not WHO.get("owner", True):
+        return None
+    try:
+        import local_brain
+        if not local_brain.enabled():
+            return None
+        past = memory.history(3)
+        age = 1e9
+        if past:
+            try:
+                age = time.time() - datetime.datetime.strptime(past[-1].get("t", ""), "%Y-%m-%d %H:%M").timestamp()
+            except Exception:
+                age = 0                                  # unknown: treat his last line as just said
+        reply = local_brain.local_reply(text, past, personality.persona(), age)
+        source = "local"
+        if not reply and not HEARD_UNSURE.is_set():
+            import vecstore
+            reply = vecstore.lookup(original_case(text))
+            source = "memory"
+        if reply:
+            memory.add_exchange(text, reply)
+            print(f"(answered from the {source} brain)")
+        return reply
+    except Exception as e:
+        print(f"(local brain skipped: {type(e).__name__}: {e})")
+        return None
 
 
 TIME_ASK = re.compile(r"(?:so |and |um |uh )?(?:what(?:'s| is) the time|what time is it|what time(?: is it)? (?:right )?now|"
@@ -1575,6 +1618,11 @@ def main():
         nightschool.start(lambda: is_busy() or workforce.busy())
         import recall
         recall.start()
+        try:
+            import local_brain
+            local_brain.warm()                                # small talk without a Claude call (Ollama)
+        except Exception as e:
+            print(f"(local brain didn't start: {e})")
         hearing.start(lambda: is_busy() or workforce.busy() or nightschool.busy())
         predict.start(is_busy)
         threading.Thread(target=speak_up_loop, daemon=True, name="speak-up").start()

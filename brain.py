@@ -228,6 +228,19 @@ def run_background(cmd, timeout, cwd=None, who="background"):
     return run_claude(cmd, timeout, cwd)
 
 
+def _note_usage(usage):
+    """Tells local_brain.py how big a real brain call was, so its 'tokens saved' uses his own numbers."""
+    try:
+        u = usage or {}
+        tokens = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_creation_input_tokens",
+                                                   "cache_read_input_tokens", "output_tokens"))
+        if tokens:
+            import local_brain
+            local_brain.claude_used("brain", tokens)
+    except Exception:
+        pass
+
+
 def _drain(pipe, into):
     for line in pipe:
         into.append(line)
@@ -288,6 +301,7 @@ def _stream_claude_once(cmd, timeout, cwd=None, state=None):
                     yield "\n"                 # keeps text from before and after a web search apart
             elif kind == "result":
                 result = "" if d.get("is_error") else (d.get("result") or "")
+                _note_usage(d.get("usage"))
         if not got and result:
             yield result
     finally:
@@ -530,6 +544,12 @@ def think_stream(question, context="", unsure=False, tools=False):
                 pass
             if state.get("cancelled") and answer:
                 answer += " (cut off)"
+            if answer and not state.get("cancelled") and not unsure and not context:
+                try:                                    # a timeless answer, kept for the next time he asks
+                    import vecstore
+                    vecstore.remember(question, answer)
+                except Exception as e:
+                    print(f"(answer memory save failed: {e})")
             if answer:
                 memory.add_exchange(question, answer)
                 try:
