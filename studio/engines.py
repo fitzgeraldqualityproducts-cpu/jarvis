@@ -37,7 +37,7 @@ DEFAULTS = {"voice": "kokoro", "align": "whisper", "visuals": "classic", "compos
 UPGRADED = {"voice": "chatterbox", "align": "whisperx", "visuals": "manim", "compose": "remotion"}
 # what each tool needs: its environment's python, the packages, free memory (GB) and a time limit (s)
 SPECS = {
-    "chatterbox": {"python": "3.11", "pip": ["chatterbox-tts==0.1.7"], "mem_gb": 3.0, "timeout": 1500},
+    "chatterbox": {"python": "3.11", "pip": ["chatterbox-tts==0.1.7", "setuptools<81"], "mem_gb": 3.0, "timeout": 1500},
     "whisperx": {"python": "3.12", "pip": ["whisperx==3.8.6", "num2words==0.5.14"], "mem_gb": 1.5, "timeout": 600},
     "manim": {"conda": ["python=3.12", "manim"], "mem_gb": 1.0, "timeout": 1200},
     "remotion": {"node": True, "mem_gb": 1.5, "timeout": 1800},
@@ -87,6 +87,19 @@ def _npx():
 
 # ---------- memory and the one-heavy-job lock ----------
 
+def _pressure_normal():
+    """macOS: True while the system says memory pressure is normal (it compresses and frees memory on
+    its own, so "available" pages under-count what a short job can really get)."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        out = subprocess.run(["sysctl", "-n", "kern.memorystatus_vm_pressure_level"], capture_output=True,
+                             text=True, timeout=5).stdout.strip()
+        return out == "1"
+    except Exception:
+        return False
+
+
 def free_gb():
     """Memory the Mac can hand out right now (free + inactive + purgeable), or None if unknown."""
     try:
@@ -106,6 +119,19 @@ def free_gb():
         except Exception:
             return None
     return None
+
+
+def enough_memory(tool):
+    """(ok, free GB, needed GB). Under normal macOS memory pressure half the nominal need is enough,
+    because macOS compresses idle memory to make room; under warning or critical pressure the full
+    amount must be free."""
+    need = SPECS[tool]["mem_gb"]
+    free = free_gb()
+    if free is None:
+        return True, None, need
+    if _pressure_normal():
+        need = need * 0.5
+    return free >= need, free, need
 
 
 def _free_local_brain():
@@ -151,6 +177,25 @@ def heavy(what, wait=900):
 
 # ---------- running a worker ----------
 
+def _tool_bin():
+    """tools/bin with an "ffmpeg" that points at the ffmpeg Jarvis already has (imageio-ffmpeg's), for tools
+    that call the ffmpeg command (whisperX loads audio that way). Nothing outside tools/ changes."""
+    b = TOOLS / "bin"
+    b.mkdir(parents=True, exist_ok=True)
+    link = b / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    if not link.exists() and not shutil.which("ffmpeg"):
+        try:
+            import imageio_ffmpeg
+            exe = imageio_ffmpeg.get_ffmpeg_exe()
+            try:
+                link.symlink_to(exe)
+            except OSError:
+                shutil.copy(exe, link)
+        except Exception:
+            pass
+    return b
+
+
 def run(tool, worker, payload, timeout=None):
     """Runs studio/workers/<worker>.py inside the tool's environment with a JSON payload; returns its
     JSON answer. Raises EngineError on any problem (the caller falls back)."""
@@ -160,15 +205,16 @@ def run(tool, worker, payload, timeout=None):
         return RUNNER(tool, worker, payload, timeout)
     if not installed(tool):
         raise EngineError(f"{tool} isn't installed (run: python -m studio engines install)")
-    free = free_gb()
-    if free is not None and free < spec["mem_gb"]:
-        raise EngineError(f"{tool} needs about {spec['mem_gb']:.1f} GB of free memory and only {free:.1f} GB is free")
+    ok, free, need = enough_memory(tool)
+    if not ok:
+        raise EngineError(f"{tool} needs about {need:.1f} GB of free memory and only {free:.1f} GB is free")
     with tempfile.TemporaryDirectory(prefix=f"jv-{tool}-") as tmp:
         pin, pout = Path(tmp) / "in.json", Path(tmp) / "out.json"
         pin.write_text(json.dumps(payload))
         env = dict(os.environ, PYTHONNOUSERSITE="1", TOKENIZERS_PARALLELISM="false",
                    HF_HUB_DISABLE_TELEMETRY="1", JV_WORKERS=str(WORKERS))
         env.pop("PYTHONPATH", None)
+        env["PATH"] = str(_tool_bin()) + os.pathsep + env.get("PATH", "")
         cmd = [str(python(tool)), "-I", str(WORKERS / f"{worker}.py"), str(pin), str(pout)]
         try:
             p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=tmp)
@@ -189,9 +235,9 @@ def remotion_render(props, public_dir, out, timeout=None):
         return RUNNER("remotion", "render", {"props": props, "public": str(public_dir), "out": str(out)}, timeout)
     if not installed("remotion"):
         raise EngineError("Remotion isn't installed (run: python -m studio engines install)")
-    free = free_gb()
-    if free is not None and free < SPECS["remotion"]["mem_gb"]:
-        raise EngineError(f"Remotion needs about {SPECS['remotion']['mem_gb']} GB of free memory and only {free:.1f} GB is free")
+    ok, free, need = enough_memory("remotion")
+    if not ok:
+        raise EngineError(f"Remotion needs about {need:.1f} GB of free memory and only {free:.1f} GB is free")
     pf = Path(public_dir) / "remotion_props.json"
     pf.write_text(json.dumps(props))
     npx = shutil.which("npx") or _npx()
