@@ -27,6 +27,7 @@ CLICKBAIT = ("you won't believe", "you wont believe", "shocking", "insane", "min
              "make sure to subscribe", "wait for it", "gone wrong")
 HOOK_WEIGHTS = {"curiosity": 0.3, "clarity": 0.2, "specificity": 0.2, "honesty": 0.2, "speed": 0.1}
 CALC_TOLERANCE = 0.03                   # a stated result may be rounded by up to 3%
+MAX_REVISIONS = 2                       # a draft and up to two rewrites with the reviewer's notes
 SIMILAR_SCRIPT = 0.6                    # word overlap with an earlier script that counts as a remake
 
 
@@ -180,7 +181,13 @@ Rules:
 - Every factual line lists the fact ids it relies on. Every number you work out must appear in "calcs"
   as a plain arithmetic expression (e.g. "384400/3474") with its result and unit, using only the facts' numbers.
 - Plain words, short sentences, US spelling and units with metric where useful. No hype words, no clickbait.
-- Original: your own explanation and wording, not a summary of a known video.
+- Original: your own explanation and wording, not a summary of a known video. Make it yours with ONE concrete
+  comparison or everyday example of your own (a kitchen, a car, a stadium, a phone) that carries the calculation,
+  and say the result in a way a textbook wouldn't. Avoid stock explainer lines ("here's the thing", "it turns out",
+  "scientists say", "mind-blowing").
+- Standard textbook science (a named law or formula such as Newton's laws, Kepler's third law, E = mc^2, or a
+  well-known constant like g = 9.8 m/s^2 or the speed of light) may be used without a fact: mark that line's facts
+  as ["general"]. Every number about THIS topic must still come from the facts above.
 - "visual" says what the screen shows for that line (diagram, chart, number, map, simple animation; no footage).
 Also write 5 different hooks (each could replace line 1) and 3 title options (under 60 characters, honest).{learned}{fix}
 
@@ -278,17 +285,20 @@ Hooks:
 
 For EVERY script line that states a fact or number, give a verdict: "supported" (a source says it, or it follows by
 arithmetic from sourced numbers), "unsupported" (no source backs it) or "wrong" (a source contradicts it; give the
-correct statement and the URL). Opinion or transition lines get "n/a".
+correct statement and the URL). A line that only states standard textbook science (a named law or formula, or a
+well-known physical constant, stated correctly in its usual form) gets "standard" without needing a source; any
+number specific to this topic never counts as standard. Opinion or transition lines get "n/a".
 Rate each hook 0-10 on curiosity, clarity, specificity, honesty (10 = fully delivered by the script, no bait) and
 speed (gets to the point at once).
 Also: "loop" 0-10 (read the LAST line and then the FIRST line: does it flow back into the start as one continuous
-thought, so a viewer would keep watching when it repeats?), "originality" 0-10 (own explanation and wording vs a generic or copied explainer), "inauthentic_risk"
+thought, so a viewer would keep watching when it repeats?), "originality" 0-10 (own explanation and wording vs a generic or copied explainer), "originality_fix" (if originality is under 7: one
+sentence naming what reads generic and a concrete idea to make it the channel's own), "inauthentic_risk"
 "low/medium/high" (does it read like mass-produced template content?), and "problems": anything else a careful
 editor would fix (confusing step, misleading simplification, unit mistake).
 
-JSON only: {{"claims": [{{"line": 1, "verdict": "supported|unsupported|wrong|n/a", "fact": "F1", "note": "..."}}],
+JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|wrong|n/a", "fact": "F1", "note": "..."}}],
 "hooks": {{"0": {{"curiosity": 0, "clarity": 0, "specificity": 0, "honesty": 0, "speed": 0}}}},
-"loop": 0, "originality": 0, "inauthentic_risk": "low", "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
+"loop": 0, "originality": 0, "originality_fix": "...", "inauthentic_risk": "low", "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
     if not isinstance(ans, dict):
         raise ScriptRejected("the fact-check didn't return a result")
     problems = []
@@ -296,7 +306,7 @@ JSON only: {{"claims": [{{"line": 1, "verdict": "supported|unsupported|wrong|n/a
     for c in claims:
         if c.get("verdict") in ("unsupported", "wrong"):
             problems.append(f"line {c.get('line')} is {c['verdict']}: {c.get('note', '')}".strip())
-    factual = sum(1 for c in claims if c.get("verdict") in ("supported", "unsupported", "wrong"))
+    factual = sum(1 for c in claims if c.get("verdict") in ("supported", "unsupported", "wrong"))  # "standard" alone verifies nothing
     if factual == 0:
         problems.append("the fact-check found no checkable claims, so nothing was verified")
     calcs = check_calcs(draft.get("calcs"))
@@ -328,7 +338,8 @@ JSON only: {{"claims": [{{"line": 1, "verdict": "supported|unsupported|wrong|n/a
         problems.append(f"editor: the ending doesn't lead back into the hook (loop {loop}/10); make the last line set up the first")
     orig = ans.get("originality")
     if isinstance(orig, (int, float)) and orig < 6:
-        problems.append(f"originality {orig}/10: needs its own explanation")
+        tip = str(ans.get("originality_fix") or "").strip()
+        problems.append(f"originality {orig}/10: needs its own explanation" + (f" ({tip[:300]})" if tip else ""))
     if str(ans.get("inauthentic_risk", "")).lower() == "high":
         problems.append("reads like mass-produced template content")
     sim, sim_vid = similar_script(body, video_id)
@@ -369,7 +380,7 @@ def _draft_of(row):
             "titles": st.get("titles") or []}
 
 
-def check_step(topic, video_id=None, max_revisions=1):
+def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     """Fact-checks the newest draft. Returns ("passed", row) or ("revise", row); raises ScriptRejected
     when the last allowed revision still fails."""
     from studio import topics
@@ -405,7 +416,7 @@ def revise_step(topic, video_id=None):
     return draft_step(topic, video_id, json.loads(row["checks"] or "{}").get("problems") or [], _draft_of(row))
 
 
-def make(topic, video_id=None, progress=print, max_revisions=1):
+def make(topic, video_id=None, progress=print, max_revisions=MAX_REVISIONS):
     """Write -> fact-check -> (revise -> fact-check). Returns the passed script row."""
     guard.allow("claude.ask", f"script for topic {topic['id']}", record=False)
     progress("Writing the script")
