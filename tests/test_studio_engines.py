@@ -180,3 +180,28 @@ def test_tools_find_an_ffmpeg_command(studio_home, monkeypatch, tmp_path):  # no
     b = engines._tool_bin()
     assert (b / "ffmpeg").exists() and os.access(b / "ffmpeg", os.X_OK)
     assert any("setuptools" in p for p in engines.SPECS["chatterbox"]["pip"])   # perth needs pkg_resources
+
+
+def test_chatterbox_float_wav_is_read(tmp_path):
+    """torchaudio writes 32-bit float WAVs (format 3), which Python's wave module refuses: on the Mac
+    that threw Chatterbox's narration away. Both float and 16-bit PCM files must read."""
+    import struct
+    from clipper import media
+    from studio import narration
+    x = (0.5 * np.sin(np.linspace(0, 200, 24000))).astype("<f4")
+    for ext in (False, True):
+        body = x.tobytes()
+        if ext:
+            fmt = struct.pack("<HHIIHHHHIH14s", 0xFFFE, 1, 24000, 96000, 4, 32, 22, 32, 4, 3, b"\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x008\x9bq")
+        else:
+            fmt = struct.pack("<HHIIHH", 3, 1, 24000, 96000, 4, 32)
+        data = b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(body)) + body
+        p = tmp_path / f"f{ext}.wav"
+        p.write_bytes(b"RIFF" + struct.pack("<I", len(data)) + data)
+        y, rate = narration.read_any_wav(p)
+        assert rate == 24000 and y.shape == (24000, 1) and abs(float(y[100, 0]) - float(x[100])) < 1e-6
+    media.write_wav(tmp_path / "pcm.wav", x, 24000)
+    y, rate = narration.read_any_wav(tmp_path / "pcm.wav")
+    assert rate == 24000 and abs(float(y[100, 0]) - float(x[100])) < 1e-3
+    src = (narration.ROOT / "studio" / "workers" / "chatterbox_worker.py").read_text()
+    assert "torchaudio.save" not in src and "setsampwidth(2)" in src

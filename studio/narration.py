@@ -130,6 +130,37 @@ def reference_clip(s=None):
     return path
 
 
+def read_any_wav(path):
+    """(samples float32 (n, channels), rate) from a 16-bit PCM or a 32-bit float WAV (format 3, which
+    Python's wave module refuses and torchaudio writes by default)."""
+    from clipper import media
+    import struct
+    data = Path(path).read_bytes()
+    if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise NarrationError(f"{Path(path).name} isn't a WAV file")
+    pos, fmt, body = 12, None, None
+    while pos + 8 <= len(data):
+        cid, size = data[pos:pos + 4], struct.unpack("<I", data[pos + 4:pos + 8])[0]
+        chunk = data[pos + 8:pos + 8 + size]
+        if cid == b"fmt ":
+            fmt = list(struct.unpack("<HHIIHH", chunk[:16]))
+            if fmt[0] == 0xFFFE and len(chunk) >= 26:    # WAVE_FORMAT_EXTENSIBLE: the real kind is in the GUID
+                fmt[0] = struct.unpack("<H", chunk[24:26])[0]
+        elif cid == b"data":
+            body = chunk
+        pos += 8 + size + (size & 1)
+    if not fmt or body is None:
+        raise NarrationError(f"{Path(path).name} has no audio in it")
+    kind, ch, rate, _, _, bits = fmt
+    if kind == 3 and bits == 32:
+        x = np.frombuffer(body, dtype="<f4").astype(np.float32)
+    elif kind == 1 and bits == 16:
+        return media.read_wav(path)
+    else:
+        raise NarrationError(f"{Path(path).name} is in an audio format Jarvis can't read ({kind}, {bits}-bit)")
+    return np.clip(x, -1, 1).reshape(-1, ch), int(rate)
+
+
 def _chatterbox(text, s, out):
     """(samples, rate, info) from Chatterbox in the channel's voice. Raises engines.EngineError."""
     from clipper import media
@@ -142,7 +173,7 @@ def _chatterbox(text, s, out):
             "exaggeration": float(g.get("chatterbox_exaggeration") or 0.5),
             "cfg_weight": float(g.get("chatterbox_cfg_weight") or 0.5), "seed": 7})
     try:
-        x, rate = media.read_wav(raw)
+        x, rate = read_any_wav(raw)
     finally:
         try:
             os.remove(raw)
