@@ -20,6 +20,7 @@ class FakeYouTube:
         self.expire_after_drop = False
         self.status = "processed"
         self.privacy = None
+        self.thumbs, self.thumb_status = [], 200
 
     # ytauth.OPEN (whoami)
     def open(self, url, headers):
@@ -27,6 +28,10 @@ class FakeYouTube:
 
     def __call__(self, method, url, headers, data):
         assert headers["Authorization"] == "Bearer AT"
+        if method == "POST" and "thumbnails/set" in url:
+            self.thumbs.append((url, data))
+            return (self.thumb_status, {}, b"{}" if self.thumb_status == 200 else
+                    json.dumps({"error": {"errors": [{"reason": "forbidden"}]}}).encode())
         if method == "POST":
             meta = json.loads(data)
             self.posts.append(meta)
@@ -217,3 +222,43 @@ def test_public_mode_needs_typed_confirmation(monkeypatch):
     cli._publish_mode(["publish-mode", "public"])
     assert publish.mode() == "public"
 
+
+
+def _with_cover(db, vid):
+    from studio import data_dir
+    p = data_dir("videos", str(vid)) / "cover.jpg"
+    p.write_bytes(b"\xff\xd8jpeg")
+    meta = json.loads(db.video(vid)["meta"])
+    meta["cover"] = {"path": str(p)}
+    db.set_video(vid, meta=json.dumps(meta))
+
+
+def test_cover_goes_up_once_after_the_upload(yt):
+    from studio import db, publish
+    vid = _finished_video(db)
+    _with_cover(db, vid)
+    yid = publish.upload(vid, "private")
+    assert len(yt.thumbs) == 1 and f"videoId={yid}" in yt.thumbs[0][0] and yt.thumbs[0][1] == b"\xff\xd8jpeg"
+    assert json.loads(db.video(vid)["meta"])["cover"]["youtube"]["ok"] is True
+    publish.upload(vid, "private")
+    assert len(yt.thumbs) == 1                                   # never sent twice
+
+
+def test_cover_refusal_never_fails_the_upload(yt):
+    from studio import db, publish
+    vid = _finished_video(db)
+    _with_cover(db, vid)
+    yt.thumb_status = 403
+    assert publish.upload(vid, "private") == "yt1"
+    res = json.loads(db.video(vid)["meta"])["cover"]["youtube"]
+    assert res["ok"] is False and "verif" in res["hint"]
+    for _ in range(5):
+        publish.upload(vid, "private")
+    assert len(yt.thumbs) == 3                                   # gives up after three tries
+
+
+def test_no_cover_no_thumbnail_call(yt):
+    from studio import db, publish
+    vid = _finished_video(db)
+    publish.upload(vid, "private")
+    assert yt.thumbs == []

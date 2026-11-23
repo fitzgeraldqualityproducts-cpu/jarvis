@@ -189,6 +189,7 @@ def upload(video_id, privacy="private", publish_at=None, progress=lambda f: None
     channel = _destination()
     j = job(video_id)
     if j and j["youtube_id"]:
+        set_cover(video_id, j["youtube_id"])                # a cover that didn't go up last time
         return j["youtube_id"]                              # already uploaded: never twice
     if not j:
         db.insert("INSERT INTO publish_jobs(video_id, channel_id, status, attempts, privacy, publish_at, created, updated) "
@@ -301,7 +302,49 @@ def _finish(video_id, resource, privacy, reconciled=False):
     db.set_video(video_id, meta=json.dumps(dict(json.loads(db.video(video_id)["meta"] or "{}"), youtube_id=yid)))
     guard.audit("youtube.upload", True, {"video": video_id, "youtube_id": yid, "channel": j["channel_id"],
                                           "privacy": privacy, "reconciled": reconciled})
+    set_cover(video_id, yid)
     return yid
+
+
+THUMB = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
+
+
+def set_cover(video_id, youtube_id):
+    """Sends the Short's cover.jpg as its YouTube thumbnail, once. Never fails the upload: a problem is
+    saved in videos.meta["cover"]["youtube"] (for example YouTube only accepts custom thumbnails from
+    phone-verified channels). Returns True when YouTube took it."""
+    from clipper import youtube
+    meta = json.loads(db.video(video_id)["meta"] or "{}")
+    c = meta.get("cover") or {}
+    path = c.get("path")
+    prev = c.get("youtube") or {}
+    if not path or not os.path.isfile(path) or prev.get("ok") or prev.get("tries", 0) >= 3:
+        return bool(prev.get("ok"))
+    res = {"t": time.time(), "ok": False, "tries": prev.get("tries", 0) + 1}
+    try:
+        guard.allow("youtube.set_thumbnail", f"video {video_id} -> {youtube_id}")
+        if _destination() != (job(video_id) or {}).get("channel_id"):
+            raise guard.WrongChannel("the cover is for a different channel; refusing")
+        youtube._spend("thumbnail")
+        with open(path, "rb") as f:
+            data = f.read()
+        status, _, body = _http("POST", f"{THUMB}?videoId={urllib.parse.quote(youtube_id)}&uploadType=media",
+                                dict(_auth(), **{"Content-Type": "image/jpeg", "Content-Length": str(len(data))}), data)
+        if status in (200, 201):
+            res["ok"] = True
+        else:
+            reason = _reason(body)
+            res["error"] = f"{status} {reason}".strip()
+            if status == 403 and reason in ("forbidden", ""):
+                res["hint"] = ("YouTube only lets phone-verified channels use custom thumbnails: "
+                               "youtube.com/verify on the business account turns it on.")
+    except Exception as e:                                  # the video is up; the cover is a nice-to-have
+        res["error"] = guard.redact(str(e))[:200]
+    meta = json.loads(db.video(video_id)["meta"] or "{}")
+    meta.setdefault("cover", {})["youtube"] = res
+    db.set_video(video_id, meta=json.dumps(meta))
+    guard.audit("youtube.set_thumbnail", res["ok"], {"video": video_id, "youtube_id": youtube_id, **res})
+    return res["ok"]
 
 
 # ---------- verification ----------

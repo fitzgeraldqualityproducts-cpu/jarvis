@@ -481,6 +481,11 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   Education category) and runs the QA gate: format, length, loudness, blank frames, fact-checked script
   and sources, every caption word shown and in sync, visuals and captions in the safe area, licences,
   title rules and remake check. Only a full pass makes a Short "ready". Nothing is uploaded.
+- Covers (2026-11-23): every Short also gets its own cover, `cover.jpg`, in the layout of the HussUniversity
+  Canva template (big hook with one word in amber, a glowing panel with a checked calculation, the pillar
+  pill and the channel tag; the bottom fifth stays clear for YouTube's buttons). After the upload Jarvis
+  sends it as the video's thumbnail, once. If YouTube refuses (custom thumbnails need a phone-verified
+  channel: youtube.com/verify), the upload still counts and the reason is saved with the video.
 - Phase 8 (done): publishing, official YouTube Data API only. Double-click **Upload Test Video (Private)**
   to upload the newest finished Short as private after you confirm. Every upload first checks the signed-in
   channel is the locked business channel, needs a full QA pass, and is resumable: the session is saved

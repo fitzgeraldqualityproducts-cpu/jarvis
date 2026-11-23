@@ -92,7 +92,10 @@ def test_full_short_passes_qa(fakes, fake_voice, monkeypatch):
     failed = db.q("SELECT check_name, detail FROM qa_checks WHERE video_id=? AND passed=0", vid)
     assert not failed, [dict(r) for r in failed]
     assets = db.q("SELECT * FROM assets WHERE video_id=?", vid)
-    assert len(assets) == len(SCENES) and all(a["license"].startswith("original") and len(a["sha256"]) == 64 for a in assets)
+    cov = json.loads(db.video(vid)["meta"])["cover"]
+    assert os.path.isfile(cov["path"]) and cov["bottom_clear"] and cov["text"]
+    assert len(assets) == len(SCENES) + 1 and [a["kind"] for a in assets].count("cover") == 1    # scenes + its cover
+    assert all(a["license"].startswith("original") and len(a["sha256"]) == 64 for a in assets)
     up = json.loads(v["meta"])["upload"]
     assert "Sources:" in up["description"] and "https://www.nasa.gov/saturn-v" in up["description"]
     assert "AI-generated" in up["description"] and up["categoryId"] == "27" and up["madeForKids"] is False
