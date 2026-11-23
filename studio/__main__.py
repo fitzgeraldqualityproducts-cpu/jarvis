@@ -14,7 +14,9 @@
               (--all every pillar; --list only lists; --pillar "<name>")
   next        shows the idea Jarvis would make next (--take marks it as picked)
   script      makes one real script for the next idea: hooks, fact-check, narration (never uploads)
-              (--topic <id> picks the idea; --no-voice skips narration)"""
+              (--topic <id> picks the idea; --no-voice skips narration)
+  video       makes a finished test Short: the waiting narrated script (or a new one), visuals, captions,
+              render, metadata and the QA gate (--video <id>); never uploads"""
 import json
 import sys
 import time
@@ -61,6 +63,37 @@ def _script(argv):
         subprocess.run(["open", str(page)])
     print(f"\nSaved in {folder}. Nothing was uploaded.")
     return 0
+
+
+def _video(argv):
+    import subprocess
+    from studio import db, qa, video
+    if "--video" in argv:
+        vid = int(argv[argv.index("--video") + 1])
+    else:
+        r = db.one("SELECT id FROM videos WHERE state='rendering' ORDER BY id DESC LIMIT 1")
+        if not r:
+            print("No narrated script is waiting, so writing one first.\n")
+            if _script([]) != 0:
+                return 1
+            r = db.one("SELECT id FROM videos WHERE state='rendering' ORDER BY id DESC LIMIT 1")
+        vid = r["id"]
+    print(f"\nMaking video {vid}: {db.video(vid)['title']}")
+    t0 = time.time()
+    rep = video.render(vid, progress=lambda s: print("  " + s))
+    print(f"  Rendered {rep['duration']} s in {time.time() - t0:.0f} s ({rep['timing']['method']}, "
+          f"{rep['timing']['matched']:.0%} of words matched)")
+    up = video.metadata(vid)
+    res = qa.check(vid)
+    print(f"\nTitle: {up['title']}\n\nQuality checks:")
+    for c in res["checks"]:
+        print(f"  {'PASS' if c['passed'] else 'FAIL'}  {c['name']}  {c['detail']}")
+    db.set_video(vid, state="ready" if res["ok"] else "validating", stage_done="validating" if res["ok"] else "rendering")
+    print("\nReady to publish (Phase 8 will do that)." if res["ok"] else "\nNot ready: it failed the checks above.")
+    if sys.platform == "darwin":
+        subprocess.run(["open", rep["path"]])
+    print(f"Video: {rep['path']}\nNothing was uploaded.")
+    return 0 if res["ok"] else 1
 
 
 def main(argv):
@@ -124,6 +157,8 @@ def main(argv):
                 print(f"  [{s_['verdict']}, tier {s_['tier']}] {s_['claim']} <{s_['url']}>")
     elif cmd == "script":
         return _script(argv)
+    elif cmd == "video":
+        return _video(argv)
     elif cmd == "brand":
         from studio import setup_channel
         return setup_channel.brand_flow()

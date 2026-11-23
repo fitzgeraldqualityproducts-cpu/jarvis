@@ -472,3 +472,12 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   channel voice and the audio is checked. The page `studio_data/videos/<id>/script.md` shows the script,
   calculations, verdicts and other hooks. With the studio on, the worker runs these as resumable stages
   (researching, scripting, fact_checking, generating_audio) and waits at rendering until Phase 7.
+- Phase 7 (done): the video. Double-click **Make a Test Video** (or `python -m studio video`). Claude plans one
+  scene per line from fixed templates (headline, big number, equation, comparison bars, scale circles,
+  steps); Jarvis draws them itself from shapes and text (each recorded as an original asset with a
+  checksum), times every word with Whisper matched to the known script so captions are exact, and renders
+  1080x1920 at 30 fps with a slow push-in, crossfades, a progress bar, captions and the narration. It
+  writes the upload details (title, description with the sources and the AI-narration note, tags,
+  Education category) and runs the QA gate: format, length, loudness, blank frames, fact-checked script
+  and sources, every caption word shown and in sync, visuals and captions in the safe area, licences,
+  title rules and remake check. Only a full pass makes a Short "ready". Nothing is uploaded.

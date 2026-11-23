@@ -396,3 +396,18 @@ def report(video_id):
     if ck.get("problems"):
         lines += ["", "## Editor notes", ""] + [f"- {p}" for p in ck["problems"]]
     return "\n".join(lines) + "\n"
+
+
+def hook_checks_title(title):
+    """Problems with a video title (empty list = fine): honest, short, no clickbait."""
+    t = " ".join(str(title).split())
+    problems = []
+    if not t:
+        return ["empty"]
+    if len(t) > 70:
+        problems.append(f"{len(t)} characters (max 70)")
+    low = t.lower()
+    problems += [f"clickbait phrase \"{c}\"" for c in CLICKBAIT if c in low]
+    if t.isupper() and len(t) > 12:
+        problems.append("all capitals")
+    return problems
