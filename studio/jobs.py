@@ -255,7 +255,9 @@ def tick(busy=lambda: False):
         return None
     _running.set()
     try:
-        return run_one(v)
+        from studio import autopilot
+        with autopilot.keep_awake():
+            return run_one(v)
     finally:
         _running.clear()
 
@@ -280,9 +282,9 @@ def start(busy=lambda: False):
         return False
     report = health.startup()
     recover()
-    from studio import analytics, eligibility, pipeline, topics
+    from studio import analytics, autopilot, eligibility, pipeline, topics
     pipeline.register()
-    for f in (topics.expire, topics.maybe_discover, analytics.maybe_run, eligibility.maybe_check):
+    for f in (topics.expire, topics.maybe_discover, analytics.maybe_run, eligibility.maybe_check, autopilot.maybe_make):
         if f not in IDLE:
             IDLE.append(f)
     _stop.clear()

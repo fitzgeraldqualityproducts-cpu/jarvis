@@ -228,6 +228,18 @@ def main(argv):
         return _upload(argv)
     elif cmd == "publish-mode":
         return _publish_mode(argv)
+    elif cmd == "autopilot":
+        from studio import autopilot, config as scfg
+        health.startup()
+        sub = argv[1] if len(argv) > 1 else ""
+        if sub == "off":
+            scfg.set_values(autopilot=False)
+            print("The autopilot is off: Jarvis won't start new Shorts by himself.")
+        elif sub == "on":
+            scfg.set_values(autopilot=True)
+            autopilot.resume()
+            print("The autopilot is on: one Short at a time, a small buffer ahead, only Shorts that pass every check.")
+        print(json.dumps(autopilot.status(), indent=2, default=str))
     elif cmd == "stats":
         from studio import analytics
         health.startup()

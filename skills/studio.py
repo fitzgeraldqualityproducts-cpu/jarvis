@@ -20,7 +20,11 @@ def youtube_business_status():
         return "The YouTube business module is off."
     rows = db.q("SELECT state, COUNT(*) n FROM videos GROUP BY state")
     errs = db.q("SELECT detail FROM errors ORDER BY id DESC LIMIT 3")
-    out = "Shorts by state: " + (", ".join(f"{r['state']} {r['n']}" for r in rows) or "none yet") + "."
+    from studio import autopilot
+    a = autopilot.status()
+    out = ("Autopilot " + ("halted: " + a["halted"]["reason"] if a["halted"] else ("on" if a["on"] else "off")) +
+           f"; publish mode {a['mode']}; {a['ready']} finished Short(s) waiting. ")
+    out += "Shorts by state: " + (", ".join(f"{r['state']} {r['n']}" for r in rows) or "none yet") + "."
     if errs:
         out += " Recent problems: " + " | ".join(r["detail"][:160] for r in errs)
     return out

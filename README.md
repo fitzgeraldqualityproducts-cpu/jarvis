@@ -505,3 +505,11 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   ESTIMATE from YouTube Analytics (YouTube's own count of qualifying views isn't available to apps), and
   projections are labelled. It's in the weekly report, Show YouTube Stats, and "how close are we to
   monetization?". If a tier is met Jarvis tells you; applying, terms, AdSense and money stay with you.
+- Phase 11 (done): always on. With the studio on, the autopilot keeps the line stocked by itself: one
+  Short in production at a time, at most 3 started a day, and only a small buffer of finished Shorts
+  (1 in manual mode, 2 otherwise) so your Claude plan isn't spent on a pile. If 3 Shorts in a row fail
+  their checks it stops and tells you (`python -m studio autopilot on` resumes, `off` turns it off).
+  While a stage runs, the Mac is kept from idle sleep (macOS caffeinate; closing the lid still sleeps).
+  Restart drills are tested: a crash mid-render resumes at rendering, and a stop mid-upload continues
+  the same upload session (never a second upload). Starting Jarvis at login is your choice:
+  run **Install Jarvis Extras** (it asks) or add "Jarvis at Login.command" in System Settings > Login Items.
