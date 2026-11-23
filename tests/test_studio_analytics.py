@@ -154,6 +154,8 @@ def test_learning_nudges_are_capped_and_need_enough_videos(stats):
 
 def test_pick_next_uses_the_learned_nudge(stats, monkeypatch):
     from studio import analytics, db, topics
+    from studio import lessons
+    monkeypatch.setattr(lessons, "usable", lambda t: True)
     db.put("studio_pillar_nudges", {"Good": 6.0, "Bad": -6.0})
     monkeypatch.setattr(topics, "pool", lambda now=None: [
         {"id": 1, "title": "x", "pillar": "Bad", "kind": "evergreen", "score": 72.0, "fresh_until": None},

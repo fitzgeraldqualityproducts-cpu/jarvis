@@ -121,6 +121,14 @@ MIGRATIONS = [
     """
     ALTER TABLE videos ADD COLUMN state_since REAL
     """,
+    # 4: learning from mistakes: every rejection, sorted into a category, kept for good
+    """
+    CREATE TABLE lessons (
+        id INTEGER PRIMARY KEY, t REAL, stage TEXT, category TEXT, topic_id INTEGER, video_id INTEGER,
+        pillar TEXT, kind TEXT, detail TEXT);
+    CREATE INDEX lessons_t ON lessons(t);
+    CREATE INDEX lessons_cat ON lessons(category, t)
+    """,
 ]
 
 _conns = {}

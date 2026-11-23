@@ -518,6 +518,13 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   Restart drills are tested: a crash mid-render resumes at rendering, and a stop mid-upload continues
   the same upload session (never a second upload). Starting Jarvis at login is your choice:
   run **Install Jarvis Extras** (it asks) or add "Jarvis at Login.command" in System Settings > Login Items.
+- Learning from mistakes: every time a check stops something (a script too long or not original, a
+  claim the sources don't back, an idea with thin sources, a failed video check), Jarvis records why in
+  studio.db (lessons). The script writer, the idea finder and the visual planner are told the recent
+  lessons (firmer once one happens 3 times), ideas from areas that keep failing are picked a little
+  less (at most 8 points, fading after 30 days), and ideas sure to fail (fewer than 2 working sources)
+  are skipped before any of your Claude plan is spent. `python -m studio lessons` and the weekly report
+  show what was learned. No extra Claude calls.
 - Google Drive backup: double-click **Connect Google Drive** once, pick the Google account whose Drive
   should hold the backups and press Allow. Jarvis asks for one permission only (drive.file): it can see
   and change only the files it puts there, nothing else in your Drive. If Google says the Drive API is

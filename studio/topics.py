@@ -308,6 +308,10 @@ def propose(pillar, n=6, competitor=()):
     learned = analytics.hint()
     if learned:
         comp += "\n" + learned
+    from studio import lessons
+    mistakes = lessons.advice("ideas")
+    if mistakes:
+        comp += "\n" + mistakes
     prompt = f"""You find topics for a YouTube Shorts channel (25-45 s, US English, narrated, original graphics).
 Niche: {d.get('name', '')}. Positioning: {plan.get('positioning', '')}. Audience: {plan.get('audience', '')}.
 Pillar: {pillar['name']}: {pillar.get('description', '')}
@@ -522,9 +526,15 @@ def maybe_discover(now=None):
 
 def pick_next(now=None, mark=True):
     """The best ready idea, nudged so pillars take turns and trending stays a minority. Marks it 'selected'."""
-    from studio import analytics
+    from studio import analytics, lessons
     now = now or time.time()
-    ideas = pool(now)
+    ideas = []
+    for t in pool(now):
+        if lessons.usable(t):
+            ideas.append(t)
+        elif mark:                                            # would fail for sure: don't spend a job on it
+            set_status(t["id"], "rejected", reject_reason="fewer than 2 working sources (skipped before writing)")
+            lessons.record("ideas", ["fewer than 2 working sources (skipped before writing)"], t)
     if not ideas:
         return None
     recent = [dict(r) for r in db.q("SELECT pillar, kind FROM topics WHERE selected IS NOT NULL ORDER BY selected DESC LIMIT 10")]
@@ -535,6 +545,7 @@ def pick_next(now=None, mark=True):
         s = t["score"] or 0
         s -= 8 * last3.count(t["pillar"])                   # pillars take turns
         s += analytics.nudge(t["pillar"])                   # learned from real results (capped, 0 until measured)
+        s -= lessons.risk(t, now)                           # learned from rejections (capped, fades after 30 days)
         if t["kind"] == "trending":
             if trending_share >= TRENDING_SHARE:
                 s -= 15                                       # don't lean on trends

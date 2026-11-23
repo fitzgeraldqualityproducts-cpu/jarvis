@@ -148,6 +148,9 @@ def write(topic, feedback=None, previous=None):
     d, plan = _niche()
     facts = _facts(topic)
     fact_list = "\n".join(f"F{i + 1}. {s['claim']} (source: {s['url']})" for i, s in enumerate(facts))
+    from studio import lessons
+    learned = lessons.advice("script")
+    learned = ("\n\n" + learned) if learned else ""
     fix = ""
     if feedback:
         fix = ("\n\nYour previous draft failed review. Fix EVERY problem below and change nothing else that was fine:\n"
@@ -170,7 +173,7 @@ Rules:
 - Plain words, short sentences, US spelling and units with metric where useful. No hype words, no clickbait.
 - Original: your own explanation and wording, not a summary of a known video.
 - "visual" says what the screen shows for that line (diagram, chart, number, map, simple animation; no footage).
-Also write 5 different hooks (each could replace line 1) and 3 title options (under 60 characters, honest).{fix}
+Also write 5 different hooks (each could replace line 1) and 3 title options (under 60 characters, honest).{learned}{fix}
 
 JSON only: {{"hooks": ["..." x5], "lines": [{{"text": "...", "facts": ["F1"], "visual": "..."}}],
 "calcs": [{{"expr": "...", "result": 0.0, "unit": "...", "says": "what it shows"}}], "titles": ["..." x3]}}"""
@@ -325,6 +328,8 @@ JSON only: {{"claims": [{{"line": 1, "verdict": "supported|unsupported|wrong|n/a
 def _check_topic(topic):
     from studio import topics
     if len(topics._working(_facts(topic))) < 2:
+        from studio import lessons
+        lessons.record("ideas", ["the topic has fewer than 2 working sources"], topic)
         raise ScriptRejected("the topic has fewer than 2 working sources")
 
 
@@ -367,6 +372,8 @@ def check_step(topic, video_id=None, max_revisions=1):
         topics.set_status(topic["id"], script_status="passed")
         guard.audit("script.passed", True, {"topic": topic["id"], "video": video_id, "version": row["version"]})
         return "passed", row
+    from studio import lessons
+    lessons.record("script", rev["hard_problems"], topic, video_id)
     tries = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status='failed'", video_id)["n"]
     if tries > max_revisions:
         topics.set_status(topic["id"], script_status="failed")
