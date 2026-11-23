@@ -276,6 +276,18 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(404, b"not found", "text/plain")
         return True
 
+    def _studio_get(self):
+        """The YouTube business dashboard (studio/dashboard.py). True if it handled the request."""
+        if not self.path.startswith("/studio"):
+            return False
+        try:
+            from studio import dashboard
+            code, body, ctype = dashboard.handle(self.path)
+        except Exception as e:
+            code, body, ctype = 500, json.dumps({"error": f"{type(e).__name__}: {e}"}).encode(), "application/json"
+        self._send(code, body, ctype)
+        return True
+
     def _send(self, code, body, ctype):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -326,7 +338,7 @@ class _Handler(BaseHTTPRequestHandler):
                 pass
 
     def do_GET(self):
-        if self._clipper_get():
+        if self._clipper_get() or self._studio_get():
             return
         if self.path.startswith("/state"):
             _last_view[0] = time.time()

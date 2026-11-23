@@ -57,3 +57,12 @@ def back_up_shorts_to_drive():
     note = " Your Google Drive is nearly full, so I stopped." if res["problem"] == "full" else ""
     return (f"Copied {res['copied']} file(s) ({res['bytes'] / (1 << 20):.0f} MB) to Google Drive and cleared "
             f"{freed / (1 << 20):.0f} MB from the Mac.{note} " + drive.say())
+
+
+@tool("Open the live YouTube business dashboard: the production line showing every Short moving from idea to "
+      "script, fact-check, voice, video, quality check, upload and live. Use for 'show me the channel', "
+      "'where are the videos at', 'let me watch the business run'.")
+def open_youtube_dashboard():
+    import display
+    display.open_page("/studio")
+    return "Opened the YouTube business dashboard in the browser."

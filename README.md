@@ -524,3 +524,9 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   disk space is low). Shorts waiting for upload are never removed. It stops before Drive gets within
   1 GB of full and tells you. **Back Up Shorts to Drive** runs it now; `python -m studio drive restore <id>`
   brings a Short's files back. Ask "are my Shorts backed up?". Free: Drive API + your free 15 GB.
+- Live dashboard: say "show me the YouTube dashboard" or double-click **Open YouTube Dashboard**
+  (http://localhost:8765/studio). An assembly line of nine stations (Idea, Script, Fact-check, Voice, Video,
+  Quality check, Ready, Uploading, Live): every Short sits at the station it's on, with how long it's been
+  there, retries and failures shown on the card. Channel numbers, Partner Program progress, recent uploads,
+  what Jarvis did lately and health sit around it. It refreshes every 4 seconds and only reads; it never
+  changes anything. If Jarvis isn't running, the double-click serves the page itself (port 8766).

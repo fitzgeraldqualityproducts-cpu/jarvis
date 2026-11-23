@@ -19,6 +19,7 @@
               render, metadata and the QA gate (--video <id>); never uploads
   upload      uploads the newest finished Short as PRIVATE to the business channel, after you confirm
               (--video <id>); then checks YouTube processed it
+  dashboard   opens the live dashboard (Jarvis's own page if Jarvis is running, else serves it itself)
   publish-mode  shows or sets how finished Shorts go out: manual (default), private, public
   drive       Google Drive backup: drive connect | drive (status) | drive backup | drive restore <video id>
               backup copies finished Shorts and reports, checks each copy, then clears Mac copies that are
@@ -203,6 +204,28 @@ def _drive(argv):
     return 0
 
 
+def _dashboard(argv):
+    """Opens Jarvis's /studio page when Jarvis is running; otherwise serves the dashboard here."""
+    import subprocess
+    import urllib.request
+    import webbrowser
+    from studio import dashboard
+    url = "http://localhost:8765/studio"
+    try:
+        json.loads(urllib.request.urlopen(url + "/state", timeout=3).read())
+        print(f"Opening {url}")
+        if sys.platform == "darwin":
+            subprocess.run(["open", url])
+        else:
+            webbrowser.open(url)
+        return 0
+    except Exception:
+        pass
+    health.startup()
+    dashboard.serve(open_browser="--no-open" not in argv)
+    return 0
+
+
 def main(argv):
     cmd = argv[0] if argv else "status"
     if cmd == "status":
@@ -268,6 +291,8 @@ def main(argv):
         return _video(argv)
     elif cmd == "upload":
         return _upload(argv)
+    elif cmd == "dashboard":
+        return _dashboard(argv)
     elif cmd == "publish-mode":
         return _publish_mode(argv)
     elif cmd == "autopilot":
