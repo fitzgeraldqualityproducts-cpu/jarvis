@@ -17,7 +17,7 @@ def studio_home(tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
     cfg.write_text(json.dumps({"studio": {"tick_seconds": 0}}))
     monkeypatch.setattr(config, "CONFIG", cfg)
-    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(config, "PLATFORM", "darwin")
     jobs.STAGES.clear()
     jobs._stop.clear()
     yield tmp_path
@@ -56,7 +56,7 @@ def test_off_by_default_and_mac_only():
     assert jobs.tick() is None                               # off: nothing runs
     _on()
     assert config.enabled() is True
-    sys.platform = "win32"
+    config.PLATFORM = "win32"
     assert config.enabled() is False
     config.set_values(allow_windows=True)
     assert config.enabled() is True
