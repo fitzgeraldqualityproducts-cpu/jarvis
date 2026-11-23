@@ -88,6 +88,9 @@ def validating(v, ctx):
     if not r["ok"]:
         if v.get("topic_id"):
             topics.set_status(v["topic_id"], script_status="passed", publish_status="qa_failed")
+        from studio import lessons
+        lessons.record("video", [f"qa: {c['name']} ({c['detail']})" for c in r["failed"]],
+                       topics.topic(v["topic_id"]) if v.get("topic_id") else None, v["id"])
         raise jobs.Permanent("failed QA: " + "; ".join(f"{c['name']} ({c['detail']})" for c in r["failed"][:5]))
     if v.get("topic_id"):
         topics.set_status(v["topic_id"], publish_status="ready")
@@ -125,6 +128,8 @@ def processing(v, ctx):
     if r["state"] in ("processing", "missing"):
         raise jobs.Wait("YouTube is still processing it", time.time() + 300)
     if r["state"] == "failed":
+        from studio import lessons
+        lessons.record("publish", [f"youtube rejected: {r.get('problem')}"], None, v["id"])
         raise jobs.Permanent(f"YouTube rejected the upload: {r.get('problem')}")
     if r["state"] == "scheduled":
         return "scheduled"
@@ -141,6 +146,8 @@ def scheduled(v, ctx):
         at = (publish.job(v["id"]) or {}).get("publish_at")
         raise jobs.Wait("scheduled on YouTube", (float(at) if at else time.time()) + 600)
     if r["state"] == "failed":
+        from studio import lessons
+        lessons.record("publish", [f"youtube rejected: {r.get('problem')}"], None, v["id"])
         raise jobs.Permanent(f"YouTube rejected the video: {r.get('problem')}")
     if r["state"] != "published":
         raise jobs.Wait(f"expected it to be public by now; YouTube says {r['state']}", time.time() + 1800)

@@ -119,8 +119,12 @@ def test_duplicates_catch_rephrasing(setup):
 
 def _idea(db, title, pillar, score, kind="evergreen", fresh=None):
     from studio import topics
-    return db.insert("INSERT INTO topics(title, fingerprint, pillar, kind, score, status, fresh_until, discovered) "
-                     "VALUES(?,?,?,?,?,?,?,?)", title, topics.fingerprint(title), pillar, kind, score, "idea", fresh, time.time())
+    tid = db.insert("INSERT INTO topics(title, fingerprint, pillar, kind, score, status, fresh_until, discovered) "
+                    "VALUES(?,?,?,?,?,?,?,?)", title, topics.fingerprint(title), pillar, kind, score, "idea", fresh, time.time())
+    for n in (1, 2):
+        db.insert("INSERT INTO sources(topic_id, claim, url, http_status) VALUES(?,?,?,?)", tid, "fact",
+                  f"https://example.org/{tid}/{n}", 200)
+    return tid
 
 
 def test_pick_rotates_pillars_and_limits_trends(setup):

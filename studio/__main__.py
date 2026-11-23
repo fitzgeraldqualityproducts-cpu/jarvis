@@ -307,6 +307,14 @@ def main(argv):
             autopilot.resume()
             print("The autopilot is on: one Short at a time, a small buffer ahead, only Shorts that pass every check.")
         print(json.dumps(autopilot.status(), indent=2, default=str))
+    elif cmd == "lessons":
+        from studio import lessons
+        health.startup()
+        print(lessons.summary())
+        for area in ("ideas", "script", "video"):
+            a = lessons.advice(area)
+            if a:
+                print(f"\n[{area}]\n{a}")
     elif cmd == "stats":
         from studio import analytics
         health.startup()

@@ -172,12 +172,15 @@ def plan(script_row):
     calcs = "\n".join(f"- {c.get('expr')} = {c.get('actual') or c.get('result')} {c.get('unit', '')}: {c.get('says', '')}"
                       for c in st.get("calcs") or [])
     tmpl = "\n".join(f"- {k}: {v}" for k, v in TEMPLATES.items())
+    from studio import lessons
+    learned = lessons.advice("video")
+    learned = ("\n" + learned) if learned else ""
     prompt = f"""Plan the on-screen visual for each narrated line of a science Short. One scene per line, chosen from:
 {tmpl}
 Use only numbers from the line or these checked calculations:
 {calcs or '- (none)'}
 Keep text short (labels under 6 words, headline under 9). Prefer number/equation/compare/scale when the line
-has numbers; use steps for a process; headline otherwise. Writer's visual notes are hints only.
+has numbers; use steps for a process; headline otherwise. Writer's visual notes are hints only.{learned}
 
 Lines:
 """ + "\n".join(f"{i + 1}. {t}  (note: {st['lines'][i].get('visual', '')})" for i, t in enumerate(lines)) + \
