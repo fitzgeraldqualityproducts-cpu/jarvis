@@ -228,6 +228,18 @@ def main(argv):
         return _upload(argv)
     elif cmd == "publish-mode":
         return _publish_mode(argv)
+    elif cmd == "stats":
+        from studio import analytics
+        health.startup()
+        if "--offline" not in argv:
+            try:
+                n = analytics.fetch()
+                analytics.channel()
+                print(f"(read the latest numbers for {n} Short(s) from YouTube)")
+            except Exception as e:
+                print(f"(couldn't reach YouTube just now, showing saved numbers: {e})")
+        analytics.learn()
+        print(analytics.report())
     elif cmd == "brand":
         from studio import setup_channel
         return setup_channel.brand_flow()

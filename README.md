@@ -491,3 +491,11 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
   after typing PUBLIC: uploaded private with a publish time, about 3 a week at 5 PM Central, at least 40
   hours apart, then confirmed public). Note: Google may keep uploads from an unaudited API project
   private; the first private test shows what applies to this project.
+- Phase 9 (done): analytics and learning, read-only. Every 6 hours (studio on) Jarvis reads each studio
+  Short's numbers from YouTube itself: views and likes (Data API) and, once YouTube has them (1-3 days),
+  watch time, average percentage viewed, shares, subscribers gained and how many were still watching at
+  about 10% of the Short (the hook). Missing numbers are saved as missing, never guessed. After 3 days
+  public each Short gets a performance index (50 = typical for this channel); a pillar with 3+ measured
+  Shorts nudges idea picking by at most 6 points, and the idea finder hears what worked. A weekly report
+  goes to studio_data/reports/ and Jarvis tells you about it. Double-click **Show YouTube Stats** or ask
+  "how's the YouTube channel doing?". Revenue is never read.

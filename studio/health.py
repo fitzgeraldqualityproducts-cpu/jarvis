@@ -116,6 +116,17 @@ def news():
     return [r["msg"] for r in rows]
 
 
+def peek_news(limit=3):
+    """[(id, msg)] of alerts not yet told, without marking them (Jarvis marks them once spoken)."""
+    return [(r["id"], r["msg"]) for r in db.q("SELECT id, msg FROM notices WHERE told=0 ORDER BY id LIMIT ?", limit)]
+
+
+def mark_told(ids):
+    ids = [int(i) for i in ids]
+    if ids:
+        db.run(f"UPDATE notices SET told=1 WHERE id IN ({','.join(map(str, ids))})")
+
+
 def recovery(what, detail="", result="", video_id=None):
     db.insert("INSERT INTO recovery_events(t, what, video_id, detail, result) VALUES(?,?,?,?,?)",
               time.time(), what, video_id, guard.redact(detail)[:1000], result)
