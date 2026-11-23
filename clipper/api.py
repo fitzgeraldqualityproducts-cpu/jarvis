@@ -79,7 +79,8 @@ def state():
         "awaiting_auth": db.q("SELECT j.id job_id, v.id video_id, v.title, v.url, v.creator, v.auth_basis FROM jobs j "
                               "JOIN videos v ON v.id=j.video_id WHERE j.state='awaiting_authorization' ORDER BY j.id DESC LIMIT 30"),
         "youtube": {"connected": youtube.connected("main"), "client": bool(youtube.client()), "title": ch.get("youtube_title"),
-                    "quota_used": youtube.quota_used(), "quota": settings.general()["youtube_daily_quota"]},
+                    "quota_used": youtube.quota_used(), "quota": settings.general()["youtube_daily_quota"],
+                    "quota_buckets": youtube.quota_summary()},
         "uploads": db.q("SELECT id, clip_id, status, privacy, publish_at, youtube_id, attempts, error FROM uploads ORDER BY id DESC LIMIT 60"),
         "analysis": analysis, "learned": (ch.get("learned") or {}).get("prefs", {}), "tuning": _tuning(),
         "general": settings.general(),

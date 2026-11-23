@@ -10,9 +10,9 @@ What it needs once (free): a Google Cloud "OAuth client" of type Desktop app, wi
 API v3 and YouTube Analytics API turned on. Its JSON file goes in clipper_data/secrets/google_client.json
 (Connect YouTube asks for it). See README "Shorts Clipper" for click-by-click steps.
 
-Heads-up from Google's rules: videos uploaded through a new app that Google hasn't audited are
-locked to private. Private and unlisted work immediately; public publishing needs Google's free
-API audit for your project. Jarvis notices the lock and tells you instead of pretending.
+Heads-up from Google's rules: videos uploaded through apps Google hadn't audited used to be locked
+to private. Google's upload page now says they aren't (checked 2026-11-23), but Jarvis still reads
+each video's status back after upload, and if Google locked it, says so instead of pretending.
 
 Uploads are resumable (8 MB pieces; a dropped connection or restart continues from the last piece),
 retried with exponential backoff on network/5xx errors, and stop cleanly on quota errors. Every API
@@ -42,7 +42,11 @@ UPLOAD = "https://www.googleapis.com/upload/youtube/v3/videos"
 ANALYTICS = "https://youtubeanalytics.googleapis.com/v2/reports"
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly",
           "https://www.googleapis.com/auth/yt-analytics.readonly"]
-COSTS = {"list": 1, "search": 100, "insert": 1600, "update": 50, "analytics": 0}   # Analytics has its own quota
+COSTS = {"list": 1, "search": 1, "insert": 1, "update": 50, "thumbnail": 50, "analytics": 0}   # Analytics has its own quota
+# Google's quota (developers.google.com/youtube/data/determine_quota_cost, checked 2026-11-23): uploads
+# (videos.insert) and searches (search.list) each have their own bucket of 100 calls a day at 1 unit a
+# call; every other call shares 10,000 units a day.
+BUCKETS = {"insert": "uploads", "search": "searches"}
 CHUNK = 8 << 20
 
 
@@ -240,21 +244,37 @@ def _pacific_day():
     return (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=8)).strftime("%Y-%m-%d")
 
 
-def quota_used():
-    return int(db.get(f"quota_{_pacific_day()}", 0) or 0)
+def _limit(bucket):
+    g = settings.general()
+    return int({"uploads": g.get("youtube_daily_uploads", 100), "searches": g.get("youtube_daily_searches", 100)}
+               .get(bucket, g["youtube_daily_quota"]))
 
 
-def quota_left():
-    return int(settings.general()["youtube_daily_quota"]) - quota_used()
+def _key(bucket):
+    return f"quota_{_pacific_day()}" if bucket == "units" else f"quota_{bucket}_{_pacific_day()}"
+
+
+def quota_used(bucket="units"):
+    """Used today in one of Google's buckets: "units" (everything else), "uploads" or "searches"."""
+    return int(db.get(_key(bucket), 0) or 0)
+
+
+def quota_left(bucket="units"):
+    return _limit(bucket) - quota_used(bucket)
+
+
+def quota_summary():
+    return {b: {"used": quota_used(b), "limit": _limit(b)} for b in ("units", "uploads", "searches")}
 
 
 def _spend(kind):
-    cost = int(settings.general()["youtube_upload_cost"]) if kind == "insert" else COSTS.get(kind, 1)
-    if db.get(f"quota_out_{_pacific_day()}", False):
+    bucket = BUCKETS.get(kind, "units")
+    cost = COSTS.get(kind, 1)
+    if db.get(f"quota_out_{bucket}_{_pacific_day()}", False) or (bucket == "units" and db.get(f"quota_out_{_pacific_day()}", False)):
         raise QuotaExceeded("YouTube's daily API quota is used up; it resets at midnight Pacific time")
-    if quota_used() + cost > int(settings.general()["youtube_daily_quota"]):
+    if quota_used(bucket) + cost > _limit(bucket):
         raise QuotaExceeded("this would go over today's YouTube API quota; waiting until it resets")
-    db.put(f"quota_{_pacific_day()}", quota_used() + cost)
+    db.put(_key(bucket), quota_used(bucket) + cost)
 
 
 # ---------- requests ----------
@@ -278,7 +298,7 @@ def call(channel, method, url, params=None, body=None, kind="list", headers=None
             reason = _reason(text)
             if e.code == 403 and reason in ("quotaExceeded", "dailyLimitExceeded", "rateLimitExceeded", "userRateLimitExceeded"):
                 if reason in ("quotaExceeded", "dailyLimitExceeded"):
-                    db.put(f"quota_out_{_pacific_day()}", True)
+                    db.put(f"quota_out_{BUCKETS.get(kind, 'units')}_{_pacific_day()}", True)
                     raise QuotaExceeded("YouTube's daily API quota is used up", e.code, reason)
             if e.code in (500, 502, 503, 504) or reason in ("rateLimitExceeded", "userRateLimitExceeded"):
                 time.sleep(min(60, 2 ** attempt + secrets.randbelow(1000) / 1000))

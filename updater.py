@@ -151,7 +151,7 @@ def check(manual=False):
         _lock.release()
 
 
-DATA_PATTERNS = ("clipper_data/", "db-rescue")
+DATA_PATTERNS = ("clipper_data/", "studio_data/", "db-rescue")
 DATA_SUFFIXES = (".db", ".db-wal", ".db-shm", ".db-journal", ".db.bak")
 
 

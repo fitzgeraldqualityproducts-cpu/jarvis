@@ -223,7 +223,12 @@ def test_local_quota_budget_blocks(yt, tmp_path):
     from clipper import settings, youtube
     settings.ensure_default_channel()
     youtube.sign_in("main", timeout=20)
-    settings.set_global(youtube_daily_quota=youtube.quota_used() + 100)
+    settings.set_global(youtube_daily_quota=youtube.quota_used() + 40)
+    youtube._spend("insert")                     # uploads have their own bucket (100 a day)
+    assert youtube.quota_used("uploads") == 1
+    with pytest.raises(youtube.QuotaExceeded):
+        youtube._spend("update")                 # 50 units would go over the 40 left in the shared bucket
+    settings.set_global(youtube_daily_uploads=1)
     with pytest.raises(youtube.QuotaExceeded):
         youtube._spend("insert")
 
