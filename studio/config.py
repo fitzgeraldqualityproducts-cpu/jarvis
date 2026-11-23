@@ -35,7 +35,7 @@ DEFAULTS = {
     "claude_calls_per_day": 60,         # cap on Claude Code calls (Connor's plan is shared with Jarvis)
     "tick_seconds": 30,                 # how often the worker looks for work
     "notify_cooldown_minutes": 180,     # the same alert is spoken at most this often
-    "voice": "af_heart",                # the channel's Kokoro voice (US English); keep it once videos are public
+    "voice": "am_michael",              # the channel's Kokoro voice (US English), picked by Connor 2026-11-23; keep it once videos are public
     "voice_speed": 1.05,
 }
 

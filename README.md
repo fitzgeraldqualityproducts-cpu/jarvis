@@ -437,6 +437,12 @@ money, and never posts comments. It's built in phases; the plan is in the Phase 
 - Status: `.venv/bin/python -m studio status`. Tests: `.venv/bin/python -m pytest tests/test_studio_*.py`.
 - Phase 1 (done): database with migrations, job queue with retries and restart recovery, the
   permission guard (allow-list, one-channel lock, $0 tool registry, audit log), health and disk limits.
-- Phase 2 (done): narration with Kokoro in a US voice (config "studio" "voice", default af_heart; Jarvis's own
+- Phase 2 (done): narration with Kokoro in a US voice (config "studio" "voice", default am_michael, picked by Connor; Jarvis's own
   voice is unchanged), silence trimming, loudness to -14 LUFS, validation. `python -m studio toolchain`
   lists every tool with its licence; `python -m studio test-short` makes a real test Short and times it.
+- Phase 3 (done): niche research. Double-click **Research YouTube Niche** (first time it walks you through
+  a free, read-only YouTube API key). It measures recent Shorts and competitors through YouTube's
+  official API, researches monetization, sustainability and production with Claude (sources required),
+  scores 20 candidate niches with the fixed weights, picks one, defines 3-7 content pillars, and opens
+  the Top 10 report (`studio_data/research/<run>/report.html`). Scores are reproducible from the saved
+  evidence; once picked, the niche only changes with `--rechoose "<reason>"`.
