@@ -161,3 +161,12 @@ def test_remotion_output_is_used_and_reported(fakes, fake_voice, monkeypatch):  
     assert props_seen["scenes"][0]["start"] == 0 and "video" not in props_seen["scenes"][0]
     assert props_seen["pages"] and rep["caption_words_shown"] == rep["words"]
     assert all(c[1] + c[3] <= 1920 * 0.8 and c[0] >= 40 and c[0] + c[2] <= 1080 - 120 for c in rep["caption_boxes"])
+
+
+def test_memory_need_is_halved_under_normal_mac_pressure(studio_home, monkeypatch):  # noqa: F811
+    from studio import engines
+    monkeypatch.setattr(engines, "free_gb", lambda: 1.6)
+    monkeypatch.setattr(engines, "_pressure_normal", lambda: True)
+    assert engines.enough_memory("chatterbox")[0]                     # needs 1.5 GB when pressure is normal
+    monkeypatch.setattr(engines, "_pressure_normal", lambda: False)
+    assert not engines.enough_memory("chatterbox")[0]                 # 3 GB under pressure

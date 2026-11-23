@@ -87,6 +87,19 @@ def _npx():
 
 # ---------- memory and the one-heavy-job lock ----------
 
+def _pressure_normal():
+    """macOS: True while the system says memory pressure is normal (it compresses and frees memory on
+    its own, so "available" pages under-count what a short job can really get)."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        out = subprocess.run(["sysctl", "-n", "kern.memorystatus_vm_pressure_level"], capture_output=True,
+                             text=True, timeout=5).stdout.strip()
+        return out == "1"
+    except Exception:
+        return False
+
+
 def free_gb():
     """Memory the Mac can hand out right now (free + inactive + purgeable), or None if unknown."""
     try:
@@ -106,6 +119,19 @@ def free_gb():
         except Exception:
             return None
     return None
+
+
+def enough_memory(tool):
+    """(ok, free GB, needed GB). Under normal macOS memory pressure half the nominal need is enough,
+    because macOS compresses idle memory to make room; under warning or critical pressure the full
+    amount must be free."""
+    need = SPECS[tool]["mem_gb"]
+    free = free_gb()
+    if free is None:
+        return True, None, need
+    if _pressure_normal():
+        need = need * 0.5
+    return free >= need, free, need
 
 
 @contextmanager
@@ -148,9 +174,9 @@ def run(tool, worker, payload, timeout=None):
         return RUNNER(tool, worker, payload, timeout)
     if not installed(tool):
         raise EngineError(f"{tool} isn't installed (run: python -m studio engines install)")
-    free = free_gb()
-    if free is not None and free < spec["mem_gb"]:
-        raise EngineError(f"{tool} needs about {spec['mem_gb']:.1f} GB of free memory and only {free:.1f} GB is free")
+    ok, free, need = enough_memory(tool)
+    if not ok:
+        raise EngineError(f"{tool} needs about {need:.1f} GB of free memory and only {free:.1f} GB is free")
     with tempfile.TemporaryDirectory(prefix=f"jv-{tool}-") as tmp:
         pin, pout = Path(tmp) / "in.json", Path(tmp) / "out.json"
         pin.write_text(json.dumps(payload))
@@ -177,9 +203,9 @@ def remotion_render(props, public_dir, out, timeout=None):
         return RUNNER("remotion", "render", {"props": props, "public": str(public_dir), "out": str(out)}, timeout)
     if not installed("remotion"):
         raise EngineError("Remotion isn't installed (run: python -m studio engines install)")
-    free = free_gb()
-    if free is not None and free < SPECS["remotion"]["mem_gb"]:
-        raise EngineError(f"Remotion needs about {SPECS['remotion']['mem_gb']} GB of free memory and only {free:.1f} GB is free")
+    ok, free, need = enough_memory("remotion")
+    if not ok:
+        raise EngineError(f"Remotion needs about {need:.1f} GB of free memory and only {free:.1f} GB is free")
     pf = Path(public_dir) / "remotion_props.json"
     pf.write_text(json.dumps(props))
     npx = shutil.which("npx") or _npx()
