@@ -99,7 +99,7 @@ def connect_flow():
             webbrowser.open(p)
             time.sleep(1.2)
         input("Press Enter once the app is published (or the new account is a test user)...")
-    if not guard.protected_channels():
+    if not guard.protected_channels() and not guard.locked_channel():
         print("\nFirst, so Jarvis can NEVER post to your existing channel:")
         h = input("Type your EXISTING channel's handle (like @yourname), or press Enter if you have none: ").strip()
         if h:

@@ -163,6 +163,11 @@ def protect_existing(handle_or_id):
         if not items:
             raise ValueError(f"YouTube has no channel with the handle {h}")
         cid, title = items[0]["id"], items[0]["snippet"]["title"]
+    lk = guard.locked_channel()
+    if lk and lk["youtube_channel_id"] == cid:
+        guard.audit("channel.protect", False, {"channel": cid, "why": "this is the business channel"})
+        raise ValueError(f"{title} is the business channel itself, so it can't go on the never-publish list. "
+                         "Type your OTHER, existing channel's handle instead.")
     ids = list(config.general().get("protected_channels") or [])
     if cid not in ids:
         ids.append(cid)
