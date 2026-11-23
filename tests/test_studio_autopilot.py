@@ -60,6 +60,8 @@ def test_halts_after_failures_in_a_row_and_resumes(line):
     assert any("stopped making new YouTube Shorts" in m for _, m in health.peek_news(5))
     autopilot.resume()
     assert autopilot.halted() is None
+    assert autopilot.failure_streak() == 0                         # old failures don't re-halt it at once
+    assert autopilot.maybe_make() and autopilot.halted() is None
 
 
 def test_waits_without_ideas_or_channel(line, monkeypatch):

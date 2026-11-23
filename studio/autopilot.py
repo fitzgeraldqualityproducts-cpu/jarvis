@@ -37,6 +37,8 @@ def halt(reason):
 
 def resume():
     db.put("autopilot_halted", None)
+    last = db.one("SELECT MAX(id) n FROM videos")
+    db.put("autopilot_resumed_after", (last["n"] if last else 0) or 0)   # old failures no longer count
     db.insert("INSERT INTO decisions(t, area, decision, evidence) VALUES(?,?,?,?)", time.time(), "autopilot",
               "resumed making new Shorts", "{}")
 
@@ -44,8 +46,9 @@ def resume():
 def failure_streak():
     """How many of the most recent finished auto Shorts failed in a row."""
     n = 0
-    for r in db.q("SELECT state FROM videos WHERE idem_key LIKE 'auto-%' AND state IN ('failed','published','ready',"
-                  "'uploading','processing','scheduled') ORDER BY id DESC LIMIT 20"):
+    after = int(db.get("autopilot_resumed_after", 0) or 0)
+    for r in db.q("SELECT state FROM videos WHERE idem_key LIKE 'auto-%' AND id>? AND state IN ('failed','published',"
+                  "'ready','uploading','processing','scheduled') ORDER BY id DESC LIMIT 20", after):
         if r["state"] != "failed":
             break
         n += 1
