@@ -1,0 +1,23 @@
+"""Loads a tool's library (not its models) and reports its version. Runs inside that tool's env."""
+import json
+import sys
+
+pin, pout = sys.argv[1], sys.argv[2]
+tool = json.load(open(pin))["tool"]
+try:
+    if tool == "chatterbox":
+        import chatterbox.tts  # noqa: F401
+        from importlib.metadata import version
+        v = version("chatterbox-tts")
+    elif tool == "whisperx":
+        import whisperx  # noqa: F401
+        from importlib.metadata import version
+        v = version("whisperx")
+    elif tool == "manim":
+        import manim
+        v = manim.__version__
+    else:
+        raise ValueError(tool)
+    json.dump({"version": v}, open(pout, "w"))
+except Exception as e:
+    json.dump({"error": f"{type(e).__name__}: {e}"}, open(pout, "w"))

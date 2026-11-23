@@ -24,12 +24,82 @@
   publish-mode  shows or sets how finished Shorts go out: manual (default), private, public
   drive       Google Drive backup: drive connect | drive (status) | drive backup | drive restore <video id>
               backup copies finished Shorts and reports, checks each copy, then clears Mac copies that are
-              on YouTube and safe on Drive (after drive_keep_local_days; --now skips the wait)"""
+              on YouTube and safe on Drive (after drive_keep_local_days; --now skips the wait)
+  engines     the upgraded video tools (Chatterbox voice, whisperX timing, Manim animation, Remotion captions):
+              engines (status) | engines install [tool|all] | engines check | engines use on|off
+  sample      makes a side-by-side sample with the upgraded tools from a finished Short (--video <id>):
+              its voice and video next to the current ones; changes nothing and uploads nothing"""
 import json
 import sys
 import time
 
 from studio import health, jobs, status
+
+
+def _engines(argv):
+    from studio import engines
+    sub = argv[1] if len(argv) > 1 else "status"
+    if sub == "install":
+        which = argv[2] if len(argv) > 2 and argv[2] != "all" else None
+        for tool in ([which] if which else list(engines.SPECS)):
+            try:
+                engines.install(tool)
+                ok, why = engines.check(tool)
+                print(f"{tool}: {'ready' if ok else 'NOT ready'} ({why})")
+            except Exception as e:
+                print(f"{tool}: couldn't install ({e})")
+    elif sub == "check":
+        for tool in engines.SPECS:
+            ok, why = engines.check(tool)
+            print(f"{tool}: {'ok' if ok else 'not ready'} ({why})")
+    elif sub == "use":
+        on = len(argv) < 3 or argv[2] != "off"
+        print(json.dumps(engines.use(on), indent=2))
+    print(json.dumps(engines.status(), indent=2))
+    return 0
+
+
+def _sample(argv):
+    """The upgraded voice and video for a finished Short, next to the current ones (nothing saved)."""
+    import shutil
+    import subprocess
+    from studio import data_dir, db, engines, narration, qa, script, video
+    health.startup()
+    if "--video" in argv:
+        vid = int(argv[argv.index("--video") + 1])
+    else:
+        r = db.one("SELECT v.id FROM videos v JOIN voiceovers o ON o.video_id=v.id JOIN scripts s ON s.video_id=v.id "
+                   "AND s.status='passed' WHERE v.path IS NOT NULL ORDER BY v.id DESC LIMIT 1")
+        if not r:
+            print("No finished Short yet to make a sample from.")
+            return 1
+        vid = r["id"]
+    row = script.latest(vid, "passed")
+    folder = data_dir("videos", str(vid))
+    out = data_dir("videos", str(vid), "sample")
+    print(f"Sample for Short {vid}: {db.video(vid)['title'] or ''}")
+    print("1/2 Narration with Chatterbox (the channel's voice, more expressive)...")
+    v = narration.narrate(row["body"], out / "voice_upgraded.wav", vid, engine="chatterbox", record=False)
+    print(f"    {v['engine']}: {v['seconds']} s" + (f"  ({v['fallback']})" if v.get("fallback") else ""))
+    print("2/2 Video with whisperX timing, Manim animations and Remotion captions...")
+    rep = video.render(vid, progress=lambda s: print("    " + s), engines_override=engines.UPGRADED,
+                       out_name="sample/short_upgraded.mp4", record=False, voice_path=v["path"])
+    for k, why in rep["engines"].items():
+        print(f"    {k}: {why}")
+    old = db.one("SELECT path FROM voiceovers WHERE video_id=? ORDER BY id DESC LIMIT 1", vid)
+    if old and old["path"]:
+        shutil.copy(old["path"], out / "voice_current.wav")
+    if db.video(vid)["path"]:
+        shutil.copy(db.video(vid)["path"], out / "short_current.mp4")
+    first, last = qa.edge_frames(rep["path"])
+    import numpy as np
+    diff = float(np.mean(np.abs(first.astype(np.int16) - last.astype(np.int16)))) if first is not None else None
+    print(f"\nDone: {rep['duration']} s, speech starts at {rep['speech_start']} s, loop difference "
+          f"{diff if diff is None else round(diff, 1)}, {rep['caption_words_shown']} of {rep['words']} words captioned.")
+    print(f"Compare them in {out}: short_current.mp4 vs short_upgraded.mp4, voice_current.wav vs voice_upgraded.wav")
+    if sys.platform == "darwin":
+        subprocess.run(["open", str(out)])
+    return 0
 
 
 def _script(argv):
@@ -347,6 +417,10 @@ def main(argv):
         print(ytauth.protect_existing(argv[1]))
     elif cmd == "drive":
         return _drive(argv)
+    elif cmd == "engines":
+        return _engines(argv)
+    elif cmd == "sample":
+        return _sample(argv)
     elif cmd == "run":
         jobs.start()
         try:

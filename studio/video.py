@@ -10,6 +10,8 @@ draw_scene()   draws a scene at 1080x1920 from shapes and text only (original, n
 render()       scenes with a slow push-in and short crossfades, a thin progress bar, word-synced
                captions (the clipper's caption engine) and the narration -> H.264/AAC MP4.
 metadata()     title, description (sources + AI-narration note), tags, category and flags.
+Optional upgrades (studio/engines.py, each with its own fallback): whisperX forced alignment for the word
+timings, Manim animations for every scene after the hook, and Remotion for animated captions.
 Every generated image is recorded in the assets table with its licence (original) and checksum."""
 import hashlib
 import json
@@ -81,14 +83,33 @@ def _speech_span(audio):
     return on[0] * 0.02, min(dur, (on[-1] + 1) * 0.02), dur
 
 
-def word_times(audio, text):
-    """[{w, s, e}] for every script word (exact text), plus how they were timed."""
+def _aligned(audio, words):
+    """whisperX forced alignment of the known words: [{w, s, e}] for the words it could place."""
+    from studio import engines
+    with engines.heavy("whisperX alignment"):
+        ans = engines.run("whisperx", "whisperx_worker", {"audio": str(audio), "words": words})
+    return [w for w in ans.get("words") or [] if w.get("s") is not None]
+
+
+def word_times(audio, text, align=None):
+    """[{w, s, e}] for every script word (exact text), plus how they were timed. align "whisperx" lines
+    the known script up with the audio (falls back to Whisper's transcript when that isn't possible)."""
+    from studio import engines
     words = text.split()
-    heard = []
-    try:
-        heard = [w for w in (_heard(audio, text) or []) if str(w.get("w", "")).strip()]
-    except Exception:
-        heard = []
+    heard, method, note = [], "whisper matched to the script", None
+    if (align or engines.settings()["align"]) == "whisperx":
+        try:
+            heard = _aligned(audio, words)
+            method = "whisperX forced alignment"
+        except Exception as e:
+            note = f"whisperX wasn't used: {str(e)[:200]}"
+            heard = []
+    if not heard:
+        method = "whisper matched to the script"
+        try:
+            heard = [w for w in (_heard(audio, text) or []) if str(w.get("w", "")).strip()]
+        except Exception:
+            heard = []
     out = [{"w": w, "s": None, "e": None} for w in words]
     matched = 0
     if heard:
@@ -106,7 +127,7 @@ def word_times(audio, text):
             d = (end - start) * (len(o["w"]) + 2) / total
             o["s"], o["e"] = round(t, 3), round(t + d * 0.92, 3)
             t += d
-        return out, {"method": "even spread", "matched": round(ratio, 2)}
+        return out, {"method": "even spread", "matched": round(ratio, 2), **({"note": note} if note else {})}
     known = [i for i, o in enumerate(out) if o["s"] is not None]
     for i, o in enumerate(out):                        # fill gaps between matched words
         if o["s"] is not None:
@@ -123,7 +144,7 @@ def word_times(audio, text):
         if out[i]["s"] < out[i - 1]["s"]:
             out[i]["s"] = out[i - 1]["s"]
         out[i]["e"] = max(out[i]["e"], out[i]["s"] + 0.05)
-    return out, {"method": "whisper matched to the script", "matched": round(ratio, 2)}
+    return out, {"method": method, "matched": round(ratio, 2), **({"note": note} if note else {})}
 
 
 def line_starts(lines, words):
@@ -401,48 +422,125 @@ def _zoom(frame, z):
     return cv2.warpAffine(frame, m, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
 
-def render(video_id, progress=lambda s: None):
-    """Makes studio_data/videos/<id>/short.mp4 from the passed script and narration. Returns a report."""
+ANIMATED = ("number", "equation", "compare", "scale", "steps", "headline")
+
+
+def _manim_clips(scenes, starts, folder, pal, handle, bg):
+    """{scene index: {"video", "hold", "seconds"}} from Manim, for every scene but the hook (whose first
+    frame must already show its number). Scenes Manim couldn't make keep their still picture."""
+    from studio import engines
+    jobs_ = [{"spec": sc, "out": str(folder / f"manim_{i + 1:02d}.mp4"), "seconds": starts[i + 1] - starts[i]}
+             for i, sc in enumerate(scenes) if i > 0 and sc.get("type") in ANIMATED]
+    if not jobs_:
+        return {}, "no scenes to animate"
+    with engines.heavy("Manim animations"):
+        ans = engines.run("manim", "manim_worker", {
+            "scenes": jobs_, "palette": pal, "background": str(bg), "handle": handle, "box": BOX,
+            "W": W, "H": H, "fps": FPS, "font": "Arial"})
+    out = {}
+    for j, c in zip(jobs_, ans.get("clips") or []):
+        if c.get("ok") and Path(c["out"]).exists() and Path(c.get("hold", "")).exists():
+            k = int(Path(c["out"]).stem.split("_")[1]) - 1
+            out[k] = {"video": c["out"], "hold": c["hold"], "seconds": float(c.get("seconds") or 1.5)}
+    return out, f"{len(out)} of {len(jobs_)} scenes animated"
+
+
+class _Clip:
+    """Reads one Manim clip frame by frame as the timeline moves forward (one clip open at a time, so
+    memory stays flat on an 8 GB Mac)."""
+
+    def __init__(self):
+        self.k, self.cap, self.n, self.last = None, None, -1, None
+
+    def frame(self, k, path, i):
+        import cv2
+        if k != self.k:
+            if self.cap:
+                self.cap.release()
+            self.k, self.cap, self.n, self.last = k, cv2.VideoCapture(path), -1, None
+        while self.n < i:
+            ok, fr = self.cap.read()
+            if not ok:
+                break
+            self.n += 1
+            self.last = fr
+        return self.last
+
+    def close(self):
+        if self.cap:
+            self.cap.release()
+
+
+def _caption_props(words, pal):
+    """Caption pages for Remotion, grouped exactly like the classic captions."""
+    from clipper import captions
+    brand = {"color": pal["cyan"], "highlight": pal["amber"]}
+    stl = captions.resolve("highlight", {"brand": brand}, {"y": CAPTION_Y})
+    stl["y"] = CAPTION_Y
+    left = captions.SAFE["left"]
+    width = W - captions.SAFE["left"] - captions.SAFE["right"]
+    pages = captions.pages(words, stl, width)
+    keys = sorted(captions.pick_keywords(words, []))
+    size, lines = 80, 2
+    boxes = [(left, int(CAPTION_Y * H - size * lines * 0.62), width, int(size * lines * 1.24)) for _ in pages]
+    return {"pages": [{"s": p["s"], "e": p["e"], "words": p["words"]} for p in pages], "keywords": keys,
+            "caption": {"y": CAPTION_Y, "left": left, "width": width, "size": size, "maxLines": lines}}, boxes
+
+
+def render(video_id, progress=lambda s: None, engines_override=None, out_name="short.mp4", record=True,
+           voice_path=None):
+    """Makes studio_data/videos/<id>/<out_name> from the passed script and narration. Returns a report.
+    The upgraded tools (whisperX, Manim, Remotion; see studio/engines.py) are used when switched on and
+    working; each falls back to the classic way on its own. record=False (a sample) changes nothing in
+    the database."""
     import cv2
     from clipper import captions, media
-    from studio import script
+    from studio import engines, script
     guard.allow("media.local", f"render video {video_id}", record=False)
+    eng = engines.settings(engines_override)
+    used = {}
     row = script.latest(video_id, "passed")
     voice = db.one("SELECT * FROM voiceovers WHERE video_id=? ORDER BY id DESC LIMIT 1", video_id)
-    if not row or not voice:
+    if not row or not (voice or voice_path):
         raise RuntimeError("the video needs a passed script and its narration first")
+    src_voice = voice_path or voice["path"]
     folder = data_dir("videos", str(video_id))
     meta = json.loads(db.video(video_id)["meta"] or "{}")
     st = json.loads(row["structure"])
     lines = [ln["text"] for ln in st["lines"]]
     lines[0] = row["hook"]
     progress("Timing every word")
-    words, timing = word_times(voice["path"], " ".join(lines))
+    words, timing = word_times(src_voice, " ".join(lines), align=eng["align"])
+    used["align"] = timing["method"] + (f" ({timing['note']})" if timing.get("note") else "")
     if "scenes" not in meta:
         progress("Planning the visuals")
         meta["scenes"] = plan(row)
-        db.set_video(video_id, meta=json.dumps(meta))
+        if record:
+            db.set_video(video_id, meta=json.dumps(meta))
     scenes = meta["scenes"]
     pal = palette()
     handle = (db.one("SELECT handle FROM channel WHERE id=1") or {"handle": ""})["handle"] or ""
     progress("Drawing the scenes")
-    imgs, boxes = [], []
-    db.run("DELETE FROM assets WHERE video_id=? AND origin='generated'", video_id)
+    imgs, boxes, stills = [], [], []
+    if record:
+        db.run("DELETE FROM assets WHERE video_id=? AND origin='generated'", video_id)
     for i, sc in enumerate(scenes):
         img, box = draw_scene(sc, pal, handle)
         p = folder / f"scene_{i + 1:02d}.png"
         img.save(p)
+        stills.append(p)
         imgs.append(cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR))
         boxes.append(box)
-        db.insert("INSERT INTO assets(video_id, kind, path, origin, source_url, license, attribution, sha256, created) "
-                  "VALUES(?,?,?,?,?,?,?,?,?)", video_id, f"scene:{sc.get('type')}", str(p), "generated", None,
-                  "original (drawn by Jarvis from shapes and text)", "", _sha(p), time.time())
-    voice_path = voice["path"]
+        if record:
+            db.insert("INSERT INTO assets(video_id, kind, path, origin, source_url, license, attribution, sha256, created) "
+                      "VALUES(?,?,?,?,?,?,?,?,?)", video_id, f"scene:{sc.get('type')}", str(p), "generated", None,
+                      "original (drawn by Jarvis from shapes and text)", "", _sha(p), time.time())
+    voice_path = src_voice
     lead = float(words[0]["s"] or 0) if words else 0.0
     if lead > 0.25:                                           # speech must start at once: trim the silence before it
         cut = round(lead - 0.08, 3)
         trimmed = folder / "voice_trim.wav"
-        media.run(["-y", "-ss", f"{cut:.3f}", "-i", voice["path"], "-ar", "48000", str(trimmed)])
+        media.run(["-y", "-ss", f"{cut:.3f}", "-i", src_voice, "-ar", "48000", str(trimmed)])
         voice_path = str(trimmed)
         for w in words:
             w["s"], w["e"] = max(0.0, w["s"] - cut), max(0.0, w["e"] - cut)
@@ -452,51 +550,103 @@ def render(video_id, progress=lambda s: None):
     end = min(dur, max(last_word, speech_end) + 0.2) + 0.12   # no long silent tail: the replay starts right away
     starts = line_starts(lines, words) + [end]
     starts[0] = 0.0
-    brand = {"color": pal["cyan"], "highlight": pal["amber"]}
-    stl = captions.resolve("highlight", {"brand": brand}, {"y": CAPTION_Y})
-    stl["y"] = CAPTION_Y
-    cap = captions.Captioner([dict(w) for w in words], stl, W, H, captions.pick_keywords(words, []))
-    out = folder / "short.mp4"
-    tmp = folder / "short.tmp.mp4"
     padded = folder / "voice_end.wav"                         # a short silent tail so the last scene can settle
     media.run(["-y", "-i", voice_path, "-af", f"apad=pad_dur=0.3,atrim=0:{end + 0.05:.3f},afade=t=out:st={max(0.0, end - 0.08):.3f}:d=0.08",
                "-ar", "48000", str(padded)])
-    wr = media.FrameWriter(tmp, W, H, FPS, padded)
-    n = int(math.ceil(end * FPS))
-    cyan = np.array(_rgb(pal["cyan"])[::-1], dtype=np.uint8)
-    caption_boxes = []
-    first = _zoom(imgs[0], 1.0 + PUNCH)                             # exactly the first frame
-    progress("Rendering")
-    try:
-        for f in range(n):
-            t = f / FPS
-            k = max(i for i in range(len(scenes)) if starts[i] <= t or i == 0)
-            span = max(0.5, starts[k + 1] - starts[k])
-            z = 1.0 + 0.035 * min(1.0, (t - starts[k]) / span)
-            if k == 0:                                              # punch-in on the hook: it settles in 0.4 s
-                z += PUNCH * max(0.0, 1.0 - t / 0.4)
-            frame = _zoom(imgs[k], z)
-            if k > 0 and t - starts[k] < FADE:                      # crossfade from the previous scene
-                a = (t - starts[k]) / FADE
-                prev = _zoom(imgs[k - 1], 1.035)
-                frame = cv2.addWeighted(frame, a, prev, 1 - a, 0)
-            if end - t < LOOP_BLEND and len(imgs) > 1:              # blend into the first frame for the loop
-                a = 1.0 - (end - t) / LOOP_BLEND
-                frame = cv2.addWeighted(first, a, frame, 1 - a, 0)
-            frame = frame.copy()                                    # (no progress bar: it tells people it's ending)
-            cb = cap.draw(frame, t)
-            if cb:
-                caption_boxes.append(cb)
-            wr.write(frame)
-    finally:
-        wr.close()
-    tmp.replace(out)
-    rep = {"path": str(out), "duration": round(end, 2), "frames": n, "scenes": len(scenes), "timing": timing,
-           "speech_start": round(float(words[0]["s"] or 0), 2) if words else None,
+    clips = {}
+    if eng["visuals"] == "manim":
+        progress("Animating the scenes (Manim)")
+        try:
+            bg = folder / "background.png"
+            background(pal).save(bg)
+            clips, used["visuals"] = _manim_clips(scenes, starts, folder, pal, handle, bg)
+            used["visuals"] = "Manim: " + used["visuals"]
+            for k, c in clips.items():
+                if record:
+                    db.insert("INSERT INTO assets(video_id, kind, path, origin, source_url, license, attribution, sha256, "
+                              "created) VALUES(?,?,?,?,?,?,?,?,?)", video_id, f"animation:{scenes[k].get('type')}",
+                              c["video"], "generated", None, "original (animated by Jarvis with Manim, MIT)", "",
+                              _sha(c["video"]), time.time())
+        except Exception as e:
+            clips, used["visuals"] = {}, f"still pictures (Manim wasn't used: {str(e)[:200]})"
+    else:
+        used["visuals"] = "still pictures"
+    holds = [cv2.imread(clips[k]["hold"]) if k in clips else imgs[k] for k in range(len(scenes))]
+    out = folder / out_name
+    tmp = folder / (Path(out_name).stem + ".tmp.mp4")
+    rep = None
+    if eng["compose"] == "remotion":
+        progress("Composing with Remotion")
+        try:
+            cap_props, cap_boxes = _caption_props(words, pal)
+            props = {"fps": FPS, "width": W, "height": H, "duration": round(end, 3), "audio": padded.name,
+                     "words": [{"w": w["w"], "s": float(w["s"]), "e": float(w["e"])} for w in words],
+                     "palette": {k: pal[k] for k in ("cyan", "amber", "text", "background")},
+                     "fade": FADE, "punch": PUNCH, "loopBlend": LOOP_BLEND, **cap_props,
+                     "scenes": [{"start": starts[k], "end": starts[k + 1], "image": stills[k].name,
+                                 **({"video": Path(clips[k]["video"]).name, "videoSeconds": clips[k]["seconds"],
+                                     "hold": Path(clips[k]["hold"]).name} if k in clips else {})}
+                                for k in range(len(scenes))]}
+            with engines.heavy("Remotion render"):
+                engines.remotion_render(props, folder, tmp)
+            tmp.replace(out)
+            shown = {i for p in cap_props["pages"] for i in p["words"]}
+            rep = {"caption_boxes": cap_boxes, "caption_words_shown": len(shown)}
+            used["compose"] = "Remotion (animated captions)"
+        except Exception as e:
+            used["compose"] = f"classic (Remotion wasn't used: {str(e)[:200]})"
+            rep = None
+    if rep is None:
+        if eng["compose"] != "remotion":
+            used["compose"] = "classic"
+        brand = {"color": pal["cyan"], "highlight": pal["amber"]}
+        stl = captions.resolve("highlight", {"brand": brand}, {"y": CAPTION_Y})
+        stl["y"] = CAPTION_Y
+        cap = captions.Captioner([dict(w) for w in words], stl, W, H, captions.pick_keywords(words, []))
+        wr = media.FrameWriter(tmp, W, H, FPS, padded)
+        n = int(math.ceil(end * FPS))
+        caption_boxes = []
+        first = _zoom(imgs[0], 1.0 + PUNCH)                             # exactly the first frame
+        clip = _Clip()
+        progress("Rendering")
+        try:
+            for f in range(n):
+                t = f / FPS
+                k = max(i for i in range(len(scenes)) if starts[i] <= t or i == 0)
+                span = max(0.5, starts[k + 1] - starts[k])
+                z = 1.0 + 0.035 * min(1.0, (t - starts[k]) / span)
+                if k == 0:                                              # punch-in on the hook: it settles in 0.4 s
+                    z += PUNCH * max(0.0, 1.0 - t / 0.4)
+                base = holds[k]
+                if k in clips and t - starts[k] < clips[k]["seconds"] - 1.0 / FPS:
+                    fr = clip.frame(k, clips[k]["video"], int((t - starts[k]) * FPS))
+                    base = fr if fr is not None else holds[k]
+                frame = _zoom(base, z)
+                if k > 0 and t - starts[k] < FADE:                      # crossfade from the previous scene
+                    a = (t - starts[k]) / FADE
+                    prev = _zoom(holds[k - 1], 1.035)
+                    frame = cv2.addWeighted(frame, a, prev, 1 - a, 0)
+                if end - t < LOOP_BLEND and len(imgs) > 1:              # blend into the first frame for the loop
+                    a = 1.0 - (end - t) / LOOP_BLEND
+                    frame = cv2.addWeighted(first, a, frame, 1 - a, 0)
+                frame = frame.copy()                                    # (no progress bar: it tells people it's ending)
+                cb = cap.draw(frame, t)
+                if cb:
+                    caption_boxes.append(cb)
+                wr.write(frame)
+        finally:
+            wr.close()
+            clip.close()
+        tmp.replace(out)
+        rep = {"caption_boxes": caption_boxes[:: max(1, len(caption_boxes) // 40)],
+               "caption_words_shown": len(cap.shown_words)}
+    rep = {"path": str(out), "duration": round(end, 2), "frames": int(math.ceil(end * FPS)), "scenes": len(scenes),
+           "timing": timing, "speech_start": round(float(words[0]["s"] or 0), 2) if words else None,
            "tail_seconds": round(end - max(last_word, speech_end), 2),
            "trimmed_lead": round(lead - 0.08, 3) if lead > 0.25 else 0.0,
-           "scene_boxes": boxes, "caption_boxes": caption_boxes[:: max(1, len(caption_boxes) // 40)],
-           "caption_words_shown": len(cap.shown_words), "words": len(words)}
+           "scene_boxes": boxes, "words": len(words), "engines": used, **rep}
+    if not record:
+        return rep
     meta["render"] = rep
     db.set_video(video_id, path=str(out), duration=round(end, 2), meta=json.dumps(meta))
     media.save_jpeg(imgs[0], folder / "thumb.jpg", width=540)

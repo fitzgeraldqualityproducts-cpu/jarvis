@@ -113,8 +113,48 @@ def _loudnorm(src, out):
                "-ar", RATE, "-ac", 1, out])
 
 
-def narrate(text, out, video_id=None):
-    """Makes and validates the voiceover. Returns its record (dict)."""
+REF_LINE = ("Here's a number that sounds wrong at first. Let's check it together, one step at a time, "
+            "with real figures you can test yourself.")
+
+
+def reference_clip(s=None):
+    """A short clip of the channel's Kokoro voice, made once per voice setting. Chatterbox copies it, so
+    the upgraded narration keeps the channel's voice."""
+    from studio import data_dir
+    s = s or settings()
+    path = data_dir("brand") / f"voice_ref_{s['voice']}_{s['speed']:.2f}.wav"
+    if not path.exists() or path.stat().st_size < 1000:
+        from clipper import media
+        samples, rate = _synth(REF_LINE, s["voice"], s["speed"])
+        media.write_wav(path, tidy(_resample(np.asarray(samples).reshape(-1), rate), RATE), RATE)
+    return path
+
+
+def _chatterbox(text, s, out):
+    """(samples, rate, info) from Chatterbox in the channel's voice. Raises engines.EngineError."""
+    from clipper import media
+    from studio import engines
+    g = config.general()
+    raw = Path(out).with_suffix(".cb.wav")
+    with engines.heavy("Chatterbox narration"):
+        info = engines.run("chatterbox", "chatterbox_worker", {
+            "text": text, "out": str(raw), "reference": str(reference_clip(s)),
+            "exaggeration": float(g.get("chatterbox_exaggeration") or 0.5),
+            "cfg_weight": float(g.get("chatterbox_cfg_weight") or 0.5), "seed": 7})
+    try:
+        x, rate = media.read_wav(raw)
+    finally:
+        try:
+            os.remove(raw)
+        except OSError:
+            pass
+    return x, rate, info
+
+
+def narrate(text, out, video_id=None, engine=None, record=True):
+    """Makes and validates the voiceover. Returns its record (dict). engine "chatterbox" uses Chatterbox
+    when it's installed and works, else Kokoro (the reason is kept in the record); record=False makes a
+    sample without saving it in the database."""
     text = " ".join(str(text).split())
     if not text:
         raise NarrationError("there's no script to read")
@@ -123,6 +163,24 @@ def narrate(text, out, video_id=None):
     if not ok:
         raise NarrationError(why)
     s = settings()
+    from studio import engines
+    engine = engine or engines.settings()["voice"]
+    from clipper import media
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fallback = None
+    if engine == "chatterbox":
+        t0 = time.time()
+        try:
+            samples, rate, info = _chatterbox(text, s, out)
+            rec = _finish(samples, rate, out, text, video_id, s, "chatterbox", "chatterbox-tts==0.1.7 (channel voice "
+                          f"{s['voice']})", t0)
+            rec["engine_info"] = {k: info.get(k) for k in ("device", "sentences", "took")}
+            if rec["checks"]["ok"]:
+                return _save(rec, record)
+            fallback = "Chatterbox's audio failed its checks: " + "; ".join(rec["checks"]["problems"])
+        except Exception as e:
+            fallback = str(e)[:300]
     t0 = time.time()
     try:
         samples, rate = _synth(text, s["voice"], s["speed"])
@@ -130,10 +188,17 @@ def narrate(text, out, video_id=None):
         guard.tool_result("kokoro", False, str(e))
         raise NarrationError(f"Kokoro couldn't read the script: {e}")
     guard.tool_result("kokoro", True)
+    rec = _finish(samples, rate, out, text, video_id, s, "kokoro", model_version(), t0)
+    if fallback:
+        rec["fallback"] = f"used Kokoro because {fallback}"
+    if not rec["checks"]["ok"]:
+        raise NarrationError("the voiceover failed its checks: " + "; ".join(rec["checks"]["problems"]))
+    return _save(rec, record)
+
+
+def _finish(samples, rate, out, text, video_id, s, engine, version, t0):
     from clipper import media
-    out = Path(out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    raw = out.with_suffix(".raw.wav")
+    raw = Path(out).with_suffix(".raw.wav")
     media.write_wav(raw, tidy(_resample(np.asarray(samples).reshape(-1), rate), RATE), RATE)
     try:
         _loudnorm(raw, out)
@@ -143,15 +208,17 @@ def narrate(text, out, video_id=None):
         except OSError:
             pass
     checks = validate(out, text)
-    rec = {"video_id": video_id, "path": str(out), "engine": "kokoro", "voice": s["voice"], "speed": s["speed"],
-           "model_version": model_version(), "seconds": checks["seconds"], "loudness": checks["lufs"],
-           "checks": checks, "render_seconds": round(time.time() - t0, 1)}
-    if not checks["ok"]:
-        raise NarrationError("the voiceover failed its checks: " + "; ".join(checks["problems"]))
-    import json
-    db.insert("INSERT INTO voiceovers(video_id, path, engine, voice, model_version, seconds, loudness, checks, created) "
-              "VALUES(?,?,?,?,?,?,?,?,?)", video_id, str(out), "kokoro", s["voice"], rec["model_version"],
-              rec["seconds"], rec["loudness"], json.dumps(checks), time.time())
+    return {"video_id": video_id, "path": str(out), "engine": engine, "voice": s["voice"], "speed": s["speed"],
+            "model_version": version, "seconds": checks["seconds"], "loudness": checks["lufs"],
+            "checks": checks, "render_seconds": round(time.time() - t0, 1)}
+
+
+def _save(rec, record=True):
+    if record:
+        import json
+        db.insert("INSERT INTO voiceovers(video_id, path, engine, voice, model_version, seconds, loudness, checks, created) "
+                  "VALUES(?,?,?,?,?,?,?,?,?)", rec["video_id"], rec["path"], rec["engine"], rec["voice"],
+                  rec["model_version"], rec["seconds"], rec["loudness"], json.dumps(rec["checks"]), time.time())
     return rec
 
 
