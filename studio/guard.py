@@ -201,6 +201,12 @@ BUILT_IN_TOOLS = [
     ("youtube-analytics-api", "the channel's own analytics", "Google APIs terms", False, True, "free quota; no revenue scope"),
     ("wikipedia-api", "fact-check sources", "free API; text CC BY-SA, cited not copied", False, False, "polite rate"),
     ("wikimedia-commons", "licensed images", "per-file licence, recorded", False, False, "polite rate"),
+    ("chatterbox", "expressive narration in the channel's voice (optional)", "MIT (Resemble AI)", True, False,
+     "needs ~3 GB free memory; Kokoro is the fallback"),
+    ("whisperx", "forced alignment of caption words (optional)", "BSD-2-Clause", True, False, "none"),
+    ("manim", "animated numbers, equations and charts (optional)", "MIT (Manim Community)", True, False, "none"),
+    ("remotion", "animated captions and motion (optional)", "Remotion licence: free for individuals and companies "
+     "of up to 3 people", True, False, "Connor uses it as one person; no paid company licence needed"),
     ("google-drive-api", "backups of finished Shorts", "Google APIs terms (free; Connor's free 15 GB)", False, True,
      "drive.file permission only: sees just the files Jarvis made"),
 ]

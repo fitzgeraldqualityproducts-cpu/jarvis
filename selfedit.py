@@ -13,6 +13,8 @@ import brain
 HERE = Path(__file__).resolve().parent
 GITIGNORE = """.venv*/
 models/
+tools/
+studio/remotion/node_modules/
 __pycache__/
 *.pyc
 jarvis.log
