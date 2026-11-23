@@ -24,3 +24,12 @@ def youtube_business_status():
     if errs:
         out += " Recent problems: " + " | ".join(r["detail"][:160] for r in errs)
     return out
+
+
+@tool("Progress toward the YouTube Partner Program on the business channel: subscribers, Shorts views in "
+      "90 days, uploads, with estimates labelled. Never money, revenue or AdSense.")
+def youtube_partner_progress():
+    from studio import config, eligibility
+    if not config.enabled():
+        return "The YouTube business module is off."
+    return eligibility.text()
