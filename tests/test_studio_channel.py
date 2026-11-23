@@ -149,3 +149,20 @@ def test_branding_files(niche_chosen):
     bright = [(x, y) for x in range(0, 2048, 4) for y in range(0, 1152, 4)
               if sum(img.getpixel((x, y))) > 300 and not (sx <= x < sx + 1235 and sy <= y < sy + 338)]
     assert not bright
+
+
+def test_a_wrong_reconnect_keeps_the_working_sign_in(google, monkeypatch):
+    """Signing in again with the wrong account must not wipe the business channel's saved sign-in."""
+    import json as _json
+    from clipper import youtube
+    from studio import ytauth
+    ytauth.connect(open_browser=False)
+    good = _json.loads(ytauth._path().read_text())["refresh_token"]
+    monkeypatch.setattr(youtube, "exchange", lambda ans: {"access_token": "AT", "refresh_token": "RT2",
+                                                          "expires_at": time.time() + 3000})
+    google.channel = "UC_OTHER"                                   # Connor picked another account
+    with pytest.raises(guard.WrongChannel):
+        ytauth.connect(open_browser=False)
+    assert ytauth.connected() and _json.loads(ytauth._path().read_text())["refresh_token"] == good
+    assert guard.locked_channel()["youtube_channel_id"] == "UC_BIZ"
+    assert not ytauth._path().with_name(ytauth._path().name + ".previous").exists()

@@ -109,13 +109,22 @@ def connect(open_browser=True, timeout=300):
     guard.check_scopes(guard.SCOPES)
     tok = youtube.exchange(youtube.browser_code(guard.SCOPES, open_browser, timeout,
                                                 done_text="Jarvis is connected to the business channel."))
+    p = _path()
+    keep = p.with_name(p.name + ".previous")
+    if p.exists():
+        p.replace(keep)                        # a working sign-in survives a re-connect that goes wrong
     _save(tok)
     try:
         me = whoami()
         guard.lock_channel(me["id"], me["title"])
     except Exception:
-        _path().unlink()                       # never keep a sign-in for the wrong channel
+        p.unlink()                             # never keep a sign-in for the wrong channel
+        if keep.exists():
+            keep.replace(p)                    # ...but put the earlier, correct one back
+            guard.audit("channel.connect", False, "the new sign-in was refused; the previous sign-in was kept")
         raise
+    if keep.exists():
+        keep.unlink()
     guard.audit("channel.connect", True, {"channel": me["id"], "title": me["title"]})
     return me
 
