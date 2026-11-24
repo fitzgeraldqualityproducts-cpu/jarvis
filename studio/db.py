@@ -129,6 +129,13 @@ MIGRATIONS = [
     CREATE INDEX lessons_t ON lessons(t);
     CREATE INDEX lessons_cat ON lessons(category, t)
     """,
+    # 5: per-claim fact records: the line, the source's own words, how sure the checker was, the source's date
+    """
+    ALTER TABLE sources ADD COLUMN line_text TEXT;
+    ALTER TABLE sources ADD COLUMN passage TEXT;
+    ALTER TABLE sources ADD COLUMN confidence REAL;
+    ALTER TABLE sources ADD COLUMN source_date TEXT
+    """,
 ]
 
 _conns = {}

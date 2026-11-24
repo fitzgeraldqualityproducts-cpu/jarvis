@@ -67,15 +67,77 @@ def memory_pressure():
     return None
 
 
+def cpu_load():
+    """Share of the CPU in use (0-1, about the last minute where the system keeps that), or None."""
+    try:
+        return os.getloadavg()[0] / (os.cpu_count() or 1)
+    except (OSError, AttributeError):
+        pass
+    try:
+        import psutil                              # Windows has no load average
+        return psutil.cpu_percent(interval=None) / 100
+    except Exception:
+        return None
+
+
+GPU_RUN = None            # tests swap this: () -> nvidia-smi's csv line
+_gpu_cache = {}
+
+
+def gpu(max_age=60):
+    """The NVIDIA card right now: {"name", "used_gb", "total_gb", "util", "temp_c"}, or None (no card / Mac).
+    Read-only (nvidia-smi), cached for a minute."""
+    hit = _gpu_cache.get("v")
+    if hit and time.time() - hit[0] < max_age:
+        return hit[1]
+    out = None
+    try:
+        if GPU_RUN:
+            line = GPU_RUN()
+        else:
+            if sys.platform == "darwin":
+                raise RuntimeError("no NVIDIA card on a Mac")
+            smi = shutil.which("nvidia-smi") or (r"C:\Windows\System32\nvidia-smi.exe" if os.name == "nt" else None)
+            if not smi or not os.path.exists(smi):
+                raise RuntimeError("no nvidia-smi")
+            kw = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+            line = subprocess.run([smi, "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu",
+                                   "--format=csv,noheader,nounits"], capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=10, **kw).stdout.strip().splitlines()[0]
+        name, used, total, util, temp = [x.strip() for x in line.split(",")[:5]]
+        num = lambda v: float(v) if v.replace(".", "", 1).isdigit() else None
+        out = {"name": name, "used_gb": round((num(used) or 0) / 1024, 1), "total_gb": round((num(total) or 0) / 1024, 1),
+               "util": None if num(util) is None else round(num(util) / 100, 2), "temp_c": num(temp)}
+    except Exception:
+        out = None
+    _gpu_cache["v"] = (time.time(), out)
+    return out
+
+
+def _drives():
+    """Free space on C: and D: (the PC), or the data folder's disk elsewhere: {label: free GB}."""
+    if os.name == "nt":
+        out = {}
+        for d in ("C:/", "D:/"):
+            if os.path.exists(d):
+                out[d[0]] = round(_free_gb(d), 1)
+        return out
+    return {"data": round(_free_gb(data_dir()), 1)}
+
+
 def resources():
     home = data_dir()
+    load = cpu_load()
+    commit = None
     try:
-        load = os.getloadavg()[0] / (os.cpu_count() or 1)
-    except (OSError, AttributeError):
-        load = None
+        from studio import engines
+        commit = engines.commit_free_gb()
+    except Exception:
+        pass
     return {"free_gb": round(_free_gb(home), 1), "studio_gb": round(_folder_gb(home), 2),
             "memory": None if (m := memory_pressure()) is None else round(m, 2),
-            "load": None if load is None else round(load, 2), "t": time.time()}
+            "load": None if load is None else round(load, 2), "gpu": gpu(),
+            "commit_free_gb": None if commit is None else round(commit, 1), "drives": _drives(), "t": time.time()}
 
 
 def clipper_busy():
@@ -160,6 +222,11 @@ def startup():
         report["db"] = f"check skipped: {e}"
     report["schema"] = db.version()
     guard.register_built_ins()
+    try:
+        from studio import registry
+        registry.register_all()                  # every engine too, with its licence, hardware and fallback
+    except Exception:
+        pass
     try:
         import dbrescue
         report["backup"] = dbrescue.backup(p)

@@ -36,6 +36,7 @@ MIN_POOL = 12                 # ideas ready before background discovery stops
 DISCOVER_EVERY_HOURS = 6
 TRENDING_SHARE = 0.3          # at most this share of recent picks may be trending
 DUPLICATE_AT = 0.5            # word overlap at which two topics count as the same
+ORIGINAL_AT = 6               # an idea rated under this for originality is dropped before any script is written
 
 TIER3 = ("nasa.gov", "esa.int", "noaa.gov", "nist.gov", "nih.gov", "usgs.gov", "cern.ch", "nature.com",
          "science.org", "arxiv.org", "aps.org", "iop.org", "royalsocietypublishing.org", "pnas.org", "cell.com",
@@ -414,7 +415,9 @@ Be strict and honest; 5 is average. For each give integers 0-10:
 relevance (fits the niche and pillar), interest (how many US viewers would want this), novelty (fresh vs
 over-covered), curiosity (does the title/hook make you need the answer), value (viewer learns something real),
 story (a clear setup, tension, payoff in 40 s), feasibility (doable with code-made graphics, no footage),
-originality (our own angle, not a remake of a known video), copyright_risk (0 = none, 10 = needs others' footage/music/characters).
+originality (our own angle, not a remake of a known video: the usual textbook example or analogy for this
+fact is a 5, and the script's fact-checker rejects anything under 6; a surprising everyday comparison or a
+calculation few would think to do is an 8+), copyright_risk (0 = none, 10 = needs others' footage/music/characters).
 Also "avoid": true if it touches medical/financial advice, partisan politics or the niche's banned areas, and
 "note": one sentence on the main strength or problem.
 
@@ -482,6 +485,10 @@ def gate(c, r, src_reliability, factors):
         why.append("copyright risk")
     if (factors["feasibility"]["score"] or 0) < 4:
         why.append("can't be made with code-made graphics")
+    orig = factors["originality"]["score"]
+    if orig is not None and orig < ORIGINAL_AT:
+        # the script review rejects an ordinary angle after spending 4-8 Claude calls on it; drop it here for free
+        why.append(f"angle too ordinary (originality {orig:g}/10)")
     good = _working(c.get("_checked", []))
     if len(good) < 2:
         why.append(f"only {len(good)} working source{'s' if len(good) != 1 else ''}")
@@ -597,12 +604,24 @@ def maybe_discover(now=None):
 
 # ---------- picking ----------
 
+def _originality(t):
+    try:
+        return ((json.loads(t.get("scores") or "{}").get("factors") or {}).get("originality") or {}).get("score")
+    except (ValueError, AttributeError):
+        return None
+
+
 def pick_next(now=None, mark=True):
     """The best ready idea, nudged so pillars take turns and trending stays a minority. Marks it 'selected'."""
     from studio import analytics, lessons
     now = now or time.time()
     ideas = []
     for t in pool(now):
+        orig = _originality(t)
+        if orig is not None and orig < ORIGINAL_AT:              # kept from before the topic-stage check
+            if mark:
+                set_status(t["id"], "rejected", reject_reason=f"angle too ordinary (originality {orig:g}/10)")
+            continue
         if lessons.usable(t):
             ideas.append(t)
         elif mark:                                            # would fail for sure: don't spend a job on it

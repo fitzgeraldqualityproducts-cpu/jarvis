@@ -119,7 +119,46 @@ def check(video_id):
         sim, other = script.similar_script(row["body"], video_id)
         _add(checks, "not a remake", sim < script.SIMILAR_SCRIPT, f"{sim:.0%} overlap with video {other}" if other else "")
     guard.audit("qa.check", True, {"video": video_id, "failed": [c["name"] for c in checks if not c["passed"]]})
-    return _save(video_id, checks)
+    ck = json.loads(row["checks"] or "{}") if row else {}
+    conf = db.one("SELECT AVG(confidence) c FROM sources WHERE video_id=? AND confidence IS NOT NULL", video_id)["c"]
+    q = quality({"lufs": lufs, "loop_diff": diff if first is not None and last is not None else None,
+                 "timing": tm.get("matched"), "speech_start": rep.get("speech_start"),
+                 "hook": ck.get("hook_score"), "originality": ck.get("originality"), "confidence": conf})
+    meta = json.loads(db.video(video_id)["meta"] or "{}")
+    db.set_video(video_id, meta=json.dumps(dict(meta, quality=q)))
+    return dict(_save(video_id, checks), quality=q)
+
+
+# The weighted quality score sits NEXT TO the hard checks: it never passes a Short that failed one, and never
+# stops one that passed them all. It shows how good a passing Short is, so results can be compared over time.
+QUALITY_WEIGHTS = {"loudness": 0.10, "loop": 0.15, "timing": 0.15, "start": 0.10, "hook": 0.20, "originality": 0.20,
+                   "confidence": 0.10}
+
+
+def quality(m):
+    """{"score": 0-100 or None, "parts": {name: 0-1}, "missing": [...]} from measured values. A part with no
+    measurement is left out (and listed), never guessed."""
+    def clip(x):
+        return max(0.0, min(1.0, float(x)))
+    parts, missing = {}, []
+    def put(name, fn, v):
+        if v is None:
+            missing.append(name)
+        else:
+            try:
+                parts[name] = round(clip(fn(float(v))), 3)
+            except (TypeError, ValueError):
+                missing.append(name)
+    put("loudness", lambda v: 1 - abs(v + 14) / 4, m.get("lufs"))            # -14 LUFS is the target
+    put("loop", lambda v: 1 - v / 14, m.get("loop_diff"))                    # 0 = identical first/last frame
+    put("timing", lambda v: (v - 0.85) / 0.15, m.get("timing"))              # 85% matched = 0, 100% = 1
+    put("start", lambda v: 1 - v / 0.35, m.get("speech_start"))              # speech at 0 s = 1
+    put("hook", lambda v: v / 100 if v > 10 else v / 10, m.get("hook"))      # hook score 0-100 (or 0-10)
+    put("originality", lambda v: (v - 5) / 5, m.get("originality"))          # 5/10 = 0, 10/10 = 1
+    put("confidence", lambda v: v, m.get("confidence"))
+    w = sum(QUALITY_WEIGHTS[k] for k in parts)
+    score = round(100 * sum(QUALITY_WEIGHTS[k] * v for k, v in parts.items()) / w, 1) if w else None
+    return {"score": score, "parts": parts, "missing": missing}
 
 
 def _save(video_id, checks):

@@ -17,7 +17,7 @@ tested. "Live" means switched on on the PC.
 
 397 tests: **396 passed, 1 failed** (21 minutes). The one failure, `test_selftune.py::test_section_falls_back_to_the_whole_video`, is the cloud machine missing `yt-dlp`, not a code fault. GitHub CI installs `yt-dlp` and was green on #82.
 
-## Phase 2: Protect: built, in review
+## Phase 2: Protect: done (PR #83, merged 2026-11-24)
 
 | Step | State |
 |---|---|
@@ -28,9 +28,26 @@ tested. "Live" means switched on on the PC.
 | 2.4 Dashboard: "Shorts live" counts public only, private uploads are shown as private | Built and tested |
 | 2.5 Regression tests (`tests/test_studio_protect.py`, 17 tests) | Passing |
 
-## Phases 3-7: not started
+## Phases 3-5: built, in review (PR #84)
 
-These wait for Connor to agree the plan in IMPROVEMENT_ROADMAP.md.
+| Step | State |
+|---|---|
+| 3.1 One or two unsourced or wrong lines are cut instead of failing the Short, with no extra Claude call. Only when the line isn't the hook, payoff, loop or last math step, and the next line doesn't lean on it. Every line that stays was checked word for word | Built and tested |
+| 3.2 Ideas rated under 6/10 for originality are dropped at the idea stage, including ones already in the pool. The rater is told the reviewer's bar | Built and tested |
+| 3.3 Per-claim records: the line, the source's own words (quote), the checker's confidence, the source's date (migration 5). Shown in the script report | Built and tested |
+| 3.4 Semantic duplicate detection (local embeddings) | Not started |
+| 3.5 Genuinely different draft approaches, opening-frame concepts | Partly there since #82 (3 drafts around different images); more later |
+| 4.1 Retention intelligence (beat-level) | Not started. No retention data exists yet (the only upload is private). Connor skipped retention learning on 2026-11-24 in the visuals thread, so this will ask him first |
+| 4.2 Hardware monitor: GPU memory, temperature and use, Windows CPU, C: and D: free space, backup age on the dashboard | Built and tested (GPU read with nvidia-smi, read-only) |
+| 4.3 Full software registry, `python -m studio registry`: 21 tools with version, licence, source, local or external, $0, hardware, fallback. All registered in the $0 table at start-up | Built and tested |
+| 4.4 Weighted quality score (0-100) next to the 21 hard checks. It never passes or stops a Short | Built and tested |
+| 4.5 Studio stage progress and problems in jarvis.log | Built |
+| 5.1 Experiment engine: one variable, 6 Shorts per arm, a result only when clear, a suggestion only. Runs only after `python -m studio experiment start <name>` | Built and tested. None running |
+| 5.2 Weekly policy watch of 7 YouTube rule and API pages. Tells Connor what changed and never changes a setting | Built and tested |
+
+## Phases 6-7: validate and activate
+
+Each change goes live on the PC by update. New styles and tools stay off until a sample is approved.
 
 ## Earlier work still waiting on Connor
 
