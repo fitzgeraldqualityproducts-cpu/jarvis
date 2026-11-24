@@ -219,11 +219,14 @@ _broken = set()
 
 
 def _order():
-    choice = _cfg().get("voice_engine", "auto")
+    cfg = _cfg()
+    choice = cfg.get("voice_engine", "auto")
     order = ["elevenlabs", "kokoro", "edge", "say"]
     if choice in ENGINES:
         order.remove(choice)
         order.insert(0, choice)
+    if not str(cfg.get("elevenlabs_api_key") or "").strip():
+        order.remove("elevenlabs")             # no key: don't try it (and log a failure) every time
     return [e for e in order if e not in _broken]
 
 

@@ -130,13 +130,15 @@ class Context:
         return _stop.is_set()
 
 
-def claim(now=None):
-    """The next job to work on (its row), marked as ours, or None."""
+def claim(now=None, states=None):
+    """The next job to work on (its row), marked as ours, or None. states limits it to those stages."""
     if not STAGES or paused():
         return None
     now = now or time.time()
     stall = 60 * config.general()["stall_minutes"]
-    states = list(STAGES)
+    states = [s for s in STAGES if states is None or s in states]
+    if not states:
+        return None
     with db.transaction() as c:
         r = c.execute(f"SELECT * FROM videos WHERE state IN ({','.join('?' * len(states))}) AND not_before<=? "
                       "AND (owner IS NULL OR heartbeat<?) ORDER BY id LIMIT 1", (*states, now, now - stall)).fetchone()
@@ -231,6 +233,7 @@ def busy():
     return _running.is_set()
 
 
+LIGHT = ("researching", "scripting", "fact_checking")   # Claude and web work only: fine while the clipper runs
 IDLE = []           # functions run when there's no job (e.g. topic discovery); each must be cheap to skip
 
 
@@ -239,12 +242,17 @@ def tick(busy=lambda: False):
     if not config.enabled() or busy():
         return None
     ok, why = health.ok_to_work()
+    light_only = False
     if not ok:
         if "disk" in why or "studio folder" in why:
             health.notify("disk", f"I've paused the YouTube business because {why}.")
             _chore(_drive_urgent)                    # Shorts safe on Google Drive can make room
-        return None
-    v = claim()
+            return None
+        if not health.ok_to_work(heavy=False)[0]:
+            return None
+        light_only = True                            # clipper busy or memory tight: research, scripts and
+                                                     # fact-checks go on; voice, video and uploads wait
+    v = claim(states=LIGHT if light_only else None)
     if not v:
         for f in IDLE:                               # background chores when no Short is being made
             _chore(f)

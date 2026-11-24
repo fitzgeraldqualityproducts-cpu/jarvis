@@ -270,8 +270,13 @@ class _Handler(BaseHTTPRequestHandler):
                     name = api.download_name(cid) if kind == "media" and query.get("download") else None
                     self._send_file(f, ctype, download=name)
                     return True
+        except (ConnectionError, TimeoutError):
+            return True                       # the browser closed the tab or moved on: nothing to answer
         except Exception as e:
-            self._send(500, json.dumps({"error": f"{type(e).__name__}: {e}"}).encode(), "application/json")
+            try:
+                self._send(500, json.dumps({"error": f"{type(e).__name__}: {e}"}).encode(), "application/json")
+            except (ConnectionError, TimeoutError):
+                pass
             return True
         self._send(404, b"not found", "text/plain")
         return True
@@ -454,8 +459,19 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
+class _QuietServer(ThreadingHTTPServer):
+    """A browser tab that closes mid-reply (WinError 10053 / broken pipe) is normal: no traceback for it."""
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        import sys
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def start(open_browser=True):
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), _Handler)
+    server = _QuietServer(("127.0.0.1", PORT), _Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=_music_loop, daemon=True).start()
     threading.Thread(target=_weather_loop, daemon=True).start()
