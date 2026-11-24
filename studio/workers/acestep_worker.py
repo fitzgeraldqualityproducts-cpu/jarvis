@@ -48,40 +48,38 @@ def _no_resources(e):
 
 
 def _old_card():
-    """True on a graphics card older than the RTX 30 series (Turing and before: no bfloat16). There ACE-Step
-    picks float16, which overflows into NaN (silent music), so it has to run in float32 instead."""
+    """True on a graphics card older than the RTX 30 series (Turing and before: no native bfloat16)."""
     import torch
     return torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] < 8
 
 
-def _to_float32(dit):
-    """ACE-Step chooses its number format inside initialize_service with no setting for it, and re-casts to
-    dit.dtype during generation. So after it loads: set dtype to float32 and move the models it uses there."""
-    import torch
-    dit.dtype = torch.float32
-    for name in ("model", "text_encoder"):
-        m = getattr(dit, name, None)
-        if m is not None:
-            m.to(torch.float32)
-    if getattr(dit, "silence_latent", None) is not None:
-        dit.silence_latent = dit.silence_latent.float()
+def _use_bfloat16():
+    """On those cards ACE-Step picks float16, which overflows into NaN (silent music), and has no setting
+    for it. float32 doesn't fit a 6 GB card. bfloat16 has float32's range at float16's size; PyTorch runs it
+    on these cards too (more slowly). So make ACE-Step's own check say yes before it loads."""
+    from acestep import gpu_config
+    gpu_config.cuda_supports_bfloat16 = lambda device_index=None: True
+    try:
+        from acestep.core.generation.handler import init_service_orchestrator as orch
+        if hasattr(orch, "_cuda_supports_bfloat16"):
+            orch._cuda_supports_bfloat16 = lambda: True
+    except Exception:
+        pass
 
 
-def generate(device, small, fp32=False):
+def generate(device, small):
     """One instrumental piece on this device. Returns the path ACE-Step wrote (inside a temp folder that the
     caller copies from) and the folder to clean up."""
     _lean_loading()
     from acestep.handler import AceStepHandler
     from acestep.inference import GenerationConfig, GenerationParams, generate_music
     dit = AceStepHandler()
-    quant = "int8_weight_only" if small and device == "cuda" and not fp32 else None
+    quant = "int8_weight_only" if small and device == "cuda" else None
     msg, ok = dit.initialize_service(project_root=os.environ.get("JV_ACESTEP_SRC") or os.getcwd(),
                                      config_path="acestep-v15-turbo", device=device,
                                      offload_to_cpu=small, offload_dit_to_cpu=small, quantization=quant)
     if not ok:
         raise RuntimeError(f"ACE-Step didn't start: {msg}"[:300])
-    if fp32:
-        _to_float32(dit)
     params = GenerationParams(caption=job["caption"], lyrics="[Instrumental]", instrumental=True,
                               duration=float(job["duration"]), bpm=job.get("bpm"), seed=int(job.get("seed", 7)),
                               thinking=False, use_cot_metas=False, use_cot_caption=False, use_cot_language=False)
@@ -98,16 +96,10 @@ try:
     import torch
     cuda = torch.cuda.is_available()
     device, note = ("cuda" if cuda else "cpu"), ""
-    old = _old_card()
+    if _old_card():
+        _use_bfloat16()
     try:
-        try:
-            path, tmp = generate(device, small=_vram() < 12, fp32=old)
-        except Exception as e:
-            if not (cuda and not old and ("NaN" in str(e) or "Inf latents" in str(e))):
-                raise
-            torch.cuda.empty_cache()             # silent result: once more in full precision
-            note = "made again in full precision after the first try came out silent"
-            path, tmp = generate(device, small=True, fp32=True)
+        path, tmp = generate(device, small=_vram() < 12)
     except Exception as e:
         if _no_resources(e):                     # the processor would need the same memory: don't retry
             raise RuntimeError("the computer ran out of memory loading the music model (RAM plus page file); "
