@@ -205,3 +205,24 @@ def test_chatterbox_float_wav_is_read(tmp_path):
     assert rate == 24000 and abs(float(y[100, 0]) - float(x[100])) < 1e-3
     src = (narration.ROOT / "studio" / "workers" / "chatterbox_worker.py").read_text()
     assert "torchaudio.save" not in src and "setsampwidth(2)" in src
+
+
+def test_music_is_skipped_clearly_when_windows_memory_is_short(studio_home, monkeypatch, tmp_path):  # noqa: F811
+    from studio import engines
+    py = tmp_path / "py"
+    py.write_text("")
+    monkeypatch.setattr(engines, "python", lambda tool: py)
+    monkeypatch.setattr(engines, "nvidia", lambda: {"name": "RTX 2060", "vram_gb": 6})
+    monkeypatch.setattr(engines, "free_gb", lambda: 9.0)
+    monkeypatch.setattr(engines, "commit_free_gb", lambda: 7.0)
+    with pytest.raises(engines.EngineError, match="page file"):
+        engines.run("acestep", "acestep_worker", {})
+
+
+def test_tool_temp_files_go_to_the_big_drive(studio_home, monkeypatch, tmp_path):  # noqa: F811
+    from studio import engines
+    monkeypatch.setattr(engines, "_big_drive", lambda: tmp_path / "D")
+    env = engines._temp_env({})
+    assert env["TEMP"] == env["TMP"] == str(tmp_path / "D" / "temp") and (tmp_path / "D" / "temp").is_dir()
+    monkeypatch.setattr(engines, "_big_drive", lambda: None)
+    assert engines.temp_dir() is None and engines._temp_env({}) == {}

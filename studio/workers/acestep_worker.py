@@ -19,9 +19,38 @@ def _vram():
     return torch.cuda.get_device_properties(0).total_memory / 2 ** 30 if torch.cuda.is_available() else 0
 
 
+def _lean_loading():
+    """ACE-Step loads its models with transformers' from_pretrained and no memory options. Ask it to load
+    the weights straight into place instead of building a second full copy first (same weights, same
+    music, about half the peak memory)."""
+    try:
+        import accelerate  # noqa: F401  (transformers needs it for this option)
+        import transformers
+    except Exception:
+        return
+    for name in ("AutoModel", "AutoModelForCausalLM"):
+        cls = getattr(transformers, name, None)
+        if cls is None or getattr(cls, "_jv_lean", False):
+            continue
+        orig = cls.from_pretrained.__func__
+
+        def lean(c, *a, _orig=orig, **k):
+            k.setdefault("low_cpu_mem_usage", True)
+            return _orig(c, *a, **k)
+        cls.from_pretrained = classmethod(lean)
+        cls._jv_lean = True
+
+
+def _no_resources(e):
+    """Windows error 1450: the computer ran out of memory it could reserve (RAM plus page file)."""
+    t = str(e).lower()
+    return "1450" in t or "insufficient system resources" in t or "paging file is too small" in t
+
+
 def generate(device, small):
     """One instrumental piece on this device. Returns the path ACE-Step wrote (inside a temp folder that the
     caller copies from) and the folder to clean up."""
+    _lean_loading()
     from acestep.handler import AceStepHandler
     from acestep.inference import GenerationConfig, GenerationParams, generate_music
     dit = AceStepHandler()
@@ -50,6 +79,9 @@ try:
     try:
         path, tmp = generate(device, small=_vram() < 12)
     except Exception as e:
+        if _no_resources(e):                     # the processor would need the same memory: don't retry
+            raise RuntimeError("the computer ran out of memory loading the music model (RAM plus page file); "
+                               "a bigger page file on D: would make room")
         if not (cuda and ("out of memory" in str(e).lower() or isinstance(e, torch.cuda.OutOfMemoryError))):
             raise
         torch.cuda.empty_cache()                 # the card is too full today: make it on the processor instead
