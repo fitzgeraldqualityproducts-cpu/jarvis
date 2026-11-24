@@ -206,7 +206,8 @@ Keep text short (labels under 6 words, headline under 9). Prefer number/equation
 has numbers; use steps for a process; headline otherwise. Writer's visual notes are hints only.
 Also give every scene "art": 5-12 words describing a picture of the scene's real-world subject as a place or
 objects seen from a person's point of view (e.g. "a crowded beach at Waikiki seen from the sand"); no text,
-numbers, diagrams, faces or famous people.{learned}
+numbers, diagrams, faces or famous people. And "footage": a 1-3 word stock-video search (e.g. "rocket launch",
+"ocean waves", "city traffic") when the line's subject is a real thing a camera could film, else "".{learned}
 
 Lines:
 """ + "\n".join(f"{i + 1}. {t}  (note: {st['lines'][i].get('visual', '')})" for i, t in enumerate(lines)) + \
@@ -224,9 +225,13 @@ Lines:
     if out:
         out[0] = hook_scene(lines[0], out[0])
     for i, sc in enumerate(out):                   # the picture idea survives a replaced or fixed-up scene
-        art = scenes[i].get("art") if i < len(scenes) and isinstance(scenes[i], dict) else None
+        src = scenes[i] if i < len(scenes) and isinstance(scenes[i], dict) else {}
+        art = src.get("art")
         if art and not sc.get("art"):
-            out[i] = dict(sc, art=str(art)[:160])
+            out[i] = sc = dict(sc, art=str(art)[:160])
+        fq = " ".join(re.sub(r"[^A-Za-z0-9 '-]", " ", str(src.get("footage") or "")).split()[:4])
+        if fq and not sc.get("footage"):
+            out[i] = dict(sc, footage=fq[:40])
     return out
 
 
@@ -618,6 +623,59 @@ def _caption_props(words, pal):
             "caption": {"y": CAPTION_Y, "left": left, "width": width, "size": size, "maxLines": lines}}, boxes
 
 
+def _depth_moves(raws, enh, starts, folder, pal, used):
+    """{scene: {"video", "kind"}}: a camera move through each picture that has a depth map (studio/motion.py)."""
+    from studio import art, motion
+    out, errs = {}, []
+    for k, rp in sorted(raws.items()):
+        dp = enh.get(k, {}).get("depth")
+        if not dp or k + 1 >= len(starts):
+            continue
+        try:
+            _shaded, img, shade = art.prepare(rp, pal, "hud", hd=enh[k].get("hd"), parts=True)
+            seconds = starts[k + 1] - starts[k] + FADE + 0.1
+            p = motion.depth_clip(img, motion.load_depth(dp), seconds, k, folder / f"move_{k + 1:02d}.mp4", FPS, shade)
+            out[k] = {"video": p.name, "kind": motion.move_for(k)[0]}
+        except Exception as e:
+            errs.append(str(e)[:160])
+    used["motion"] = (f"depth camera moves: {len(out)} of {len(raws)} scenes" if out else "flat push-in") + \
+        (f" ({errs[0]})" if errs else "")
+    return out
+
+
+def _footage_moves(video_id, scenes, starts, folder, used, record):
+    """{scene: {"video", "kind"}}: real Pexels clips for the scenes the planner gave a footage search."""
+    from studio import art, footage
+    if not footage.ready():
+        used["footage"] = "none (no Pexels key yet: run Connect Stock Footage)"
+        return {}
+    spans = [starts[k + 1] - starts[k] for k in range(len(scenes))]
+    out, why, seen = {}, [], {}
+    shade = None
+    for k in footage.pick_scenes(scenes, spans):
+        need = spans[k] + FADE + 0.1
+        src, info = footage.fetch(scenes[k]["footage"], need, used=set(seen))
+        if not src:
+            why.append(info)
+            continue
+        # a clip used again starts further in, so the same shot never plays twice
+        start = max(0.0, min(seen.get(info["id"], 0.0), info["duration"] - need - 0.2))
+        try:
+            shade = shade or footage.shade_png(art.hud_shade(W, H), folder / "shade.png")
+            p = footage.scene_clip(src, need, folder / f"footage_{k + 1:02d}.mp4", shade, W, H, FPS, start=start)
+        except Exception as e:
+            why.append(str(e)[:120])
+            continue
+        seen[info["id"]] = start + need
+        out[k] = {"video": p.name, "kind": "footage"}
+        if record:
+            db.insert("INSERT INTO assets(video_id, kind, path, origin, source_url, license, attribution, sha256, created) "
+                      "VALUES(?,?,?,?,?,?,?,?,?)", video_id, "footage:scene", str(p), "stock", info["page"] or None,
+                      footage.LICENCE, f"Video by {info['user'] or 'a Pexels creator'} on Pexels", _sha(p), time.time())
+    used["footage"] = (f"Pexels: {len(out)} scene{'s' if len(out) != 1 else ''}" if out else "none") + (f" ({why[0]})" if why else "")
+    return out
+
+
 def render(video_id, progress=lambda s: None, engines_override=None, out_name="short.mp4", record=True,
            voice_path=None):
     """Makes studio_data/videos/<id>/<out_name> from the passed script and narration. Returns a report.
@@ -626,7 +684,7 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     the database."""
     import cv2
     from clipper import captions, media
-    from studio import engines, script
+    from studio import edit, engines, script
     guard.allow("media.local", f"render video {video_id}", record=False)
     eng = engines.settings(engines_override)
     used = {}
@@ -652,14 +710,21 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     pal = palette()
     handle = (db.one("SELECT handle FROM channel WHERE id=1") or {"handle": ""})["handle"] or ""
     look = eng.get("look", "diagram")
-    bgs, bg_paths = {}, {}
+    bgs, bg_paths, raws, enh = {}, {}, {}, {}
     if eng["images"] == "sdxl" or look == "hud":
         progress("Painting a picture for every scene (SDXL-Turbo)")
         try:
             from studio import art
             raws = art.raw_pictures(video_id, scenes, lines, look)
+            sharpen, depth = eng["sharpen"] == "esrgan", eng["motion"] == "depth" and look == "hud"
+            if raws and (sharpen or depth):
+                progress("Sharpening the pictures and finding their depth")
+                enh = art.enhance(raws, sharpen=sharpen, depth=depth)
+                n_hd = sum(1 for k in raws if enh.get(k, {}).get("hd"))
+                used["sharpen"] = (f"Real-ESRGAN: {n_hd} of {len(raws)} pictures" if sharpen else "off") + \
+                    (f" ({enh['_note'][:160]})" if enh.get("_note") else "")
             for k, rp in sorted(raws.items()):
-                bgs[k] = art.prepare(rp, pal, look)
+                bgs[k] = art.prepare(rp, pal, look, hd=enh.get(k, {}).get("hd"))
                 bg_paths[k] = folder / f"bg_{k + 1:02d}.png"
                 bgs[k].save(bg_paths[k])
             if look == "hud" and len(bgs) < len(scenes):
@@ -736,6 +801,37 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
             used["music"] = f"none (the music wasn't used: {str(e)[:200]})"
     else:
         used["music"] = "none"
+    beats = edit.beats_of(st["lines"], len(scenes))
+    cue_list = edit.cues(starts, beats, hud_list, words)
+    if eng["sfx"] == "synth":
+        try:
+            from studio import sound
+            fx = sound.track(cue_list, end + 0.05)
+            if fx is not None:
+                mixed = folder / "voice_sfx.wav"
+                sound.mix(padded, fx, mixed, end + 0.05)
+                padded = mixed
+                used["sfx"] = f"Jarvis's own sound effects: {sum(1 for c in cue_list if c['kind'] != 'jump')} cues"
+            else:
+                used["sfx"] = "none (no cues)"
+        except Exception as e:
+            used["sfx"] = f"none (the sound effects weren't used: {str(e)[:200]})"
+    moves = {}                                               # scene -> {"video", "kind"} for the cinematic look
+    if look == "hud" and eng["compose"] == "remotion":
+        if eng["footage"] == "pexels":
+            moves.update(_footage_moves(video_id, scenes, starts, folder, used, record))
+        if eng["motion"] == "depth":
+            moves.update({k: v for k, v in _depth_moves(raws, enh, starts, folder, pal, used).items()
+                          if k not in moves})
+    lively = eng["edit"] == "lively"
+    ovs = edit.overlays(scenes, look) if lively else {}
+    if lively:
+        for k, ov in ovs.items():                            # the diagrams count as drawn visuals for the safe area
+            b, o = boxes[k], edit.overlay_box(ov)
+            boxes[k] = [min(b[0], o[0]), min(b[1], o[1]), max(b[2], o[2]), max(b[3], o[3])]
+        used["edit"] = f"lively: {len(ovs)} animated diagrams, {len(cue_list)} cues"
+    else:
+        used["edit"] = "calm"
     clips = {}
     if look == "hud":
         used["visuals"] = "full-screen pictures with a slow push-in (the cinematic look doesn't use Manim)"
@@ -776,8 +872,11 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                                  **({"video": Path(clips[k]["video"]).name, "videoSeconds": clips[k]["seconds"],
                                      "hold": Path(clips[k]["hold"]).name} if k in clips else {}),
                                  **({"bg": bg_paths[k].name, "hud": hud_list[k], "title": lines[0] if k == 0 else ""}
-                                    if look == "hud" else {})}
-                                for k in range(len(scenes))]}
+                                    if look == "hud" else {}),
+                                 **({"motion": moves[k]["video"]} if k in moves else {}),
+                                 **({"overlay": ovs[k]} if k in ovs else {})}
+                                for k in range(len(scenes))],
+                     **({"fx": cue_list} if lively else {})}
             with engines.heavy("Remotion render"):
                 engines.remotion_render(props, folder, tmp)
             tmp.replace(out)
@@ -872,9 +971,17 @@ def metadata(video_id):
     eng_used = (meta.get("render") or {}).get("engines") or {}
     ai_pictures = str(eng_used.get("images", "")).startswith("SDXL")
     ai_music = str(eng_used.get("music", "")).startswith("ACE-Step")
-    if ai_pictures or ai_music:                   # said plainly, before the hashtags
-        extra = " ".join(x for x in ("The pictures are AI-generated illustrations, not real footage." if ai_pictures
-                                     else "", "The background music is AI-generated." if ai_music else "") if x)
+    stock = str(eng_used.get("footage", "")).startswith("Pexels")
+    if stock:
+        credits = [r["attribution"] for r in db.q("SELECT DISTINCT attribution FROM assets WHERE video_id=? AND "
+                                                  "kind='footage:scene'", video_id) if r["attribution"]]
+        stock_line = "Some scenes are stock footage from Pexels (" + "; ".join(credits[:4]) + ")." if credits else \
+            "Some scenes are stock footage from Pexels."
+    if ai_pictures or ai_music or stock:          # said plainly, before the hashtags
+        pics = ("The other pictures are AI-generated illustrations." if stock else
+                "The pictures are AI-generated illustrations, not real footage.") if ai_pictures else ""
+        extra = " ".join(x for x in (pics, stock_line if stock else "",
+                                     "The background music is AI-generated." if ai_music else "") if x)
         desc = desc.replace("\n\n" + " ".join(tags_hash), " " + extra + "\n\n" + " ".join(tags_hash))
     up = {"title": title, "description": desc[:4900], "tags": kws, "categoryId": "27", "defaultLanguage": "en",
           "defaultAudioLanguage": "en-US", "madeForKids": False, "containsSyntheticMedia": ai_pictures,

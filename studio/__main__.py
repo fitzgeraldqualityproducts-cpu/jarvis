@@ -29,6 +29,7 @@
               engines (status) | engines install [tool|all] | engines check | engines use on|off [area...] [--if-ready]
   handover    moves the business to another computer: handover export (old one; switches it off there)
               | handover import [zip] [--replace] (new one; autopilot stays off) | handover undo
+  footage     stock footage from Pexels (free key): footage connect (asks for the key) | footage (status)
   sample      makes a side-by-side sample with the upgraded tools from a finished Short (--video <id>):
               its voice and video next to the current ones; changes nothing and uploads nothing"""
 import json
@@ -462,6 +463,18 @@ def main(argv):
         return _engines(argv)
     elif cmd == "sample":
         return _sample(argv)
+    elif cmd == "footage":
+        from studio import footage
+        health.startup()
+        if len(argv) > 1 and argv[1] == "connect":
+            try:
+                footage.connect()
+            except ValueError as e:
+                print(e)
+                return 1
+        else:
+            print("Pexels stock footage: " + ("key saved, ready" if footage.ready() else
+                                              "no key yet (run: python -m studio footage connect)"))
     elif cmd == "run":
         jobs.start()
         try:

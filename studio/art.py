@@ -59,27 +59,89 @@ def raw_pictures(video_id, scenes, lines, look="diagram"):
     return have
 
 
-def prepare(raw, pal, look="diagram", W=1080, H=1920):
+ENHANCE_LICENCE = ("sharpened with Real-ESRGAN x4plus (BSD-3-Clause); depth from Depth Anything V2 Small "
+                   "(Apache-2.0)")
+
+
+def _hd(raw):
+    return Path(raw).with_name(Path(raw).stem + "_hd.png")
+
+
+def _depth(raw):
+    return Path(raw).with_name(Path(raw).stem + "_depth.png")
+
+
+def enhance(raws, sharpen=True, depth=True):
+    """{index: {"hd": path?, "depth": path?}} for the raw pictures: each made 4x sharper (Real-ESRGAN) and its depth
+    map (Depth Anything V2 Small), in one job on the graphics card. Kept next to the raw picture, so a re-render
+    reuses them. Never raises: a picture without them just keeps the plain one (and the flat push-in)."""
+    out = {i: {} for i in raws}
+    want = []
+    for i, rp in raws.items():
+        hd, dp = _hd(rp), _depth(rp)
+        if sharpen and not hd.exists():
+            want.append(i)
+        elif depth and not dp.exists():
+            want.append(i)
+    note = ""
+    if want:
+        try:
+            md = engines.models_dir() or engines.TOOLS / "models"
+            with engines.heavy("Sharper pictures and depth"):
+                ans = engines.run("sdxl", "enhance_worker", {
+                    "models": str(md),
+                    "images": [{"src": str(raws[i]), **({"hd": str(_hd(raws[i]))} if sharpen else {}),
+                                **({"depth": str(_depth(raws[i]))} if depth else {})} for i in want]})
+            errs = [r["error"] for r in ans.get("images") or [] if r.get("error")]
+            note = errs[0] if errs else ""
+        except Exception as e:
+            note = str(e)[:200]
+    for i, rp in raws.items():
+        if sharpen and _hd(rp).exists():
+            out[i]["hd"] = _hd(rp)
+        if depth and _depth(rp).exists():
+            out[i]["depth"] = _depth(rp)
+    if note:
+        out["_note"] = note
+    return out
+
+
+def prepare(raw, pal, look="diagram", W=1080, H=1920, hd=None, parts=False):
     """The raw picture as a scene background: covers the frame, softened, dimmed, darker at the top and
     bottom (where the handle and captions sit). In the cinematic look ("hud") the picture stays bright and
     only a soft shade sits behind the counter and the caption. Returns a PIL RGB image."""
     from PIL import Image, ImageFilter
-    img = Image.open(raw).convert("RGB")
-    s = max(W / img.width, H / img.height)
-    img = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
-    x, y = (img.width - W) // 2, (img.height - H) // 2
-    img = img.crop((x, y, x + W, y + H)).filter(ImageFilter.GaussianBlur(0.6 if look == "hud" else 1.5))
+    img = Image.open(hd if hd and Path(hd).exists() else raw).convert("RGB")
+    img = cover(img, W, H)
+    # the sharpened picture needs no softening; the plain 512 px one is softened a little so it isn't blocky
+    sharp = hd and Path(hd).exists()
+    img = img.filter(ImageFilter.GaussianBlur(0.0 if sharp else 0.6 if look == "hud" else 1.5))
     if look == "hud":
         a = np.asarray(img).astype(np.float32)
-        yy = np.linspace(0, 1, H)[:, None, None]
-        xx = np.linspace(0, 1, W)[None, :, None]
-        hud = np.clip(1 - np.hypot((xx - 0.18) / 0.55, (yy - 0.2) / 0.16), 0, 1) * 0.5     # behind the counter
-        cap = np.exp(-((yy - 0.66) / 0.07) ** 2) * 0.42                                   # behind the caption
-        shade = np.clip(hud + cap, 0, 0.6)
-        return Image.fromarray(np.clip(a * (1 - shade), 0, 255).astype("uint8"), "RGB")
+        shade = hud_shade(W, H)
+        shaded = Image.fromarray(np.clip(a * (1 - shade), 0, 255).astype("uint8"), "RGB")
+        return (shaded, img, shade) if parts else shaded
     a = np.asarray(img).astype(np.float32) * DIM
     bg = np.array([int(pal["background"].lstrip("#")[k:k + 2], 16) for k in (0, 2, 4)], dtype=np.float32)
     yy = np.linspace(0, 1, H)[:, None, None]
     edge = np.clip(np.maximum(1 - yy / 0.18, (yy - 0.62) / 0.38), 0, 1) * 0.75   # top band and caption area
     a = a * (1 - edge) + bg * edge
     return Image.fromarray(np.clip(a, 0, 255).astype("uint8"), "RGB")
+
+
+def cover(img, W=1080, H=1920):
+    """The picture scaled to cover W x H and cropped in the middle."""
+    from PIL import Image
+    s = max(W / img.width, H / img.height)
+    img = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
+    x, y = (img.width - W) // 2, (img.height - H) // 2
+    return img.crop((x, y, x + W, y + H))
+
+
+def hud_shade(W=1080, H=1920):
+    """The cinematic look's soft shade (0-0.6) behind the counter and the caption, as an (H, W, 1) array."""
+    yy = np.linspace(0, 1, H)[:, None, None]
+    xx = np.linspace(0, 1, W)[None, :, None]
+    hud = np.clip(1 - np.hypot((xx - 0.18) / 0.55, (yy - 0.2) / 0.16), 0, 1) * 0.5     # behind the counter
+    cap = np.exp(-((yy - 0.66) / 0.07) ** 2) * 0.42                                   # behind the caption
+    return np.clip(hud + cap, 0, 0.6).astype(np.float32)
