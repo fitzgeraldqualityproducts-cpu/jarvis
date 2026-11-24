@@ -76,6 +76,16 @@ thinking), then the fact-check (about 2,000-3,000 each).
 |---|---|
 | After each measured Short: the quality score made before upload next to the real performance index. With 5+ Shorts: rank correlation for the score and each part, in the weekly report. Suggestions only; weights change only by an approved update | Built and tested |
 
+## Five more upgrades (asked for 2026-11-24: "1,2,3,4,6")
+
+| Upgrade | What it does | Switch | State |
+|---|---|---|---|
+| 3. More facts | Before the first draft, adds up to 8 sentences with new numbers, copied word for word from Wikipedia (its API), the NASA/agency pages the topic already cites, and arXiv abstracts (marked as preprints). Their text is saved for the fact-check | `enrich_facts` (on) | Built and tested with fakes. The cloud can't reach these sites |
+| 2. Voice check | Whisper listens back to the Chatterbox voiceover. Unclear sentences are re-recorded (2 more seeds) and the clearest take is spliced in. Still garbled: Kokoro. Pronunciation list for units and science words (`pronounce` adds more) | `voice_check` (on) | Built and tested with fakes |
+| 1. Final-cut review | Claude looks at a contact sheet (the first frame plus the middle of each line) next to what is said, and reports problems as minor or major | `final_review`: `advise` (default, never stops a Short), `block`, `off` | Built and tested. A real CLI image read was checked |
+| 4. Smarter topics | Shows Claude yesterday's most-read Wikipedia articles as hints. Blends Wikipedia page views into interest. Catches repeats by meaning with Jarvis's local embedding model | `wiki_trends` (on), `duplicate_meaning_at` (0.9) | Built and tested. Tune the threshold on the PC with `python -m studio similar` |
+| 6. Packaging that learns | Saves each Short's title style and first-frame look. Once a style is clearly ahead on the index (titles) or hook hold (first frames), over 3+ Shorts each side, the writer is told and that title style is picked first | none (does nothing until there is evidence) | Built and tested. Shorts have no CTR data, so it uses index and hook hold |
+
 ## Phases 6-7: validate and activate
 
 Each change goes live on the PC by update. New styles and tools stay off until a sample is approved.
