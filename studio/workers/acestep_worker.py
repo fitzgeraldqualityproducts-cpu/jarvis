@@ -47,6 +47,26 @@ def _no_resources(e):
     return "1450" in t or "insufficient system resources" in t or "paging file is too small" in t
 
 
+def _old_card():
+    """True on a graphics card older than the RTX 30 series (Turing and before: no native bfloat16)."""
+    import torch
+    return torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] < 8
+
+
+def _use_bfloat16():
+    """On those cards ACE-Step picks float16, which overflows into NaN (silent music), and has no setting
+    for it. float32 doesn't fit a 6 GB card. bfloat16 has float32's range at float16's size; PyTorch runs it
+    on these cards too (more slowly). So make ACE-Step's own check say yes before it loads."""
+    from acestep import gpu_config
+    gpu_config.cuda_supports_bfloat16 = lambda device_index=None: True
+    try:
+        from acestep.core.generation.handler import init_service_orchestrator as orch
+        if hasattr(orch, "_cuda_supports_bfloat16"):
+            orch._cuda_supports_bfloat16 = lambda: True
+    except Exception:
+        pass
+
+
 def generate(device, small):
     """One instrumental piece on this device. Returns the path ACE-Step wrote (inside a temp folder that the
     caller copies from) and the folder to clean up."""
@@ -54,10 +74,10 @@ def generate(device, small):
     from acestep.handler import AceStepHandler
     from acestep.inference import GenerationConfig, GenerationParams, generate_music
     dit = AceStepHandler()
+    quant = "int8_weight_only" if small and device == "cuda" else None
     msg, ok = dit.initialize_service(project_root=os.environ.get("JV_ACESTEP_SRC") or os.getcwd(),
                                      config_path="acestep-v15-turbo", device=device,
-                                     offload_to_cpu=small, offload_dit_to_cpu=small,
-                                     quantization="int8_weight_only" if small and device == "cuda" else None)
+                                     offload_to_cpu=small, offload_dit_to_cpu=small, quantization=quant)
     if not ok:
         raise RuntimeError(f"ACE-Step didn't start: {msg}"[:300])
     params = GenerationParams(caption=job["caption"], lyrics="[Instrumental]", instrumental=True,
@@ -76,6 +96,8 @@ try:
     import torch
     cuda = torch.cuda.is_available()
     device, note = ("cuda" if cuda else "cpu"), ""
+    if _old_card():
+        _use_bfloat16()
     try:
         path, tmp = generate(device, small=_vram() < 12)
     except Exception as e:
@@ -85,7 +107,7 @@ try:
         if not (cuda and ("out of memory" in str(e).lower() or isinstance(e, torch.cuda.OutOfMemoryError))):
             raise
         torch.cuda.empty_cache()                 # the card is too full today: make it on the processor instead
-        device, note = "cpu", "the graphics card ran out of memory, so it was made on the processor"
+        device, note = "cpu", "the graphics card ran out of memory, so it was made on the processor (slower)"
         path, tmp = generate("cpu", small=False)
     shutil.copy(path, job["out"])
     shutil.rmtree(tmp, ignore_errors=True)
