@@ -6,9 +6,9 @@
 Keys are saved once with "Connect Stock Footage" (`python -m studio footage connect`); the description credits
 every clip anyway. Config "footage_nasa": false leaves NASA out.
 
-A portrait clip, or a 4K-ish landscape one, fills the screen (cover-cropped). An ordinary 1080p landscape clip
-(most of NASA's) would turn soft if cropped that much, so it's shown whole across the middle over a blurred,
-darkened copy of itself ("framed"): sharp, and nothing important is cut off.
+Every clip fills the screen (cover-cropped from the middle), as Connor chose. An ordinary 1080p landscape clip
+(most of NASA's) is enlarged a lot by that crop, so it's scaled with lanczos and lightly sharpened. Config
+"footage_wide": "framed" shows such clips whole over a blurred copy of themselves instead.
 
 The visual planner gives a scene a short "footage" search (like "rocket launch") only when its subject is a real
 thing a camera could film. Jarvis looks for a portrait (vertical) clip at least as long as the scene, downloads
@@ -253,12 +253,22 @@ def _nasa_files(cand, seconds):
     return [u.replace("http://", "https://", 1) for u in mp4], secs
 
 
+def wide_mode():
+    """How a wide clip too small to crop sharply is shown: "crop" (Connor's choice, 2026-11-24: fill the screen,
+    a little sharpened) or "framed" (whole, over a blurred copy). Config "footage_wide"."""
+    m = str(config.general().get("footage_wide", "crop")).lower()
+    return m if m in ("crop", "framed") else "crop"
+
+
 def _layout(path):
-    """"cover" (fill the screen) or "framed" (shown whole over a blurred copy) for a downloaded clip."""
+    """"cover" (fill the screen), "cover-sharpen" (a small wide clip cropped to fill, then sharpened) or "framed"
+    (shown whole over a blurred copy) for a downloaded clip."""
     from clipper import media
     info = media.probe(path)
     w, h = info.get("width") or 0, info.get("height") or 0
-    return ("framed" if w >= h and h < COVER_WIDE else "cover"), float(info.get("duration") or 0)
+    if w >= h and h < COVER_WIDE:
+        return ("framed" if wide_mode() == "framed" else "cover-sharpen"), float(info.get("duration") or 0)
+    return "cover", float(info.get("duration") or 0)
 
 
 def fetch(query, seconds, used=()):
@@ -329,7 +339,11 @@ def _fetch_from(site, query, seconds, used, folder):
 def _vf(W, H, fps, layout):
     look = "eq=saturation=1.05:contrast=1.03"
     if layout != "framed":
-        return f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={fps},setsar=1,{look}[b]"
+        # a small wide clip is enlarged a lot when cropped to fill: lanczos scaling and a light unsharp keep it crisp
+        sharp = ":flags=lanczos" if layout == "cover-sharpen" else ""
+        after = ",unsharp=5:5:0.7:5:5:0.0" if layout == "cover-sharpen" else ""
+        return (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase{sharp},crop={W}:{H},fps={fps},setsar=1"
+                f"{after},{look}[b]")
     w4, h4 = W // 4, H // 4
     # the whole clip across the middle, over a blurred, darker copy of itself that fills the screen
     return (f"[0:v]fps={fps},split[a][f];[a]scale={w4}:{h4}:force_original_aspect_ratio=increase,crop={w4}:{h4},"

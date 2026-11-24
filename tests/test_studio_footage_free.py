@@ -68,10 +68,10 @@ def test_pixabay_key_is_told_apart_and_choice_prefers_sharp_portrait(studio_home
     assert best["url"] == "https://cdn/3m.mp4" and best["id"] == "pixabay_3" and best["credit"] == "Video by Mo on Pixabay"
     assert footage.choose_pixabay(ans, 5, used={"pixabay_3"})["url"] == "https://cdn/2l.mp4"   # 4K crops sharply
     ans["hits"][1]["videos"].pop("large")
-    assert footage.choose_pixabay(ans, 5, used={"pixabay_3"})["url"] == "https://cdn/2m.mp4"   # 1080p: framed
+    assert footage.choose_pixabay(ans, 5, used={"pixabay_3"})["url"] == "https://cdn/2m.mp4"   # 1080p: cropped and sharpened
 
 
-def test_nasa_needs_no_key_skips_talks_and_others_material_and_is_framed(studio_home, monkeypatch, tmp_path):  # noqa: F811
+def test_nasa_needs_no_key_skips_talks_and_others_material_and_fills_the_screen(studio_home, monkeypatch, tmp_path):  # noqa: F811
     from studio import footage
     calls = []
     _fake_nasa(monkeypatch, calls)
@@ -80,16 +80,19 @@ def test_nasa_needs_no_key_skips_talks_and_others_material_and_is_framed(studio_
     assert footage._nasa_seconds({"QuickTime:Duration": "0:01:05"}) == 65.0
     out, info = footage.fetch("rocket launch", 5.0)
     assert out and out.name == "nasa_good1.mp4" and info["source"] == "nasa"
-    assert info["layout"] == "framed" and 0 < info["skip"] <= 8.0 and info["credit"] == "Video: NASA"
+    assert info["layout"] == "cover-sharpen" and 0 < info["skip"] <= 8.0 and info["credit"] == "Video: NASA"
     assert info["page"] == "https://images.nasa.gov/details/good1"
     assert not any("talk" in c or "esa1" in c for c in calls)                   # never even looked at
     assert "https://images-assets.nasa.gov/video/good1/good1~large.mp4" in calls  # https, the large copy
-    clip = footage.scene_clip(out, 2.0, tmp_path / "s.mp4", None, start=info["skip"], layout=info["layout"])
     from clipper import media
-    p = media.probe(clip)
-    assert (p["width"], p["height"]) == (1080, 1920) and abs(p["duration"] - 2.0) < 0.2
-    # switched off in settings: NASA isn't asked
+    for layout in ("cover-sharpen", "framed"):
+        clip = footage.scene_clip(out, 2.0, tmp_path / f"s_{layout}.mp4", None, start=info["skip"], layout=layout)
+        p = media.probe(clip)
+        assert (p["width"], p["height"]) == (1080, 1920) and abs(p["duration"] - 2.0) < 0.2
     from studio import config
+    config.set_values(footage_wide="framed")                       # the other way to show a small wide clip
+    assert footage._layout(out)[0] == "framed"
+    # switched off in settings: NASA isn't asked
     config.set_values(footage_nasa=False)
     assert footage.fetch("rocket launch", 5.0)[0] is None
 
