@@ -85,6 +85,6 @@ Each change goes live on the PC by update. New styles and tools stay off until a
 | Item | Waiting for |
 |---|---|
 | #82 visual upgrades (sharpen, motion, edit, sfx, footage) | A PC sample and Connor's typed OK in the PC thread |
-| Pexels footage | A free Pexels key ("Connect Stock Footage") |
+| Stock footage | NASA works with no key; a free Pixabay key ("Connect Stock Footage") adds Pixabay. Pexels has paused new keys. Footage stays off until Connor approves a sample |
 | Google Drive backup of finished Shorts | "Connect Google Drive" once on the PC |
 | Channel verification and Canva logo/banner | Connor, in YouTube Studio |

@@ -27,6 +27,8 @@ def clipper_home(tmp_path, monkeypatch):
     from clipper import media
     monkeypatch.setattr(media, "NVENC_TEST", lambda: False)  # encode on the processor unless a test says otherwise
     monkeypatch.setattr(media, "_NVENC", [])
+    from studio import footage
+    monkeypatch.setattr(footage, "NASA_GET", lambda url: {"collection": {"items": []}})   # never asks NASA while testing
     yield tmp_path
     db.reset_connections()
 
