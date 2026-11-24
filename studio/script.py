@@ -699,8 +699,10 @@ def similar_script(text, video_id=None):
 
 # ---------- review ----------
 
-def review(draft, topic, video_id=None):
-    """Independent check. Returns {"ok", "problems", "claims", "hooks", "hook", "calcs", ...}."""
+def review(draft, topic, video_id=None, recheck=None):
+    """Independent check. Returns {"ok", "problems", "claims", "hooks", "hook", "calcs", ...}. recheck: after
+    "fix lines" changed a few lines of a script that was checked in full, only those lines are checked again (see
+    _recheck); everything else keeps its verdicts and ratings from that check."""
     from studio import claude
     from studio import topics
     facts = _facts(topic)
@@ -711,6 +713,10 @@ def review(draft, topic, video_id=None):
     lines = "\n".join(f"L{i + 1}. {ln['text']}  [uses: {', '.join(map(str, ln.get('facts') or [])) or 'none'}]"
                       for i, ln in enumerate(draft["lines"]))
     hooks = "\n".join(f"H{i}. {h}" for i, h in enumerate(draft["hooks"]))
+    if recheck:
+        ans = _recheck(draft, topic, fact_list, lines, recheck)
+        if ans is not None:
+            return _judged(draft, ans, video_id, rechecked=sorted(recheck["changed"]))
     ans = claude.ask_json(f"""You are a strict fact-checker and editor for a science Shorts channel. Each source below comes with
 text Jarvis just read from that page. Use it, and open the page or search the web whenever that text doesn't
 clearly settle a claim, or a source has none. Do not trust the writer.
@@ -728,7 +734,7 @@ For EVERY script line that states a fact or number, give a verdict: "supported" 
 arithmetic from sourced numbers), "unsupported" (no source backs it) or "wrong" (a source contradicts it; give the
 correct statement and the URL). A line that only states standard textbook science (a named law or formula, or a
 well-known physical constant, stated correctly in its usual form) gets "standard" without needing a source; any
-number specific to this topic never counts as standard. Opinion or transition lines get "n/a".
+number specific to this topic never counts as standard. Leave opinion and transition lines out (no entry).
 Rate each hook 0-10 on curiosity, clarity, specificity, honesty (10 = fully delivered by the script, no bait) and
 speed (gets to the point at once).
 Also: "loop" 0-10 (read the LAST line and then the FIRST line: does it flow back into the start as one continuous
@@ -740,14 +746,21 @@ editor would fix (confusing step, misleading simplification, unit mistake).
 
 For each "supported" or "wrong" claim also give "quote": the source's own words that settle it (at most 25 words,
 copied exactly), "confidence": 0.0-1.0 (how sure you are of the verdict), and "source_date": the page's
-published or updated date if it shows one (YYYY-MM-DD), else "".
+published or updated date if it shows one (YYYY-MM-DD), else "". Give "note" only for "unsupported", "wrong" and
+"standard" (what is missing or wrong and the correct statement, or which law or constant): leave it out for
+"supported", where the quote already says it.
 
-JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|wrong|n/a", "fact": "F1", "note": "...",
-"quote": "...", "confidence": 0.9, "source_date": ""}}],
+JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|wrong", "fact": "F1",
+"quote": "...", "confidence": 0.9, "source_date": ""}}, {{"line": 2, "verdict": "unsupported", "note": "..."}}],
 "hooks": {{"0": {{"curiosity": 0, "clarity": 0, "specificity": 0, "honesty": 0, "speed": 0}}}},
 "loop": 0, "rehook": 0, "originality": 0, "originality_fix": "...", "inauthentic_risk": "low", "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
     if not isinstance(ans, dict):
         raise ScriptRejected("the fact-check didn't return a result")
+    return _judged(draft, ans, video_id)
+
+
+def _judged(draft, ans, video_id, rechecked=None):
+    """The code's half of the review: the checker's answer plus the hard rules the code checks itself."""
     problems = []
     claims = [c for c in ans.get("claims") or [] if isinstance(c, dict)]
     for c in claims:
@@ -799,7 +812,93 @@ JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|
     hard = [p for p in problems if not p.startswith("editor: ")]
     return {"ok": not hard, "problems": problems, "hard_problems": hard, "claims": claims, "hook_ratings": ratings,
             "hook_index": hi, "hook_score": hs, "hook": hook, "body": body, "words": words, "calcs": calcs, "loop": loop, "rehook": rehook,
-            "originality": orig, "inauthentic_risk": ans.get("inauthentic_risk"), "similar": [sim, sim_vid]}
+            "originality": orig, "inauthentic_risk": ans.get("inauthentic_risk"), "similar": [sim, sim_vid],
+            **({"rechecked": rechecked} if rechecked else {})}
+
+
+# Lines whose change can move the hook, loop, re-hook or originality ratings: a fix there gets a full check.
+RECHECK_FULL_BEATS = ("hook", "rehook", "payoff", "loop")
+
+
+def recheck_plan(old_draft, new_draft, mapping, prior_checks):
+    """{"changed": {new line numbers}, "kept": {new line: old line}, "prior": checks} when a partial re-check is
+    safe, else None. Safe only when: the hooks are the same, every changed line is an ordinary setup or math line,
+    the earlier check's only hard problems were flagged lines, and its ratings are all there."""
+    if not mapping or new_draft.get("hooks") != old_draft.get("hooks"):
+        return None
+    hard = prior_checks.get("hard_problems") or []
+    if not hard or not all(LINE_PROBLEM.match(h) for h in hard):
+        return None
+    if not prior_checks.get("hook_ratings") or prior_checks.get("loop") is None or prior_checks.get("originality") is None:
+        return None
+    flagged = {int(LINE_PROBLEM.match(h).group(1)) for h in hard}
+    changed, kept = set(), {}
+    for new_i, ln in enumerate(new_draft["lines"], 1):
+        old_i = mapping.get(new_i)
+        if old_i is None:
+            return None
+        if ln.get("text") == old_draft["lines"][old_i - 1].get("text") and old_i not in flagged:
+            kept[new_i] = old_i                    # (a flagged line left as it was is checked again)
+        else:
+            changed.add(new_i)
+    gone = set(range(1, len(old_draft["lines"]) + 1)) - set(mapping.values())
+    for i in changed:
+        if str(new_draft["lines"][i - 1].get("beat") or "") in RECHECK_FULL_BEATS:
+            return None
+    for i in gone:
+        if str(old_draft["lines"][i - 1].get("beat") or "") in RECHECK_FULL_BEATS:
+            return None
+    if not changed and not gone:
+        return None
+    return {"changed": changed, "kept": kept, "prior": prior_checks}
+
+
+def _recheck(draft, topic, fact_list, lines, plan):
+    """The checker's answer for a fixed script, asking only about the changed lines (the whole script is shown, so
+    each is judged in context). Kept lines keep their verdicts; hook, loop, re-hook and originality ratings carry
+    over, since none of those lines changed. None if the answer is unusable (then the full check runs)."""
+    from studio import claude
+    prior = plan["prior"]
+    if not plan["changed"]:
+        ans = {"claims": []}
+    else:
+        ask = ", ".join(f"L{i}" for i in sorted(plan["changed"]))
+        ans = claude.ask_json(f"""You are a strict fact-checker for a science Shorts channel. A few lines of this script were just
+reworded to fix problems an earlier check found; the other lines were already checked. Check ONLY {ask}, in the
+context of the whole script. Each source below comes with text Jarvis just read from that page. Use it, and open the
+page or search the web whenever that text doesn't clearly settle a claim. Do not trust the writer.
+
+Sources:
+{fact_list}
+
+Script lines:
+{lines}
+
+For each of {ask} that states a fact or number, give a verdict: "supported" (a source says it, or it follows by
+arithmetic from sourced numbers), "unsupported" (no source backs it) or "wrong" (a source contradicts it; give the
+correct statement and the URL). A line that only states standard textbook science (a named law or formula, or a
+well-known physical constant, stated correctly in its usual form) gets "standard"; any number specific to this topic
+never counts as standard. Leave opinion and transition lines out. For "supported" or "wrong" give "quote" (the
+source's own words, at most 25 words, copied exactly), "confidence" 0.0-1.0 and "source_date" (YYYY-MM-DD or "").
+Give "note" only for "unsupported", "wrong" and "standard". "problems": anything a careful editor would fix in
+those lines (confusing step, misleading simplification, unit mistake).
+
+JSON only: {{"claims": [{{"line": 3, "verdict": "supported", "fact": "F1", "quote": "...", "confidence": 0.9,
+"source_date": ""}}], "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check (changed lines): {topic['title']}")
+        if not isinstance(ans, dict) or not isinstance(ans.get("claims"), list):
+            return None
+    new = [dict(c) for c in ans["claims"] if isinstance(c, dict) and c.get("line") in plan["changed"]]
+    old_by_line = {c.get("line"): c for c in prior.get("claims") or [] if isinstance(c, dict)}
+    for new_i, old_i in plan["kept"].items():
+        c = old_by_line.get(old_i)
+        if c is not None and c.get("verdict") not in ("unsupported", "wrong"):
+            new.append(dict(c, line=new_i))
+    new.sort(key=lambda c: c.get("line") or 0)
+    editor = [p[len("editor: "):] for p in prior.get("problems") or [] if p.startswith("editor: ")]
+    return {"claims": new, "hooks": {str(k): v for k, v in (prior.get("hook_ratings") or {}).items()},
+            "loop": prior.get("loop"), "rehook": prior.get("rehook"), "originality": prior.get("originality"),
+            "inauthentic_risk": prior.get("inauthentic_risk"),
+            "problems": (editor + [p for p in ans.get("problems") or [] if isinstance(p, str)])[:5]}
 
 
 # ---------- the whole step (resumable: each Claude call is its own step) ----------
@@ -822,8 +921,29 @@ def draft_step(topic, video_id=None, feedback=None, previous=None, draft=None):
                      "VALUES(?,?,?,?,?,?,?,?,?)", video_id, v + 1, json.dumps(draft["hooks"]), hook, text_of(draft),
                      json.dumps({"lines": draft["lines"], "calcs": draft.get("calcs") or [], "titles": draft.get("titles") or [],
                                  "by": draft.get("by") or "claude",
-                                 **({"picked": draft["picked"]} if draft.get("picked") else {})}),
+                                 **({"picked": draft["picked"]} if draft.get("picked") else {}),
+                                 **({"recheck": draft["recheck"]} if draft.get("recheck") else {})}),
                      "{}", "draft", time.time())
+
+
+def partial_recheck_on():
+    try:
+        from studio import config
+        return config.general().get("partial_recheck", True) is not False
+    except Exception:
+        return True
+
+
+def _saved_recheck(st, video_id):
+    """The partial re-check plan saved with a fixed draft, with the earlier check it builds on, or None."""
+    r = st.get("recheck")
+    if not r or not partial_recheck_on():
+        return None
+    prev = db.one("SELECT checks FROM scripts WHERE id=? AND video_id IS ?", r.get("from"), video_id)
+    if not prev:
+        return None
+    return {"changed": set(r.get("changed") or []), "kept": {int(k): v for k, v in (r.get("kept") or {}).items()},
+            "prior": json.loads(prev["checks"] or "{}")}
 
 
 def _draft_of(row):
@@ -840,10 +960,13 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     if not row:
         raise ScriptRejected("there's no draft to check")
     draft = _draft_of(row)
-    rev = review(draft, topic, video_id)
-    checks = {k: rev[k] for k in ("ok", "problems", "hard_problems", "claims", "hook_ratings", "hook_index",
-                                  "hook_score", "words", "loop", "rehook", "originality", "inauthentic_risk", "similar")}
     st = json.loads(row["structure"] or "{}")
+    rev = review(draft, topic, video_id, recheck=_saved_recheck(st, video_id))
+    checks = {k: rev[k] for k in ("ok", "problems", "hard_problems", "claims", "hook_ratings", "hook_index",
+                                  "hook_score", "words", "loop", "rehook", "originality", "inauthentic_risk", "similar")
+              if k in rev}
+    if rev.get("rechecked"):
+        checks["rechecked"] = rev["rechecked"]
     st["calcs"] = rev["calcs"]
     db.run("UPDATE scripts SET hook=?, body=?, structure=?, checks=?, status=? WHERE id=?", rev["hook"], rev["body"],
            json.dumps(st), json.dumps(checks), "passed" if rev["ok"] else "failed", row["id"])
@@ -997,18 +1120,22 @@ JSON only: {"lines": [{"line": 1, "text": "...", "delete": false}]} listing just
             edits[int(e["line"])] = e
     if not edits:
         return None
-    out = []
+    out, mapping = [], {}
     for i, ln in enumerate(draft["lines"], 1):
         e = edits.get(i)
         if e and (e.get("delete") or not str(e.get("text", "")).strip()):
             continue
         out.append(dict(ln, text=str(e["text"]).strip()) if e else ln)
+        mapping[len(out)] = i
     if not out:
         return None
     fixed = dict(draft, lines=out)
     n = len(text_of(fixed, fixed["hooks"][0] if fixed.get("hooks") else None).split())
     if not WORDS_MIN <= n <= WORDS_MAX:
-        fixed = _fit_length(fixed, n) or fixed
+        fitted = _fit_length(fixed, n)
+        if fitted:
+            fixed, mapping = fitted, None          # the length fix may touch any line: check it all again
+    fixed["_mapping"] = mapping
     return fixed
 
 
@@ -1017,8 +1144,14 @@ def revise_step(topic, video_id=None):
     checks = json.loads(row["checks"] or "{}")
     hard = checks.get("hard_problems") or []
     if hard and all(LINE_PROBLEM.match(h) for h in hard):     # a near-miss: repair just those lines
-        fixed = _fix_lines(_draft_of(row), topic, hard)
+        old = _draft_of(row)
+        fixed = _fix_lines(old, topic, hard)
         if fixed:
+            mapping = fixed.pop("_mapping", None)
+            plan = recheck_plan(old, fixed, mapping, checks) if partial_recheck_on() else None
+            if plan:
+                fixed["recheck"] = {"from": row["id"], "changed": sorted(plan["changed"]),
+                                    "kept": {str(k): v for k, v in plan["kept"].items()}}
             return draft_step(topic, video_id, draft=fixed)
     return draft_step(topic, video_id, checks.get("problems") or [], _draft_of(row))
 
