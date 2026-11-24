@@ -280,3 +280,54 @@ def test_rewrite_is_told_the_reviewers_idea_and_no_new_claims(fakes, monkeypatch
     script.write(topics.topic(tid), ["originality 5/10: needs its own explanation (use a hiker dropping bottles)"], {"lines": []})
     assert "Rebuild the Short around this idea" in seen[0] and "hiker dropping bottles" in seen[0]
     assert "Don't add any new claim" in seen[0] and "No made-up caveats" in seen[0]
+
+
+def _with_need(fakes, monkeypatch, page):
+    """The writer marks line 4 "needs" (a value the sources don't give); the look-up names a page."""
+    import json as _j
+    from studio import claude, topics
+    fc, tid = fakes
+    base = claude.RUNNER
+    seen = {"lookups": 0}
+
+    def runner(prompt, timeout, web):
+        if prompt.startswith("Use web search. For each value"):
+            assert web and "own text states that value" in prompt and "the wavelength of red light: 700 nm" in prompt
+            seen["lookups"] += 1
+            return _j.dumps({"4": {"url": "https://science.nasa.gov/ems/09_visiblelight/", "quote": "...", "source": "NASA"}})
+        out = base(prompt, timeout, web)
+        if prompt.startswith("Write a YouTube Short script"):
+            assert '"needs"' in prompt and "Never call a value \"typical\"" in prompt
+            d = _j.loads(out)
+            d["lines"][3]["facts"] = ["needs"]
+            d["needs"] = [{"line": 4, "what": "the wavelength of red light", "value": "700 nm"}]
+            return _j.dumps(d)
+        return out
+    monkeypatch.setattr(claude, "RUNNER", runner)
+    monkeypatch.setattr(topics, "PAGE", lambda url: page if "nasa.gov/ems" in url else "")
+    monkeypatch.setattr(topics, "FETCH", lambda url: 200)
+    return fc, tid, seen
+
+
+def test_a_needed_value_counts_only_when_the_downloaded_page_states_it(fakes, monkeypatch):
+    from studio import db, jobs, script, topics
+    fc, tid, seen = _with_need(fakes, monkeypatch, "Red light has the longest wavelength, about 700 nanometers (700 nm).")
+    vid = jobs.create(tid, title="x")
+    row = script.make(topics.topic(tid), vid, progress=lambda s: None)
+    st = json.loads(row["structure"])
+    assert row["status"] == "passed" and seen["lookups"] == 1
+    assert st["lines"][3]["facts"] == ["F3"] and len(st["lines"]) == len(BODY)
+    src = db.one("SELECT * FROM sources WHERE topic_id=? AND video_id IS NULL AND url LIKE '%nasa.gov/ems%'", tid)
+    assert src and src["verdict"] == "reachable" and "700 nm" in src["claim"]
+    assert len(script._facts(topics.topic(tid))) == 3          # reloads in the same order: F3 is still that page
+
+
+def test_a_needed_value_no_page_states_is_dropped(fakes, monkeypatch):
+    from studio import db, jobs, lessons, script, topics
+    fc, tid, seen = _with_need(fakes, monkeypatch, "Visible light spans many colours.")   # no 700 on the page
+    vid = jobs.create(tid, title="x")
+    row = script.make(topics.topic(tid), vid, progress=lambda s: None)
+    st = json.loads(row["structure"])
+    assert len(st["lines"]) == len(BODY) - 1 and all("needs" not in (ln.get("facts") or []) for ln in st["lines"])
+    assert not db.one("SELECT 1 FROM sources WHERE url LIKE '%nasa.gov/ems%'")
+    assert "missing_value" in lessons.counts("script")
