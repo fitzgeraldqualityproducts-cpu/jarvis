@@ -45,6 +45,18 @@ tested. "Live" means switched on on the PC.
 | 5.1 Experiment engine: one variable, 6 Shorts per arm, a result only when clear, a suggestion only. Runs only after `python -m studio experiment start <name>` | Built and tested. None running |
 | 5.2 Weekly policy watch of 7 YouTube rule and API pages. Tells Connor what changed and never changes a setting | Built and tested |
 
+## Speed (asked for 2026-11-24)
+
+| Step | State |
+|---|---|
+| A writing lane: the next Short is researched, written and fact-checked while this one is being built (voice, pictures, render, checks). At most one being written and one being built. The one being built counts towards the buffer, and the daily limit holds. Config `studio.overlap` (on by default) | Built and tested |
+| Encode on the RTX 2060 (NVENC) instead of the processor: the classic compose, camera-move clips, footage cuts, the fallback slideshow, and Remotion (`--hardware-acceleration=if-possible`, 12 Mbit/s, since Remotion refuses crf with the card). One test encode decides; a failed GPU encode is redone on the processor and the rest of the run stays there. The encoder used is saved in the render report. Off with `JARVIS_GPU_ENCODE=0` | Built and tested in the cloud (no NVIDIA card there, so the GPU path was tested with fakes and the fallback for real). Speed and look on the PC not measured yet |
+| Remotion prepared once per update: the composition is built once per code version (`tools/remotion-bundle/<hash>`) and each render points the build's picture folder at the Short's folder (a junction on Windows) instead of rebuilding and copying the folder. Any problem falls back to the old way. Config `studio.remotion_prepared` (on by default) | Built and tested. A real Remotion render in the cloud came out frame-for-frame identical (same frame checksums). Time saved there was about 1 s, because the test Short's folder was only 7 MB; on the PC it saves the copy of the Short's whole folder on D:, not measured yet |
+| AI models loaded once per Short | Checked, no change needed: SDXL-Turbo, ESRGAN plus depth, Chatterbox, whisperX, ACE-Step and Manim each already load once per Short and do all its scenes in one job |
+| TensorRT for SDXL-Turbo | Skipped. TensorRT pictures are close but not identical to today's, building the SDXL engine needs more than the 2060's 6 GB, and the 4-step pictures already take only seconds a Short |
+| Timing report: every stage of every Short, each heavy job inside it (pictures, sharpening and depth, Manim, voice, captions, music, Remotion render), each Claude call, and time spent waiting for the graphics card. `python -m studio timings [id]` and "Where the minutes go" on the dashboard (average of the last 10 Shorts, slowest first) | Built and tested. Real numbers start with the first Short made on the PC after this update |
+| Saved source pages: each page the fact-check reads is kept (gzip, `D:\Jarvis\studio\pages` on the PC) for 7 days, so fix rounds and re-checks don't download it again. Deleted after 30 days. Empty or blocked pages are never saved | Built and tested |
+
 ## Phases 6-7: validate and activate
 
 Each change goes live on the PC by update. New styles and tools stay off until a sample is approved.

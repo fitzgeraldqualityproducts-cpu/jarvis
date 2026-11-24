@@ -23,8 +23,10 @@ from studio import config, db, guard, health
 
 STAGES = {}            # state -> handler(video, ctx) returning the next state
 _thread = None
+_light = None
 _stop = threading.Event()
 _running = threading.Event()
+_building = threading.Event()     # the main worker is in a building stage (voice, pictures, render, checks, upload)
 _ident = f"{os.getpid()}"
 
 
@@ -151,6 +153,11 @@ def claim(now=None, states=None):
     return dict(db.video(r["id"]))
 
 
+STAGE_NAMES = {"researching": "research", "scripting": "writing", "fact_checking": "fact-check",
+               "generating_audio": "voice and captions", "rendering": "pictures, music and render",
+               "validating": "quality checks", "publishing": "upload"}
+
+
 def run_one(v):
     """Runs one stage of a claimed job and records the result. Returns the job's new state."""
     stage = v["state"]
@@ -158,7 +165,9 @@ def run_one(v):
     try:
         if not handler:
             raise Permanent(f"no handler for {stage}")
-        nxt = handler(v, Context(v["id"]))
+        from studio import timings
+        with timings.video(v["id"]), timings.step(STAGE_NAMES.get(stage, stage.replace("_", " ")), "stage"):
+            nxt = handler(v, Context(v["id"]))
         if nxt not in db.STATES:
             raise Permanent(f"stage {stage} returned an unknown state {nxt!r}")
         db.set_video(v["id"], state=nxt, stage_done=stage, attempts=0, owner=None, error=None, error_kind=None,
@@ -269,11 +278,14 @@ def tick(busy=lambda: False):
             _chore(f)
         return None
     _running.set()
+    if v["state"] not in LIGHT:
+        _building.set()
     try:
         from studio import autopilot
         with autopilot.keep_awake():
             return run_one(v)
     finally:
+        _building.clear()
         _running.clear()
 
 
@@ -304,9 +316,42 @@ def _loop(busy):
         _stop.wait(config.general()["tick_seconds"])
 
 
+def light_tick(busy=lambda: False):
+    """One pass of the writing lane: while the main worker is busy building a Short (voice, pictures,
+    render), this lane researches, writes and fact-checks the next one. Claude and web work only, so it
+    never competes for the graphics card or the heavy-job lock. Returns the new state, or None."""
+    from studio import autopilot
+    if not config.enabled() or busy() or not autopilot.overlap() or not _building.is_set():
+        return None                                  # nothing is being built: the main worker does it all
+    if not health.ok_to_work(heavy=False)[0]:
+        return None
+    v = claim(states=LIGHT)
+    if not v:
+        _chore(autopilot.maybe_make)                 # the main worker is inside a long stage, so start the next here
+        v = claim(states=LIGHT)
+        if not v:
+            return None
+    _log(f"Short #{v['id']}: {v['state'].replace('_', ' ')} (writing lane, while another Short is being built)")
+    return run_one(v)
+
+
+def _light_loop(busy):
+    while not _stop.is_set():
+        try:
+            light_tick(busy)
+        except Exception as e:
+            try:
+                db.insert("INSERT INTO errors(t, kind, stage, detail, recovery, result) VALUES(?,?,?,?,?,?)",
+                          time.time(), classify(e), "writing lane", guard.redact(str(e))[:800], "lane kept running", "")
+            except Exception:
+                pass
+        _stop.wait(config.general()["tick_seconds"])
+    db.close_thread()
+
+
 def start(busy=lambda: False):
-    """Start-up checks, recovery, then the worker thread. Safe to call more than once."""
-    global _thread
+    """Start-up checks, recovery, then the worker thread (and the writing lane). Safe to call more than once."""
+    global _thread, _light
     if _thread and _thread.is_alive():
         return False
     report = health.startup()
@@ -320,6 +365,8 @@ def start(busy=lambda: False):
     _stop.clear()
     _thread = threading.Thread(target=_loop, args=(busy,), daemon=True, name="studio-worker")
     _thread.start()
+    _light = threading.Thread(target=_light_loop, args=(busy,), daemon=True, name="studio-writing-lane")
+    _light.start()
     return report
 
 
@@ -328,5 +375,7 @@ def shutdown(wait=10):
     _stop.set()
     if _thread:
         _thread.join(wait)
+    if _light:
+        _light.join(wait)
     guard.audit("module.stop", True, "")
-    return not (_thread and _thread.is_alive())
+    return not (_thread and _thread.is_alive()) and not (_light and _light.is_alive())

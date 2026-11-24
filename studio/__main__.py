@@ -456,6 +456,9 @@ def main(argv):
             print("python -m studio experiment [status | start <" + "|".join(experiments.CATALOG) + "> | stop]")
             return 1
         print(experiments.status_text())
+    elif cmd == "timings":
+        from studio import timings
+        print(timings.text(int(argv[1]) if len(argv) > 1 and argv[1].isdigit() else None))
     elif cmd == "registry":
         from studio import registry
         registry.register_all()

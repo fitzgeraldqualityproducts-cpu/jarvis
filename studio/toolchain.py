@@ -131,10 +131,9 @@ def render_cards(cards, audio, out):
         offset += cards[i - 1][1]
         filters.append(f"{last}[v{i}]xfade=transition=fade:duration=0.5:offset={offset:.2f}[x{i}]")
         last = f"[x{i}]"
-    args += ["-filter_complex", ";".join(filters), "-map", last, "-map", f"{n}:a", "-c:v", "libx264", "-preset", "veryfast",
-             "-crf", "20", "-pix_fmt", "yuv420p", "-r", FPS, "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
-             "-movflags", "+faststart", "-shortest", str(out)]
-    media.run(args, timeout=900)
+    args += ["-filter_complex", ";".join(filters), "-map", last, "-map", f"{n}:a"]
+    media.run_h264(args, ["-pix_fmt", "yuv420p", "-r", FPS, "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
+                          "-movflags", "+faststart", "-shortest", str(out)], 20, timeout=900)
     return out
 
 

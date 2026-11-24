@@ -24,6 +24,9 @@ def clipper_home(tmp_path, monkeypatch):
     def no_model(name):
         raise RuntimeError("no speech model in tests")
     monkeypatch.setattr(caption_fix, "_model", no_model)     # never downloads a model while testing
+    from clipper import media
+    monkeypatch.setattr(media, "NVENC_TEST", lambda: False)  # encode on the processor unless a test says otherwise
+    monkeypatch.setattr(media, "_NVENC", [])
     yield tmp_path
     db.reset_connections()
 

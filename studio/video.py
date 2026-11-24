@@ -878,8 +878,9 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                                 for k in range(len(scenes))],
                      **({"fx": cue_list} if lively else {})}
             with engines.heavy("Remotion render"):
-                engines.remotion_render(props, folder, tmp)
+                rr = engines.remotion_render(props, folder, tmp)
             tmp.replace(out)
+            used["encoder"] = (rr or {}).get("encoder", "libx264")
             shown = {i for p in cap_props["pages"] for i in p["words"]}
             rep = {"caption_boxes": cap_boxes, "caption_words_shown": len(shown)}
             used["compose"] = "Remotion (animated captions)"
@@ -928,6 +929,7 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
             wr.close()
             clip.close()
         tmp.replace(out)
+        used["encoder"] = wr.encoder
         rep = {"caption_boxes": caption_boxes[:: max(1, len(caption_boxes) // 40)],
                "caption_words_shown": len(cap.shown_words)}
     rep = {"path": str(out), "duration": round(end, 2), "frames": int(math.ceil(end * FPS)), "scenes": len(scenes),

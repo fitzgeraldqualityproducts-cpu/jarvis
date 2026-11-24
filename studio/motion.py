@@ -68,8 +68,9 @@ def depth_clip(img, depth, seconds, index, out, fps=30, shade=None):
     move = move_for(index)
     n = max(1, int(math.ceil(seconds * fps)))
     keep = None if shade is None else (1.0 - shade)
+    enc = media.h264_args(17)                 # the graphics card's encoder when it works, else the processor
     proc = media.popen(["-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{W}x{H}", "-r", fps, "-i", "-",
-                        "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", 17, "-pix_fmt", "yuv420p",
+                        "-an"] + enc + ["-pix_fmt", "yuv420p",
                         "-r", fps, "-movflags", "+faststart", str(out)], stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         for f in range(n):
@@ -88,5 +89,7 @@ def depth_clip(img, depth, seconds, index, out, fps=30, shade=None):
             pass
         code = proc.wait()
     if code != 0 or not Path(out).exists():
+        if media.encoder_name(enc) == "nvenc":
+            media.nvenc_failed()              # the next try (and every later clip) uses the processor
         raise media.MediaError("the camera-move clip didn't encode: " + proc.stderr.read().decode("utf-8", "replace")[-300:])
     return Path(out)

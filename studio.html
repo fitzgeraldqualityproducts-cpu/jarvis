@@ -148,6 +148,7 @@ a{color:inherit}
     <div class="box"><h4>Recently published</h4><div id="pub"></div></div>
     <div class="box feed"><h4>What Jarvis did lately</h4><div id="feed"></div></div>
     <div class="box"><h4>Health</h4><div id="health"></div></div>
+    <div class="box" id="time-box" style="display:none"><h4>Where the minutes go</h4><div id="timings"></div></div>
   </div>
 </div>
 
@@ -306,6 +307,16 @@ function render(d){
       Math.round(d.backup.hours_ago) + " h ago", d.backup.hours_ago == null || d.backup.hours_ago > 36 ? "warn" : ""]);
   $("health").innerHTML = rows.map(r => `<div class="row"><span>${r[0]}</span><em class="${r[2]}">${esc(r[1])}</em></div>`).join("");
 
+  const tm = d.timings;
+  $("time-box").style.display = tm ? "" : "none";
+  if (tm) {
+    const mins = s => s >= 60 ? (s / 60).toFixed(1) + " min" : Math.round(s) + " s";
+    const top = tm.stages.length ? tm.stages[0][1] : 0;
+    $("timings").innerHTML = `<div class="row"><span>Per Short (last ${tm.shorts})</span><em>${esc(mins(tm.total))}</em></div>` +
+      tm.stages.map(([n, s]) => `<div class="row"><span>${esc(n)}</span><em class="${s === top && top > 0 ? "warn" : ""}">${esc(mins(s))}</em></div>`).join("") +
+      (tm.parts.length ? `<div class="row"><span style="opacity:.7">Slowest parts</span><em></em></div>` +
+        tm.parts.map(([n, s]) => `<div class="row"><span style="opacity:.8">· ${esc(n)}</span><em>${esc(mins(s))}</em></div>`).join("") : "");
+  }
   $("upd").textContent = "Live · updated " + clock(now);
 }
 

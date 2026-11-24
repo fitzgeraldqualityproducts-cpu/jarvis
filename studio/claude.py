@@ -229,9 +229,11 @@ def ask(prompt, timeout=300, web=False, purpose=""):
     if RUNNER is _claude:
         _shared_budget()
     db.put(f"claude_calls_{_today()}", used_today() + 1)
-    if RUNNER is _claude:
-        return _claude(prompt, timeout, web, purpose)
-    return RUNNER(prompt, timeout, web)
+    from studio import timings
+    with timings.step("Claude: " + (str(purpose).split(":")[0].strip() or "call")[:40], "claude"):
+        if RUNNER is _claude:
+            return _claude(prompt, timeout, web, purpose)
+        return RUNNER(prompt, timeout, web)
 
 
 def _shape(prompt):

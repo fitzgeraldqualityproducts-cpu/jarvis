@@ -17,6 +17,13 @@ import time
 from studio import config, db, guard, health
 
 MAKING = ("researching", "scripting", "fact_checking", "generating_audio", "rendering", "validating")
+WRITING = ("researching", "scripting", "fact_checking")            # Claude and web work (jobs.LIGHT)
+BUILDING = ("generating_audio", "rendering", "validating")          # voice, pictures, render, checks (the computer)
+
+
+def overlap():
+    """Config "studio.overlap" (default on): the next Short is written and fact-checked while this one is built."""
+    return bool(config.general().get("overlap", True))
 
 
 def _day(now):
@@ -60,8 +67,10 @@ def status(now=None):
     now = now or time.time()
     g = config.general()
     m = publish.mode()
+    count = lambda states: db.one(f"SELECT COUNT(*) n FROM videos WHERE state IN ({','.join('?' * len(states))})",
+                                  *states)["n"]
     return {"on": bool(g["autopilot"]), "halted": halted(), "mode": m,
-            "making": db.one(f"SELECT COUNT(*) n FROM videos WHERE state IN ({','.join('?' * len(MAKING))})", *MAKING)["n"],
+            "making": count(MAKING), "writing": count(WRITING), "building": count(BUILDING),
             "ready": db.one("SELECT COUNT(*) n FROM videos WHERE state='ready'")["n"],
             "buffer": g["manual_ready_buffer"] if m == "manual" else g["ready_buffer"],
             "started_today": int(db.get(f"autopilot_made_{_day(now)}", 0) or 0), "max_per_day": g["max_new_per_day"],
@@ -81,7 +90,14 @@ def maybe_make(now=None):
     if st["failure_streak"] >= g["stop_after_failures"]:
         halt(f"the last {st['failure_streak']} Shorts failed their checks")
         return None
-    if st["making"] or st["ready"] >= st["buffer"] or st["started_today"] >= st["max_per_day"]:
+    if st["started_today"] >= st["max_per_day"]:
+        return None
+    if overlap():
+        # one Short being written and one being built at most; the one being built counts towards the buffer,
+        # so the line never makes more than it did before, only sooner
+        if st["writing"] or st["building"] > 1 or st["ready"] + st["building"] >= st["buffer"]:
+            return None
+    elif st["making"] or st["ready"] >= st["buffer"]:
         return None
     if not topics.pool(now):
         return None                                      # discovery tops the pool up first
