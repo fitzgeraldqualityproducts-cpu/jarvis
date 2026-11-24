@@ -914,6 +914,12 @@ def _check_topic(topic):
 def draft_step(topic, video_id=None, feedback=None, previous=None, draft=None):
     """Writes (or revises) a draft and saves it as the next version. Returns the scripts row id."""
     _check_topic(topic)
+    if not draft and not feedback and not previous:
+        from studio import topics
+        try:
+            topics.enrich(topic)                 # more sourced numbers before the first draft (once per topic)
+        except Exception:
+            pass                                 # the topic's own sources are always enough to go on
     draft = draft or write(topic, feedback, previous)
     v = db.one("SELECT MAX(version) v FROM scripts WHERE video_id IS ?", video_id)["v"] or 0
     hook = draft["hooks"][0] if draft["hooks"] else draft["lines"][0]["text"]
