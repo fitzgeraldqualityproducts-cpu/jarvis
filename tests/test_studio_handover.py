@@ -183,3 +183,38 @@ def test_no_gpu_on_a_mac(monkeypatch):
     monkeypatch.setattr(engines.sys, "platform", "darwin")
     assert engines.nvidia() is None
     engines._GPU.clear()
+
+
+def test_windows_node_download_is_checked_and_found(studio_home, monkeypatch, tmp_path):  # noqa: F811
+    import hashlib
+    import io
+    from studio import engines
+    name = f"node-{engines.NODE_VERSION}-win-x64"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr(f"{name}/node.exe", b"exe")
+        z.writestr(f"{name}/node_modules/npm/bin/npm-cli.js", b"")
+        z.writestr(f"{name}/node_modules/npm/bin/npx-cli.js", b"")
+    data = buf.getvalue()
+    good = f"{hashlib.sha256(data).hexdigest()}  {name}.zip\n"
+    answers = {}
+
+    class R:
+        def __init__(self, b):
+            self.b = b
+
+        def read(self):
+            return self.b
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=0: R(data if url.endswith(".zip") else answers["sums"]))
+    monkeypatch.setattr(engines, "TOOLS", tmp_path / "tools")
+    monkeypatch.setattr(engines, "NODE_LOCAL", tmp_path / "tools" / "node")
+    (tmp_path / "tools").mkdir()
+    monkeypatch.setattr(engines.shutil, "which", lambda n: None)
+    answers["sums"] = ("0" * 64 + f"  {name}.zip\n").encode()
+    with pytest.raises(engines.EngineError, match="checksum"):
+        engines._download_node(log=lambda *a: None)
+    assert engines._node_exe() is None
+    answers["sums"] = good.encode()
+    node = engines._download_node(log=lambda *a: None)
+    assert node == tmp_path / "tools" / "node" / "node.exe" and node.read_bytes() == b"exe"

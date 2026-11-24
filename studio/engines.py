@@ -20,7 +20,7 @@ memory than the computer has right now is skipped for that job.
 
 Windows PC with an NVIDIA card: Chatterbox and whisperX get the CUDA build of PyTorch (so they run on
 the graphics card), Manim comes from PyPI (its drawing libraries have Windows wheels) and Remotion
-uses Node.js (installed with winget if it's missing)."""
+uses Node.js (its official portable copy in tools/node if the PC has none)."""
 import json
 import os
 import platform
@@ -80,7 +80,7 @@ def python(tool):
 
 def installed(tool):
     if tool == "remotion":
-        return (REMOTION / "node_modules" / "@remotion" / "cli").exists() and bool(_npx())
+        return (REMOTION / "node_modules" / "@remotion" / "cli").exists() and bool(_node_cmd("npx"))
     return python(tool).exists()
 
 
@@ -101,6 +101,64 @@ def _node_tool(name):
 
 def _npx():
     return _node_tool("npx")
+
+
+NODE_VERSION = "v24.22.3"                       # Node.js LTS, same major as the Mac's
+NODE_LOCAL = TOOLS / "node"                     # Windows: Jarvis's own copy (no installer, no admin)
+
+
+def _node_exe():
+    """Windows: node.exe from Jarvis's own copy, the Node.js installer's folder, or PATH."""
+    for d in (NODE_LOCAL, Path(r"C:\Program Files\nodejs")):
+        if (d / "node.exe").exists() and (d / "node_modules" / "npm" / "bin" / "npm-cli.js").exists():
+            return d / "node.exe"
+    w = shutil.which("node")
+    if w and (Path(w).parent / "node_modules" / "npm" / "bin" / "npm-cli.js").exists():
+        return Path(w)
+    return None
+
+
+def _node_cmd(name):
+    """The command list that runs npm / npx. On Windows it's node.exe + npm's own script, never npm.cmd
+    (a .cmd file under "Program Files" breaks on the spaces when Python starts it)."""
+    if os.name == "nt":
+        node = _node_exe()
+        if not node:
+            return None
+        return [str(node), str(node.parent / "node_modules" / "npm" / "bin" / f"{name}-cli.js")]
+    t = _node_tool(name)
+    return [t] if t else None
+
+
+def _node_env(**more):
+    env = dict(os.environ, **more)
+    if os.name == "nt" and _node_exe():               # packages run "node" themselves
+        env["PATH"] = str(_node_exe().parent) + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def _download_node(log=print):
+    """Windows: Node.js's official portable zip into tools/node, checked against nodejs.org's SHA-256 list."""
+    import hashlib
+    import io
+    import urllib.request
+    import zipfile
+    name = f"node-{NODE_VERSION}-win-x64"
+    base = f"https://nodejs.org/dist/{NODE_VERSION}/"
+    log(f"Downloading Node.js {NODE_VERSION} (free, about 35 MB) for Remotion...")
+    data = urllib.request.urlopen(base + name + ".zip", timeout=600).read()
+    sums = urllib.request.urlopen(base + "SHASUMS256.txt", timeout=60).read().decode()
+    want = next((ln.split()[0] for ln in sums.splitlines() if ln.strip().endswith(name + ".zip")), None)
+    if not want or hashlib.sha256(data).hexdigest() != want:
+        raise EngineError("the Node.js download didn't match its checksum, so it wasn't used")
+    tmp = TOOLS / "node-unpacking"
+    shutil.rmtree(tmp, ignore_errors=True)
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        z.extractall(tmp)
+    shutil.rmtree(NODE_LOCAL, ignore_errors=True)
+    (tmp / name).rename(NODE_LOCAL)
+    shutil.rmtree(tmp, ignore_errors=True)
+    return _node_exe()
 
 
 _GPU = []
@@ -308,13 +366,12 @@ def remotion_render(props, public_dir, out, timeout=None):
         raise EngineError(f"Remotion needs about {need:.1f} GB of free memory and only {free:.1f} GB is free")
     pf = Path(public_dir) / "remotion_props.json"
     pf.write_text(json.dumps(props))
-    npx = _npx()
-    cmd = [npx, "remotion", "render", "src/index.ts", "Short", str(out), f"--props={pf}",
+    cmd = [*_node_cmd("npx"), "remotion", "render", "src/index.ts", "Short", str(out), f"--props={pf}",
            f"--public-dir={public_dir}", "--concurrency=2", "--codec=h264", "--audio-codec=aac",
            "--log=error", "--overwrite"]
     if os.environ.get("JARVIS_REMOTION_BROWSER"):                 # a browser already on this computer
         cmd.append(f"--browser-executable={os.environ['JARVIS_REMOTION_BROWSER']}")
-    env = dict(os.environ, REMOTION_DISABLE_TELEMETRY="1")
+    env = _node_env(REMOTION_DISABLE_TELEMETRY="1")
     try:
         p = subprocess.run(cmd, cwd=REMOTION, capture_output=True, text=True, timeout=timeout or SPECS["remotion"]["timeout"],
                            env=env)
@@ -365,15 +422,16 @@ def install(tool, log=print):
     TOOLS.mkdir(exist_ok=True)
     spec = SPECS[tool]
     if tool == "remotion":
-        npm = _node_tool("npm")
-        if not npm and os.name == "nt":
-            npm = _winget_node(log)
-        if not npm or not Path(npm).exists():
+        if os.name == "nt" and not _node_exe():
+            _download_node(log)
+        npm, npx = _node_cmd("npm"), _node_cmd("npx")
+        if not npm:
             raise EngineError("Node.js isn't installed, so Remotion can't be set up")
         log("Installing Remotion (Node packages, about 300 MB)...")
-        subprocess.run([npm, "install", "--no-audit", "--no-fund", "--loglevel=error"], cwd=REMOTION, check=True)
+        subprocess.run([*npm, "install", "--no-audit", "--no-fund", "--loglevel=error"], cwd=REMOTION, check=True,
+                       env=_node_env())
         log("Downloading Remotion's headless browser...")
-        subprocess.run([_npx(), "remotion", "browser", "ensure"], cwd=REMOTION, check=False)
+        subprocess.run([*npx, "remotion", "browser", "ensure"], cwd=REMOTION, check=False, env=_node_env())
         return
     if "conda" in spec and sys.platform != "darwin":
         spec = {"python": "3.12", "pip": ["manim==0.22.1"]}       # PyPI has Windows/Linux wheels for its drawing libraries
@@ -407,25 +465,14 @@ def install(tool, log=print):
     subprocess.run(cmd, check=True)
 
 
-def _winget_node(log=print):
-    """Windows: installs Node.js LTS (free) with winget, the PC's built-in app installer."""
-    winget = shutil.which("winget")
-    if not winget:
-        return None
-    log("Installing Node.js (free, for Remotion) with winget...")
-    subprocess.run([winget, "install", "-e", "--id", "OpenJS.NodeJS.LTS", "--silent",
-                    "--accept-package-agreements", "--accept-source-agreements"], check=False)
-    return _node_tool("npm")
-
-
 def check(tool):
     """(ok, detail) from a tiny real job in the tool's environment (loads the library, not the models)."""
     if not installed(tool):
         return False, "not installed"
     if tool == "remotion":
         try:
-            p = subprocess.run([_npx(), "remotion", "versions"], cwd=REMOTION,
-                               capture_output=True, text=True, timeout=120)
+            p = subprocess.run([*_node_cmd("npx"), "remotion", "versions"], cwd=REMOTION,
+                               capture_output=True, text=True, timeout=120, env=_node_env())
             return p.returncode == 0, (p.stdout or p.stderr).strip().splitlines()[-1:] and \
                 (p.stdout or p.stderr).strip().splitlines()[-1][:120]
         except Exception as e:
