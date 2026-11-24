@@ -1,6 +1,7 @@
 """Asking Claude for the studio: Claude Code on Connor's plan (no API key, nothing extra to pay).
 
-Every call goes through guard.allow("claude.ask"), has no file or shell tools, and counts against
+Every call goes through guard.allow("claude.ask"), has no file or shell tools (a call that looks at pictures
+gets the Read tool only, inside its own empty folder), and counts against
 a daily cap (config "studio" "claude_calls_per_day") because Connor's plan is shared with Jarvis's
 own answers. web=True lets Claude use WebSearch/WebFetch (read-only) for research and fact-checks.
 When the plan is busy or the cap is reached, work waits; there is never a paid fallback."""
@@ -27,6 +28,7 @@ SYSTEM = """You are the research and writing engine of a science YouTube Shorts 
 Do exactly the task in the user's message, carefully and completely. Be accurate: never invent facts,
 numbers, names, quotes, sources or URLs. When the task asks for JSON, answer with only that JSON:
 no prose before or after it and no code fences."""
+LOOK = "\nYou have the Read tool only to look at the image files named in the task. Read each of them."
 WEB = ("\nYou have WebSearch and WebFetch. Use them to find and open real pages; only cite URLs you "
        "actually opened, and check claims against what the pages really say.")
 
@@ -44,10 +46,16 @@ def lean_on():
     return brain.lean_on() and config.general().get("lean_claude", True) is not False
 
 
-def command(exe, prompt, web, lean=True):
+def command(exe, prompt, web, lean=True, read=False):
     """The claude command. Lean (the default): only the tools the job needs (none, or the two read-only
     web tools), a short system prompt written for this studio instead of Claude Code's coding one, no
     skills, no MCP servers and no saved session. The model and its effort are left exactly as they are."""
+    if read and not web:          # looking at pictures copied into the room: the Read tool only
+        if not lean:
+            return [exe, "-p", prompt, "--allowedTools", "Read", "--disallowedTools", NO_TOOLS + " WebSearch WebFetch"]
+        system = SYSTEM.format(date=datetime.date.today().strftime("%B %d, %Y")) + LOOK
+        return [exe, "-p", prompt, "--tools", "Read", "--allowedTools", "Read", "--system-prompt", system,
+                "--disable-slash-commands", "--strict-mcp-config", "--no-session-persistence", "--output-format", "json"]
     if not lean:
         cmd = [exe, "-p", prompt]
         if web:
@@ -173,7 +181,7 @@ def _too_old(error):
     return False
 
 
-def _claude(prompt, timeout, web, purpose=""):
+def _claude(prompt, timeout, web, purpose="", read=False):
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     import brain
@@ -182,11 +190,11 @@ def _claude(prompt, timeout, web, purpose=""):
         raise Permanent("Claude Code isn't installed or logged in on this computer")
     lean = lean_on() and not _OLD
     t0 = time.time()
-    r = brain._run_claude(command(exe, prompt, web, lean), timeout, _room()) if lean else \
-        brain.run_claude(command(exe, prompt, web, False), timeout)
+    r = brain._run_claude(command(exe, prompt, web, lean, read), timeout, _room()) if lean else \
+        brain.run_claude(command(exe, prompt, web, False, read), timeout, _room() if read else None)
     ok, text, usage = _result(r)
     if lean and not ok and not text.strip() and _too_old(r.stderr):
-        r = brain.run_claude(command(exe, prompt, web, False), timeout)     # older Claude Code: the old way
+        r = brain.run_claude(command(exe, prompt, web, False, read), timeout, _room() if read else None)  # older CLI
         ok, text, usage = _result(r)
     _note(usage, time.time() - t0, purpose)
     if not ok:
@@ -219,8 +227,23 @@ def _shared_budget():
     budget.spend("studio")
 
 
-def ask(prompt, timeout=300, web=False, purpose=""):
-    """Claude's answer as text."""
+def _show(images):
+    """Copies pictures into the room (Claude's only folder) and returns (their relative paths, the copies)."""
+    import shutil
+    from pathlib import Path
+    look = Path(_room()) / "look"
+    look.mkdir(exist_ok=True)
+    rel, copies = [], []
+    for k, src in enumerate(images):
+        dst = look / f"{int(time.time() * 1000)}_{k}{Path(src).suffix or '.png'}"
+        shutil.copyfile(src, dst)
+        copies.append(dst)
+        rel.append(f"look/{dst.name}")
+    return rel, copies
+
+
+def ask(prompt, timeout=300, web=False, purpose="", images=()):
+    """Claude's answer as text. images: picture files Claude looks at (with the Read tool, nothing else)."""
     guard.allow("claude.ask", purpose or prompt[:120], record=False)
     cap = config.general()["claude_calls_per_day"]
     if used_today() >= cap:
@@ -230,10 +253,21 @@ def ask(prompt, timeout=300, web=False, purpose=""):
         _shared_budget()
     db.put(f"claude_calls_{_today()}", used_today() + 1)
     from studio import timings
-    with timings.step("Claude: " + (str(purpose).split(":")[0].strip() or "call")[:40], "claude"):
-        if RUNNER is _claude:
-            return _claude(prompt, timeout, web, purpose)
-        return RUNNER(prompt, timeout, web)
+    copies = []
+    if images:
+        rel, copies = _show(images)
+        prompt += "\n\nThe image files (open each with the Read tool): " + ", ".join(rel)
+    try:
+        with timings.step("Claude: " + (str(purpose).split(":")[0].strip() or "call")[:40], "claude"):
+            if RUNNER is _claude:
+                return _claude(prompt, timeout, web, purpose, read=bool(images))
+            return RUNNER(prompt, timeout, web)
+    finally:
+        for c in copies:
+            try:
+                c.unlink()
+            except OSError:
+                pass
 
 
 def _shape(prompt):
@@ -242,12 +276,12 @@ def _shape(prompt):
     return prompt[i:].strip()[:1500] if i >= 0 else prompt[-800:]
 
 
-def ask_json(prompt, timeout=300, web=False, purpose=""):
+def ask_json(prompt, timeout=300, web=False, purpose="", images=()):
     """Claude's answer parsed as JSON. If it isn't valid JSON, a small no-web call first turns that same
     answer into JSON (so a web research job isn't redone); only if that fails is the whole question asked again.
     Every call, the repair too, counts against the daily cap."""
     from clipper import llm
-    text = ask(prompt, timeout, web, purpose)
+    text = ask(prompt, timeout, web, purpose, images)
     try:
         return llm.parse_json(text)
     except llm.LLMError:
@@ -264,7 +298,7 @@ def ask_json(prompt, timeout=300, web=False, purpose=""):
         except llm.LLMError:
             pass
     text = ask(prompt + "\n\nYour last answer wasn't valid JSON. Answer with ONLY the JSON, nothing else.",
-               timeout, web, purpose)
+               timeout, web, purpose, images)
     try:
         return llm.parse_json(text)
     except llm.LLMError:

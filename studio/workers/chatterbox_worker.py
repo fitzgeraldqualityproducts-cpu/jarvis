@@ -1,5 +1,6 @@
 """Chatterbox narration (runs inside tools/chatterbox). In: {"text", "out", "reference"?, "exaggeration",
-"cfg_weight", "seed", "gap"?, "segments"?}. Out: {"path", "rate", "seconds", "device", "sentences"}.
+"cfg_weight", "seed", "gap"?, "segments"?}. Out: {"path", "rate", "seconds", "device", "sentences", "parts"}.
+"parts" is [{"seg", "text", "start", "end"}] (sample positions of each sentence), for the voice check.
 
 Reads the script one sentence at a time (Chatterbox is best on short passages), with a short pause
 between sentences, then writes one mono WAV. With "reference" (a few seconds of the channel's Kokoro
@@ -45,17 +46,20 @@ try:
     rate = model.sr
     base_gap = float(job.get("gap", 0.18))
     segs = job.get("segments") or [{"text": job["text"]}]
-    chunks, n = [], 0
-    for seg in segs:
+    chunks, n, parts, pos = [], 0, [], 0
+    for si, seg in enumerate(segs):
         skw = {"exaggeration": float(seg.get("exaggeration", kw["exaggeration"])),
                "cfg_weight": float(seg.get("cfg_weight", kw["cfg_weight"]))}
         for j, s in enumerate(sentences(seg["text"])):
             if chunks:
                 pause = max(base_gap, float(seg.get("pause_before", 0))) if j == 0 else base_gap
                 chunks.append(np.zeros(int(rate * pause), dtype=np.float32))
+                pos += len(chunks[-1])
             with torch.inference_mode():
                 wav = model.generate(s, **skw)
             chunks.append(wav.squeeze(0).detach().cpu().numpy().astype(np.float32))
+            parts.append({"seg": si, "text": s, "start": pos, "end": pos + len(chunks[-1])})
+            pos += len(chunks[-1])
             n += 1
     audio = np.concatenate(chunks) if chunks else np.zeros(1, dtype=np.float32)
     import wave                           # 16-bit PCM: the format Jarvis's own WAV reader understands
@@ -66,6 +70,6 @@ try:
         w.setframerate(int(rate))
         w.writeframes(pcm.tobytes())
     json.dump({"path": job["out"], "rate": rate, "seconds": round(len(audio) / rate, 2), "device": device,
-               "sentences": n, "took": round(time.time() - t0, 1)}, open(pout, "w"))
+               "sentences": n, "parts": parts, "took": round(time.time() - t0, 1)}, open(pout, "w"))
 except Exception as e:
     json.dump({"error": f"{type(e).__name__}: {e}"}, open(pout, "w"))

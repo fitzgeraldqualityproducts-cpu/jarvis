@@ -198,28 +198,94 @@ def segments(text, video_id=None, base_ex=0.5, base_cfg=0.5):
 
 
 def _chatterbox(text, s, out, video_id=None):
-    """(samples, rate, info) from Chatterbox in the channel's voice. Raises engines.EngineError."""
-    from clipper import media
-    from studio import engines
+    """(samples, rate, info) from Chatterbox in the channel's voice, with garbled sentences recorded again
+    (studio/voicecheck.py). Raises engines.EngineError."""
+    from studio import engines, voicecheck
     g = config.general()
     raw = Path(out).with_suffix(".cb.wav")
     ex, cfg = float(g.get("chatterbox_exaggeration") or 0.5), float(g.get("chatterbox_cfg_weight") or 0.5)
-    job = {"text": text, "out": str(raw), "reference": str(reference_clip(s)), "exaggeration": ex, "cfg_weight": cfg,
-           "seed": 7, "gap": GAP}
+    job = {"text": voicecheck.spoken(text), "out": str(raw), "reference": str(reference_clip(s)), "exaggeration": ex,
+           "cfg_weight": cfg, "seed": 7, "gap": GAP}
     segs = segments(text, video_id, ex, cfg) if g.get("expressive_delivery", True) else None
     if segs:
-        job["segments"] = segs
+        job["segments"] = [dict(sg, text=voicecheck.spoken(sg["text"])) for sg in segs]
     with engines.heavy("Chatterbox narration"):
         info = engines.run("chatterbox", "chatterbox_worker", job)
-    info["delivery"] = "by beat" if segs else "even"
-    try:
-        x, rate = read_any_wav(raw)
-    finally:
+        info["delivery"] = "by beat" if segs else "even"
         try:
-            os.remove(raw)
-        except OSError:
-            pass
+            x, rate = read_any_wav(raw)
+            x = x.mean(axis=1) if x.ndim > 1 else x
+            x, info["voice_check"] = _retakes(x, rate, info, job, raw)
+        finally:
+            try:
+                os.remove(raw)
+            except OSError:
+                pass
+    vc = info.get("voice_check") or {}
+    if vc.get("worst", 0) >= voicecheck.GARBLED_AT:
+        raise engines.EngineError(f"Chatterbox garbled a sentence even after {vc.get('rounds', 0)} retakes "
+                                  f"(\"{vc.get('worst_text', '')[:80]}\")")
     return x, rate, info
+
+
+def _retakes(x, rate, info, job, raw):
+    """Hears the recording back; records unclear sentences again (other seeds, same voice and delivery) and keeps
+    the clearest take of each. Returns (samples, report or None)."""
+    from studio import engines, voicecheck
+    parts = [p for p in info.get("parts") or [] if isinstance(p, dict)]
+    if not parts or not voicecheck.on():
+        return x, None
+    try:
+        errs, _heard = voicecheck.scores(raw, parts, rate)
+    except Exception as e:
+        return x, {"skipped": f"couldn't listen back: {str(e)[:120]}"}
+    best = {i: (e, None) for i, e in enumerate(errs) if e >= voicecheck.UNCLEAR_AT}
+    first = sorted(best)
+    rounds = 0
+    for seed in voicecheck.SEEDS[:voicecheck.REDO_ROUNDS]:
+        todo = [i for i in sorted(best) if best[i][0] >= voicecheck.UNCLEAR_AT]
+        if not todo:
+            break
+        rounds += 1
+        segs = job.get("segments") or []
+        redo = Path(raw).with_name(Path(raw).stem + f".take{seed}.wav")
+        retake = dict(job, out=str(redo), seed=seed, segments=[
+            {"text": parts[i]["text"], "pause_before": 0.0,
+             **{k: v for k, v in (segs[parts[i]["seg"]] if parts[i].get("seg", -1) < len(segs) else {}).items()
+                if k in ("exaggeration", "cfg_weight")}} for i in todo])
+        try:
+            ans = engines.run("chatterbox", "chatterbox_worker", retake)
+            y, r2 = read_any_wav(redo)
+            y = y.mean(axis=1) if y.ndim > 1 else y
+            if r2 != rate:
+                break
+            got = {}
+            for p in ans.get("parts") or []:                 # a long sentence may come back in two pieces
+                k = int(p.get("seg", 0))
+                lo, hi = got.get(k, (p["start"], p["end"]))
+                got[k] = (min(lo, p["start"]), max(hi, p["end"]))
+            spans = [{"i": i, "text": parts[i]["text"], "start": got[k][0], "end": got[k][1]}
+                     for k, i in enumerate(todo) if k in got]
+            e2, _ = voicecheck.scores(redo, spans, rate)
+            for sp, e in zip(spans, e2):
+                i = sp["i"]
+                if e < best[i][0]:
+                    best[i] = (e, y[sp["start"]:sp["end"]])
+        except Exception:
+            break
+        finally:
+            try:
+                os.remove(redo)
+            except OSError:
+                pass
+    takes = {i: b[1] for i, b in best.items() if b[1] is not None}
+    if takes:
+        x = voicecheck.splice(x, parts, takes)
+    final = [best[i][0] if i in best else e for i, e in enumerate(errs)]
+    worst = max(range(len(final)), key=lambda i: final[i])
+    return x, {"sentences": len(parts), "unclear": len(first), "retaken": sorted(takes), "rounds": rounds,
+               "still_unclear": [i for i in first if best[i][0] >= voicecheck.UNCLEAR_AT],
+               "worst": final[worst], "worst_text": parts[worst]["text"]}
 
 
 def narrate(text, out, video_id=None, engine=None, record=True):
@@ -246,7 +312,7 @@ def narrate(text, out, video_id=None, engine=None, record=True):
             samples, rate, info = _chatterbox(text, s, out, video_id)
             rec = _finish(samples, rate, out, text, video_id, s, "chatterbox", "chatterbox-tts==0.1.7 (channel voice "
                           f"{s['voice']})", t0)
-            rec["engine_info"] = {k: info.get(k) for k in ("device", "sentences", "took", "delivery")}
+            rec["engine_info"] = {k: info.get(k) for k in ("device", "sentences", "took", "delivery", "voice_check")}
             if rec["checks"]["ok"]:
                 return _save(rec, record)
             fallback = "Chatterbox's audio failed its checks: " + "; ".join(rec["checks"]["problems"])
@@ -254,7 +320,8 @@ def narrate(text, out, video_id=None, engine=None, record=True):
             fallback = str(e)[:300]
     t0 = time.time()
     try:
-        samples, rate = _synth(text, s["voice"], s["speed"])
+        from studio import voicecheck
+        samples, rate = _synth(voicecheck.spoken(text), s["voice"], s["speed"])
     except Exception as e:
         guard.tool_result("kokoro", False, str(e))
         raise NarrationError(f"Kokoro couldn't read the script: {e}")

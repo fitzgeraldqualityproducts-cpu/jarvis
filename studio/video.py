@@ -683,7 +683,7 @@ def _footage_moves(video_id, scenes, starts, folder, used, record):
 
 
 def render(video_id, progress=lambda s: None, engines_override=None, out_name="short.mp4", record=True,
-           voice_path=None):
+           voice_path=None, footage_terms=False):
     """Makes studio_data/videos/<id>/<out_name> from the passed script and narration. Returns a report.
     The upgraded tools (whisperX, Manim, Remotion; see studio/engines.py) are used when switched on and
     working; each falls back to the classic way on its own. record=False (a sample) changes nothing in
@@ -713,6 +713,14 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
         if record:
             db.set_video(video_id, meta=json.dumps(meta))
     scenes = meta["scenes"]
+    if footage_terms and not any(isinstance(s, dict) and s.get("footage") for s in scenes):
+        # a Short planned before footage existed: ask only for the footage searches, keep every other choice
+        progress("Planning footage searches")
+        fresh = plan(row)
+        scenes = [dict(s, footage=f["footage"]) if isinstance(s, dict) and isinstance(f, dict) and f.get("footage")
+                  else s for s, f in zip(scenes, fresh)] + scenes[len(fresh):]
+        if record:
+            db.set_video(video_id, meta=json.dumps(dict(meta, scenes=scenes)))
     pal = palette()
     handle = (db.one("SELECT handle FROM channel WHERE id=1") or {"handle": ""})["handle"] or ""
     look = eng.get("look", "diagram")
@@ -967,6 +975,8 @@ def metadata(video_id):
     st = json.loads(row["structure"])
     t = topics.topic(v["topic_id"]) if v["topic_id"] else {"title": v["title"], "pillar": "", "keywords": "[]"}
     titles = [x for x in (st.get("titles") or []) + [t["title"]] if x and not script.hook_checks_title(x)]
+    from studio import packaging
+    titles = packaging.pick(titles)                          # a title style that clearly works goes first
     title = (titles[0] if titles else t["title"])[:100]
     used = db.q("SELECT DISTINCT url FROM sources WHERE video_id=? AND verdict='supported' AND url IS NOT NULL", video_id)
     srcs = [r["url"] for r in used] or [s["url"] for s in (t.get("sources") or []) if s.get("verdict") == "reachable"]
@@ -1007,4 +1017,9 @@ def metadata(video_id):
     meta["upload"] = up
     db.set_video(video_id, title=title, meta=json.dumps(meta))
     (data_dir("videos", str(video_id)) / "upload.json").write_text(json.dumps(up, indent=2))
+    if v["path"]:
+        try:
+            packaging.record(video_id, title, v["path"], row["hook"])     # its title and first-frame style
+        except Exception:
+            pass
     return up

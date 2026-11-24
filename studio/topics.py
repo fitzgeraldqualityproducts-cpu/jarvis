@@ -91,7 +91,20 @@ def is_duplicate(title, angle=""):
     for r in db.q("SELECT id, title FROM videos WHERE title IS NOT NULL AND title<>''"):
         if _overlap(title, r["title"]) >= DUPLICATE_AT + 0.2:
             return True, f"video {r['id']}"
+    from studio import trends
+    sim, what = trends.same_meaning(title, angle)       # the same idea in other words
+    if what and sim >= trends.threshold():
+        return True, what
     return False, None
+
+
+def _same_as_batch(c, cands):
+    from studio import trends
+    if not cands:
+        return False
+    sim, _ = trends.same_meaning(c["title"], c.get("angle", ""), [(k["title"], f"{k['title']}. {k.get('angle', '')}")
+                                                                    for k in cands])
+    return sim >= trends.threshold()
 
 
 def niche():
@@ -305,6 +318,152 @@ def excerpts(facts):
         return list(pool.map(one, facts))
 
 
+
+# ---------- more facts: free reference sources added to a topic before its first draft (fewer scripts fail) ----------
+
+WIKI_API = "https://en.wikipedia.org/w/api.php"
+ARXIV_API = "https://export.arxiv.org/api/query"
+ENRICH_MAX = 8            # new facts at most per topic (keeps the writer's prompt small)
+ENRICH_NOTE = "added from a free reference source"
+API = None                # tests swap this: url -> the answer's text (JSON or XML)
+
+
+def enrich_on():
+    try:
+        return config.general().get("enrich_facts", True) is not False
+    except Exception:
+        return True
+
+
+def _api(url):
+    guard.allow("web.read", url[:200], record=False)
+    if API:
+        return API(url)
+    from clipper import youtube
+    req = urllib.request.Request(url, headers={"User-Agent": "JarvisStudio/1.0 (science Shorts fact research)"})
+    with urllib.request.urlopen(req, timeout=15, context=youtube._ctx()) as r:
+        return r.read(3 << 20).decode("utf-8", "replace")
+
+
+def _sentences(text):
+    return [x.strip() for x in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", str(text or "")) if 30 <= len(x.strip()) <= 320]
+
+
+def fact_sentences(text, keys, have_nums, n, min_hits=2):
+    """Up to n sentences of a source that state a number about this topic and add a number it doesn't have yet,
+    best first."""
+    scored, seen = [], set()
+    for i, x in enumerate(_sentences(text)):
+        nums = _nums(x)
+        if not nums or nums <= have_nums or "{" in x or "\\" in x or x.lower().startswith(("see also", "for other")):
+            continue
+        hits = len(keys & _words(x))
+        if hits >= min_hits and x not in seen:
+            seen.add(x)
+            scored.append((hits + min(len(nums - have_nums), 2), -i, x))
+    return [x for _, _, x in sorted(scored, reverse=True)[:n]]
+
+
+def _wiki(query, keys, have, n):
+    ans = json.loads(_api(WIKI_API + "?" + urllib.parse.urlencode(
+        {"action": "query", "list": "search", "srsearch": query[:200], "srlimit": 2, "format": "json"})))
+    out = []
+    for hit in ((ans.get("query") or {}).get("search") or [])[:2]:
+        title = str(hit.get("title") or "")
+        if not title or len(out) >= n:
+            continue
+        pages = (json.loads(_api(WIKI_API + "?" + urllib.parse.urlencode(
+            {"action": "query", "prop": "extracts", "explaintext": 1, "redirects": 1, "titles": title,
+             "format": "json"}))).get("query") or {}).get("pages") or {}
+        text = " ".join(str(p.get("extract") or "") for p in pages.values())
+        url = "https://en.wikipedia.org/wiki/" + urllib.parse.quote(title.replace(" ", "_"))
+        for x in fact_sentences(text, keys, have, n - len(out)):
+            out.append({"claim": x, "url": url, "title": f"Wikipedia: {title}", "_text": text})
+            have |= _nums(x)
+    return out
+
+
+def _agency(sources, keys, have, n):
+    """More numbers from the NASA (and other agency) pages the topic already cites."""
+    out = []
+    for s in sources:
+        if len(out) >= n or tier(s.get("url")) < 3 or "arxiv.org" in domain(s.get("url")):
+            continue
+        text = page_text(s["url"])
+        for x in fact_sentences(text, keys, have, min(2, n - len(out))):
+            out.append({"claim": x, "url": s["url"], "title": s.get("title") or domain(s["url"])})
+            have |= _nums(x)
+    return out
+
+
+def _arxiv(query, keys, have, n):
+    import xml.etree.ElementTree as ET
+    words = [w for w in re.findall(r"[A-Za-z]{4,}", query) if w.lower() not in STOP][:5]
+    if len(words) < 2:
+        return []
+    xml = _api(ARXIV_API + "?" + urllib.parse.urlencode(
+        {"search_query": " AND ".join(f"all:{w}" for w in words[:4]), "max_results": 3}))
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+    out = []
+    for e in ET.fromstring(xml).findall("a:entry", ns):
+        url = (e.findtext("a:id", "", ns) or "").strip().replace("http://", "https://", 1)
+        abstract = re.sub(r"\s+", " ", e.findtext("a:summary", "", ns) or "").strip()
+        title = re.sub(r"\s+", " ", e.findtext("a:title", "", ns) or "").strip()
+        if not url.startswith("https://arxiv.org/abs/") or len(out) >= n:
+            continue
+        for x in fact_sentences(abstract, keys, have, 1, min_hits=3):    # stricter: a preprint has to be on-topic
+            out.append({"claim": x, "url": url, "title": f"arXiv preprint: {title[:150]}", "_text": abstract})
+            have |= _nums(x)
+    return out
+
+
+def enrich(t, progress=lambda s: None):
+    """Adds up to ENRICH_MAX facts with numbers to a topic from free reference sources: Wikipedia (its API), the
+    NASA/agency pages it already cites, and arXiv abstracts. Each fact is a sentence copied word for word from the
+    source, so the fact-check can find it; nothing is reworded by AI. Runs once per topic. Returns how many."""
+    if not t or not _enrich_due(t):
+        return 0
+    keys = _words(f"{t.get('title', '')} {t.get('angle', '')}")
+    have = set()
+    for s in t.get("sources") or []:
+        have |= _nums(s.get("claim"))
+    found = []
+    query = str(t.get("title") or "")
+    for name, step in (("Wikipedia", lambda n: _wiki(query, keys, have, min(4, n))),
+                       ("agency pages", lambda n: _agency(t.get("sources") or [], keys, have, min(2, n))),
+                       ("arXiv", lambda n: _arxiv(f"{t.get('title', '')} {t.get('angle', '')}", keys, have, min(2, n)))):
+        left = ENRICH_MAX - len(found)
+        if left <= 0:
+            break
+        try:
+            found += step(left)
+        except Exception as e:
+            progress(f"more facts: {name} didn't answer ({str(e)[:80]})")
+    now = time.time()
+    for f in found:
+        if f.get("_text"):
+            _save(f["url"], f["_text"])            # the fact-check reads the same text, without downloading again
+        row = {"topic_id": t["id"], "claim": f["claim"][:400], "url": f["url"][:500], "title": f["title"][:200],
+               "domain": domain(f["url"]), "tier": tier(f["url"]), "http_status": 200, "verdict": "reachable",
+               "note": ENRICH_NOTE}
+        row["id"] = db.insert("INSERT INTO sources(topic_id, claim, url, title, retrieved, verdict, note, domain, tier, "
+                              "http_status) VALUES(?,?,?,?,?,?,?,?,?,?)", t["id"], row["claim"], row["url"],
+                              row["title"], now, "reachable", ENRICH_NOTE, row["domain"], row["tier"], 200)
+        t.setdefault("sources", []).append(row)         # same order as topic() reloads them (by id)
+    # marked even when nothing was found, so a topic is only looked up once
+    sc = dict(t.get("scores") or {})
+    sc["enriched"] = len(found)
+    db.run("UPDATE topics SET scores=? WHERE id=?", json.dumps(sc), t["id"])
+    t["scores"] = sc
+    if found:
+        progress(f"more facts: {len(found)} added from free reference sources")
+    return len(found)
+
+
+def _enrich_due(t):
+    return enrich_on() and "enriched" not in (t.get("scores") or {})
+
+
 def _reachable(status):
     # 401/403/429 mean the site exists but turns away robots (common for journals): still a real source
     return 200 <= status < 400 or status in (401, 403, 429)
@@ -451,6 +610,8 @@ def propose(pillar, n=6, competitor=()):
     mistakes = lessons.advice("ideas")
     if mistakes:
         comp += "\n" + mistakes
+    from studio import trends
+    comp += trends.hint()
     prompt = f"""You find topics for a YouTube Shorts channel (25-45 s, US English, narrated, original graphics).
 Niche: {d.get('name', '')}. Positioning: {plan.get('positioning', '')}. Audience: {plan.get('audience', '')}.
 Pillar: {pillar['name']}: {pillar.get('description', '')}
@@ -591,7 +752,8 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
         for c in propose(p, per_pillar, comp):
             c["kind"] = c.get("kind") if c.get("kind") in KINDS else "evergreen"
             dup, _ = is_duplicate(c["title"], c.get("angle", ""))
-            if dup or any(_overlap(c["title"], k["title"]) >= DUPLICATE_AT + 0.2 for k in cands):
+            if dup or any(_overlap(c["title"], k["title"]) >= DUPLICATE_AT + 0.2 for k in cands) or \
+                    _same_as_batch(c, cands):
                 dups += 1
                 continue
             cands.append(c)
@@ -621,17 +783,24 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
         scored.sort(key=lambda x: -x[0])
         added, rejected = [], []
         for rank, (overall, i, c, r, rel, factors) in enumerate(scored):
-            measured = med = None
+            measured = med = wiki = None
             if rank < measure_top and not gate(c, r, rel, factors):
-                measured, med = measured_interest([str(k) for k in c.get("keywords") or []])
+                from studio import trends
+                kw = [str(k) for k in c.get("keywords") or []]
+                measured, med = measured_interest(kw)
                 if measured is not None:
                     searches += 1
-                    overall, factors = score_one(r, rel, measured)
+                w_score, wiki = trends.wiki_interest(c["title"], kw)
+                both = [x for x in (measured, w_score) if x is not None]
+                if both:                                 # YouTube views and Wikipedia readers, as measured
+                    overall, factors = score_one(r, rel, round(sum(both) / len(both), 1))
+                    if wiki:
+                        factors["interest"]["basis"] += " (incl. Wikipedia views)"
             why = gate(c, r, rel, factors)
             now = time.time()
             status = "rejected" if why else "idea"
             scores = {"version": SCORING_VERSION, "factors": factors, "note": str(r.get("note", ""))[:300],
-                      "median_views": med}
+                      "median_views": med, **({"wikipedia": wiki} if wiki else {})}
             tid = db.insert(
                 "INSERT INTO topics(title, fingerprint, pillar, kind, sources, score, scores, status, discovered, updated, "
                 "angle, hook, why, keywords, origin, fresh_until, reject_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",

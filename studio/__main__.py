@@ -29,9 +29,11 @@
               engines (status) | engines install [tool|all] | engines check | engines use on|off [area...] [--if-ready]
   handover    moves the business to another computer: handover export (old one; switches it off there)
               | handover import [zip] [--replace] (new one; autopilot stays off) | handover undo
+  similar     the most alike earlier topics by meaning (to tune "duplicate_meaning_at")
   footage     stock footage (Pixabay/Pexels free key, NASA no key): footage connect (asks for a key) | footage (status)
   sample      makes a side-by-side sample with the upgraded tools from a finished Short (--video <id>):
-              its voice and video next to the current ones; changes nothing and uploads nothing"""
+              its voice and video next to the current ones; changes nothing and uploads nothing.
+              --footage: a Short planned before stock footage existed gets footage searches (one Claude call)"""
 import json
 import os
 import sys
@@ -119,7 +121,8 @@ def _sample(argv):
     print("2/2 Video with every upgrade: AI pictures, background music, the cinematic look, whisperX timing "
           "and Remotion...")
     rep = video.render(vid, progress=lambda s: print("    " + s), engines_override=engines.UPGRADED,
-                       out_name="sample/short_upgraded.mp4", record=False, voice_path=v["path"])
+                       out_name="sample/short_upgraded.mp4", record=False, voice_path=v["path"],
+                       footage_terms="--footage" in argv)
     for k, why in rep["engines"].items():
         print(f"    {k}: {why}")
     old = db.one("SELECT path FROM voiceovers WHERE video_id=? ORDER BY id DESC LIMIT 1", vid)
@@ -459,6 +462,15 @@ def main(argv):
     elif cmd == "retention":
         from studio import retention
         print(retention.text() + "\n" + retention.score_text())
+    elif cmd == "similar":
+        from studio import trends
+        health.startup()
+        pairs = trends.closest_pairs(int(argv[1]) if len(argv) > 1 and argv[1].isdigit() else 15)
+        if not pairs:
+            print("No meaning model on this computer (or fewer than 2 topics), so only the word check is used.")
+        print(f"Repeat at {trends.threshold():.2f} or above:")
+        for sim, a, b in pairs:
+            print(f"  {sim:.3f}  {a}  |  {b}")
     elif cmd == "timings":
         from studio import timings
         print(timings.text(int(argv[1]) if len(argv) > 1 and argv[1].isdigit() else None))
