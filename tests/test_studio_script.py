@@ -31,6 +31,7 @@ class FakeClaude:
         self.bad_reviews = 0        # this many reviews fail before one passes
         self.orig = 8
         self.standard_only = False
+        self.orig_on = {}           # review number -> originality score for that review only
 
     def __call__(self, prompt, timeout, web):
         if prompt.startswith("This Short script is"):
@@ -67,7 +68,7 @@ class FakeClaude:
             "claims": [{"line": 2, "verdict": "wrong" if bad else "supported", "fact": "F1", "note": "NASA says 2,950" if bad else ""},
                        {"line": 3, "verdict": "supported", "fact": "F2", "note": ""}, {"line": 7, "verdict": "n/a"}],
             "hooks": {str(i): {"curiosity": 9 - i, "clarity": 8, "specificity": 8, "honesty": 9, "speed": 8} for i in range(5)},
-            "originality": self.orig_first if (self.orig_first is not None and self.reviews == 1) else self.orig,
+            "originality": self.orig_on.get(self.reviews, self.orig_first if (self.orig_first is not None and self.reviews == 1) else self.orig),
             "originality_fix": "the rocket-as-a-bottle idea is the usual one; compare it to a "
             "hiker dropping empty water bottles", "inauthentic_risk": "low", "problems": []})
 
@@ -219,10 +220,22 @@ def test_hook_scene_shows_the_hooks_number():
 def test_two_rewrites_before_giving_up(fakes):
     from studio import jobs, script, topics
     fc, tid = fakes
-    fc.bad_reviews = 2
+    fc.bad_reviews = 1                     # v1 has a wrong line, v2 reads generic (a different problem), v3 passes
+    fc.orig_on = {2: 5}
     vid = jobs.create(tid)
     row = script.make(topics.topic(tid), vid, progress=lambda s: None)
     assert fc.writes + fc.line_fixes == 3 and row["version"] == 3 and row["status"] == "passed"
+
+
+def test_the_same_problem_twice_moves_on_to_the_next_idea(fakes):
+    from studio import db, jobs, script, topics
+    fc, tid = fakes
+    fc.bad_reviews = 2                     # wrong line, revised, wrong line again
+    vid = jobs.create(tid)
+    with pytest.raises(script.ScriptRejected, match="same problem came back"):
+        script.make(topics.topic(tid), vid, progress=lambda s: None)
+    assert fc.reviews == 2                 # no third fact-check spent on it
+    assert db.one("SELECT script_status FROM topics WHERE id=?", tid)["script_status"] == "failed"
 
 
 def test_textbook_law_is_fine_but_verifies_nothing_alone(fakes):
@@ -267,7 +280,7 @@ def test_a_rewrite_starts_from_the_best_version_and_uses_the_reviewers_idea(fake
         script.make(topics.topic(tid), vid, progress=lambda s: None)
     rewrites = [p for p in prompts if p.startswith("Write a YouTube Short script") and "failed review" in p]
     fixes = [p for p in prompts if p.startswith("A fact-checker flagged")]
-    assert len(fixes) == 2                 # both revisions repaired the near-miss v1, not the generic v2
+    assert len(fixes) == 1                 # the revision repaired the near-miss v1; the wrong line came back, so it stopped
     assert not rewrites
 
 

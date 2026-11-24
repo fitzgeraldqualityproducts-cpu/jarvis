@@ -188,9 +188,10 @@ Rules:
   facts don't say (like "the forecast could change" or "this is an average"). A transition is a question or a plain
   link with no claim in it.
 - Plain words, short sentences, US spelling and units with metric where useful. No hype words, no clickbait.
-- Original: your own explanation and wording, not a summary of a known video. Make it yours with ONE concrete
-  comparison or everyday example of your own (a kitchen, a car, a stadium, a phone) that carries the calculation,
-  and say the result in a way a textbook wouldn't. Avoid stock explainer lines ("here's the thing", "it turns out",
+- Original: your own explanation and wording, not a summary of a known video. Make it yours with ONE concrete,
+  unusual image or everyday example of your own (a specific object, place or moment, like a kitchen, a car,
+  a stadium, a phone) that carries the calculation from the hook to the last line, and say the result in a way a
+  textbook wouldn't. Not the standard textbook analogy or diagram for this topic: that scores 5/10. Avoid stock explainer lines ("here's the thing", "it turns out",
   "scientists say", "mind-blowing").
 - Standard textbook science (a named law or formula such as Newton's laws, Kepler's third law, E = mc^2, or a
   well-known constant like g = 9.8 m/s^2 or the speed of light) may be used without a fact: mark that line's facts
@@ -675,12 +676,38 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     from studio import lessons
     lessons.record("script", rev["hard_problems"], topic, video_id)
     tries = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status='failed'", video_id)["n"]
+    again = _repeated(video_id, row["id"], rev["hard_problems"])
+    if again:                                     # the same kind of problem twice in a row: move on to the next idea
+        _trial_outcome(topic, video_id, False)
+        topics.set_status(topic["id"], script_status="failed")
+        guard.audit("script.failed", True, {"topic": topic["id"], "video": video_id, "repeated": again,
+                                            "problems": rev["hard_problems"][:5]})
+        raise ScriptRejected(f"the same problem came back after a revision ({again.replace('_', ' ')}): "
+                             + "; ".join(rev["hard_problems"][:3]))
     if tries > max_revisions:
         _trial_outcome(topic, video_id, False)
         topics.set_status(topic["id"], script_status="failed")
         guard.audit("script.failed", True, {"topic": topic["id"], "video": video_id, "problems": rev["hard_problems"][:5]})
         raise ScriptRejected("the script still failed the fact-check: " + "; ".join(rev["hard_problems"][:4]))
     return "revise", row
+
+
+REPEAT_STOPS = ("unsupported", "wrong_fact", "originality", "missing_value")
+
+
+def _repeated(video_id, row_id, problems):
+    """The problem category (e.g. "unsupported") that this failed version shares with the one just before it, or
+    None. A revision that brings back the same kind of problem rarely passes on a third try, so the job stops
+    there and the autopilot moves on to the next idea instead of spending more Claude calls."""
+    from studio import lessons
+    prev = db.one("SELECT checks FROM scripts WHERE video_id IS ? AND status='failed' AND id<? ORDER BY id DESC LIMIT 1",
+                  video_id, row_id)
+    if not prev:
+        return None
+    before = {lessons.categorize(p) for p in (json.loads(prev["checks"] or "{}").get("hard_problems") or [])}
+    now = {lessons.categorize(p) for p in problems}
+    same = [c for c in REPEAT_STOPS if c in before and c in now]
+    return same[0] if same else None
 
 
 LINE_PROBLEM = re.compile(r"^line (\d+) is (unsupported|wrong)\b")

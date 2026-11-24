@@ -24,8 +24,9 @@ RULES = [
     ("too_short", "script", r"words; it must be .*add",
      "Scripts ran too short {n} time(s): aim for 75-95 words."),
     ("originality", "script", r"originality \d+(\.\d+)?/10|mass-produced template|too close to the script",
-     "Scripts were judged unoriginal {n} time(s): explain it your own way with a specific worked example or "
-     "comparison nobody else uses; no stock explainer phrasing."),
+     "Scripts were judged unoriginal {n} time(s), usually 5/10 for the standard textbook explanation: build the whole "
+     "Short around ONE concrete, unusual image (a specific object, place or everyday moment) that carries the "
+     "calculation; never the usual analogy or diagram for the topic, no stock explainer phrasing."),
     ("unsupported", "script", r"is unsupported",
      "Lines were unsupported by the sources {n} time(s): every factual line must come straight from a listed fact. "
      "No constants, typical values or extra details the facts don't give (mark a truly needed value \"needs\")."),
