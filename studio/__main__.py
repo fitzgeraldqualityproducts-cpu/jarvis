@@ -108,7 +108,7 @@ def _sample(argv):
     out = data_dir("videos", str(vid), "sample")
     print(f"Sample for Short {vid}: {db.video(vid)['title'] or ''}")
     cur = db.one("SELECT path, engine FROM voiceovers WHERE video_id=? ORDER BY id DESC LIMIT 1", vid)
-    if cur and cur["engine"] == "chatterbox" and cur["path"] and Path(cur["path"]).exists():
+    if cur and cur["engine"] == "chatterbox" and cur["path"] and Path(cur["path"]).exists() and "--new-voice" not in argv:
         print("1/2 Narration: this Short already has the Chatterbox voice, so it's reused")
         v = {"path": cur["path"]}
     else:
@@ -122,9 +122,9 @@ def _sample(argv):
     for k, why in rep["engines"].items():
         print(f"    {k}: {why}")
     old = db.one("SELECT path FROM voiceovers WHERE video_id=? ORDER BY id DESC LIMIT 1", vid)
-    if old and old["path"]:
+    if old and old["path"] and Path(old["path"]).exists():           # an older Short may not have kept it
         shutil.copy(old["path"], out / "voice_current.wav")
-    if db.video(vid)["path"]:
+    if db.video(vid)["path"] and Path(db.video(vid)["path"]).exists():
         shutil.copy(db.video(vid)["path"], out / "short_current.mp4")
     first, last = qa.edge_frames(rep["path"])
     import numpy as np

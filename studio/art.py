@@ -48,9 +48,14 @@ def raw_pictures(video_id, scenes, lines, look="diagram"):
         with engines.heavy("AI pictures (SDXL-Turbo)"):
             ans = engines.run("sdxl", "sdxl_worker", {"images": [w for _, w in want], "width": GEN_W,
                                                       "height": GEN_H, "steps": 4})
+        errors = []
         for (i, w), r in zip(want, ans.get("images") or []):
             if r.get("ok") and Path(w["out"]).exists():
                 have[i] = Path(w["out"])
+            elif r.get("error"):
+                errors.append(r["error"])
+        if not have and errors:                    # say why, so the report shows the real reason
+            raise engines.EngineError(f"SDXL-Turbo made no pictures: {errors[0][:240]}")
     return have
 
 

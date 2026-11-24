@@ -137,3 +137,18 @@ def test_music_mix_keeps_the_voice_on_top(tmp_path, fake_voice):  # noqa: F811
     assert rate == 48000 and abs(len(x) / rate - dur) < 0.2 and np.abs(x).max() <= 0.86
     assert music.caption({"pillar": "Space and Planets"}).startswith("instrumental") and "ambient" in music.caption(
         {"pillar": "Space and Planets"})
+
+
+def test_why_the_pictures_failed_is_reported(fakes, fake_voice, monkeypatch):  # noqa: F811
+    from studio import db, engines
+
+    def runner(tool, worker, payload, timeout):
+        if tool == "sdxl":
+            return {"images": [{"out": im["out"], "ok": False, "error": "OutOfMemoryError: CUDA out of memory"}
+                               for im in payload["images"]]}
+        raise engines.EngineError(f"{tool} isn't installed")
+    monkeypatch.setattr(engines, "RUNNER", runner)
+    engines.use(True, ["images", "look"])
+    vid, states = _make(fakes, fake_voice, monkeypatch)
+    used = json.loads(db.video(vid)["meta"])["render"]["engines"]
+    assert states[-1] == "ready" and "CUDA out of memory" in used["images"] and used["look"].startswith("diagram")

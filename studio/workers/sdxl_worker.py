@@ -23,24 +23,45 @@ try:
     pipe = AutoPipelineForText2Image.from_pretrained("stabilityai/sdxl-turbo", vae=vae, torch_dtype=dtype,
                                                      variant="fp16" if cuda else None)
     vram = torch.cuda.get_device_properties(0).total_memory / 2 ** 30 if cuda else 0
-    if cuda and vram < 10:
+    mode = "gpu"
+    if cuda and vram < 8:
+        # 6 GB cards (with the desktop holding ~1 GB): move one layer at a time to the card. Slower than whole-
+        # model offload, but SDXL's 2.6 GB UNet never has to fit at once.
+        pipe.enable_sequential_cpu_offload()
+        mode = "sequential offload"
+    elif cuda and vram < 12:
         pipe.enable_model_cpu_offload()
+        mode = "model offload"
     elif cuda:
         pipe.to("cuda")
+    pipe.enable_vae_slicing()
+    pipe.enable_vae_tiling()
     pipe.set_progress_bar_config(disable=True)
     out = []
     for im in job["images"]:
-        try:
-            g = torch.Generator("cpu").manual_seed(int(im.get("seed", 7)))
-            with torch.inference_mode():
-                img = pipe(prompt=im["prompt"], negative_prompt=NEGATIVE, num_inference_steps=int(job.get("steps", 4)),
-                           guidance_scale=0.0, width=int(job.get("width", 512)), height=int(job.get("height", 896)),
-                           generator=g).images[0]
-            img.save(im["out"])
-            out.append({"out": im["out"], "ok": True})
-        except Exception as e:
-            out.append({"out": im["out"], "ok": False, "error": f"{type(e).__name__}: {e}"[:300]})
-    json.dump({"images": out, "device": torch.cuda.get_device_name(0) if cuda else "cpu",
+        err = None
+        for attempt in range(2):
+            try:
+                g = torch.Generator("cpu").manual_seed(int(im.get("seed", 7)))
+                with torch.inference_mode():
+                    img = pipe(prompt=im["prompt"], negative_prompt=NEGATIVE,
+                               num_inference_steps=int(job.get("steps", 4)), guidance_scale=0.0,
+                               width=int(job.get("width", 512)), height=int(job.get("height", 896)),
+                               generator=g).images[0]
+                img.save(im["out"])
+                err = None
+                break
+            except torch.cuda.OutOfMemoryError as e:     # free what's cached and try that picture once more
+                err = f"OutOfMemoryError: {e}"
+                if cuda:
+                    torch.cuda.empty_cache()
+            except Exception as e:
+                err = f"{type(e).__name__}: {e}"
+                break
+        if cuda:
+            torch.cuda.empty_cache()
+        out.append({"out": im["out"], "ok": err is None, **({"error": err[:300]} if err else {})})
+    json.dump({"images": out, "device": (torch.cuda.get_device_name(0) + f" ({mode})") if cuda else "cpu",
                "took": round(time.time() - t0, 1)}, open(pout, "w"))
 except Exception as e:
     json.dump({"error": f"{type(e).__name__}: {e}"}, open(pout, "w"))

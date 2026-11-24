@@ -217,7 +217,7 @@ def nvidia():
         if smi and Path(smi).exists():
             try:
                 out = subprocess.run([smi, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
-                                     capture_output=True, text=True, timeout=20).stdout.strip().splitlines()
+                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20).stdout.strip().splitlines()
                 if out:
                     name, mib = [x.strip() for x in out[0].split(",")[:2]]
                     gpu = {"name": name, "vram_gb": round(float(mib) / 1024, 1)}
@@ -236,7 +236,7 @@ def _pressure_normal():
         return False
     try:
         out = subprocess.run(["sysctl", "-n", "kern.memorystatus_vm_pressure_level"], capture_output=True,
-                             text=True, timeout=5).stdout.strip()
+                             text=True, encoding="utf-8", errors="replace", timeout=5).stdout.strip()
         return out == "1"
     except Exception:
         return False
@@ -251,7 +251,7 @@ def free_gb():
         pass
     if sys.platform == "darwin":
         try:
-            out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5).stdout
+            out = subprocess.run(["vm_stat"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5).stdout
             page = 16384 if "16384" in out.splitlines()[0] else 4096
             n = 0
             for line in out.splitlines():
@@ -394,7 +394,7 @@ def run(tool, worker, payload, timeout=None):
             env["JV_ACESTEP_SRC"] = str(TOOLS / "acestep-src")
         cmd = [str(python(tool)), "-I", str(WORKERS / f"{worker}.py"), str(pin), str(pout)]
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=tmp)
+            p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, env=env, cwd=tmp)
         except subprocess.TimeoutExpired:
             raise EngineError(f"{tool} took longer than {timeout // 60} minutes")
         if p.returncode != 0 or not pout.exists():
@@ -424,7 +424,7 @@ def remotion_render(props, public_dir, out, timeout=None):
         cmd.append(f"--browser-executable={os.environ['JARVIS_REMOTION_BROWSER']}")
     env = _node_env(REMOTION_DISABLE_TELEMETRY="1")
     try:
-        p = subprocess.run(cmd, cwd=REMOTION, capture_output=True, text=True, timeout=timeout or SPECS["remotion"]["timeout"],
+        p = subprocess.run(cmd, cwd=REMOTION, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout or SPECS["remotion"]["timeout"],
                            env=env)
     except subprocess.TimeoutExpired:
         raise EngineError("Remotion took too long")
@@ -557,7 +557,7 @@ def check(tool):
     if tool == "remotion":
         try:
             p = subprocess.run([*_node_cmd("npx"), "remotion", "versions"], cwd=REMOTION,
-                               capture_output=True, text=True, timeout=120, env=_node_env())
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=_node_env())
             return p.returncode == 0, (p.stdout or p.stderr).strip().splitlines()[-1:] and \
                 (p.stdout or p.stderr).strip().splitlines()[-1][:120]
         except Exception as e:
