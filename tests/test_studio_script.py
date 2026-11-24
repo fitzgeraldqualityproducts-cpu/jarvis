@@ -31,6 +31,7 @@ class FakeClaude:
         self.bad_reviews = 0        # this many reviews fail before one passes
         self.orig = 8
         self.standard_only = False
+        self.orig_on = {}           # review number -> originality score for that review only
 
     def __call__(self, prompt, timeout, web):
         if prompt.startswith("This Short script is"):
@@ -67,7 +68,7 @@ class FakeClaude:
             "claims": [{"line": 2, "verdict": "wrong" if bad else "supported", "fact": "F1", "note": "NASA says 2,950" if bad else ""},
                        {"line": 3, "verdict": "supported", "fact": "F2", "note": ""}, {"line": 7, "verdict": "n/a"}],
             "hooks": {str(i): {"curiosity": 9 - i, "clarity": 8, "specificity": 8, "honesty": 9, "speed": 8} for i in range(5)},
-            "originality": self.orig_first if (self.orig_first is not None and self.reviews == 1) else self.orig,
+            "originality": self.orig_on.get(self.reviews, self.orig_first if (self.orig_first is not None and self.reviews == 1) else self.orig),
             "originality_fix": "the rocket-as-a-bottle idea is the usual one; compare it to a "
             "hiker dropping empty water bottles", "inauthentic_risk": "low", "problems": []})
 
@@ -219,10 +220,22 @@ def test_hook_scene_shows_the_hooks_number():
 def test_two_rewrites_before_giving_up(fakes):
     from studio import jobs, script, topics
     fc, tid = fakes
-    fc.bad_reviews = 2
+    fc.bad_reviews = 1                     # v1 has a wrong line, v2 reads generic (a different problem), v3 passes
+    fc.orig_on = {2: 5}
     vid = jobs.create(tid)
     row = script.make(topics.topic(tid), vid, progress=lambda s: None)
     assert fc.writes + fc.line_fixes == 3 and row["version"] == 3 and row["status"] == "passed"
+
+
+def test_the_same_problem_twice_moves_on_to_the_next_idea(fakes):
+    from studio import db, jobs, script, topics
+    fc, tid = fakes
+    fc.bad_reviews = 2                     # wrong line, revised, wrong line again
+    vid = jobs.create(tid)
+    with pytest.raises(script.ScriptRejected, match="same problem came back"):
+        script.make(topics.topic(tid), vid, progress=lambda s: None)
+    assert fc.reviews == 2                 # no third fact-check spent on it
+    assert db.one("SELECT script_status FROM topics WHERE id=?", tid)["script_status"] == "failed"
 
 
 def test_textbook_law_is_fine_but_verifies_nothing_alone(fakes):
@@ -267,7 +280,7 @@ def test_a_rewrite_starts_from_the_best_version_and_uses_the_reviewers_idea(fake
         script.make(topics.topic(tid), vid, progress=lambda s: None)
     rewrites = [p for p in prompts if p.startswith("Write a YouTube Short script") and "failed review" in p]
     fixes = [p for p in prompts if p.startswith("A fact-checker flagged")]
-    assert len(fixes) == 2                 # both revisions repaired the near-miss v1, not the generic v2
+    assert len(fixes) == 1                 # the revision repaired the near-miss v1; the wrong line came back, so it stopped
     assert not rewrites
 
 
@@ -280,3 +293,54 @@ def test_rewrite_is_told_the_reviewers_idea_and_no_new_claims(fakes, monkeypatch
     script.write(topics.topic(tid), ["originality 5/10: needs its own explanation (use a hiker dropping bottles)"], {"lines": []})
     assert "Rebuild the Short around this idea" in seen[0] and "hiker dropping bottles" in seen[0]
     assert "Don't add any new claim" in seen[0] and "No made-up caveats" in seen[0]
+
+
+def _with_need(fakes, monkeypatch, page):
+    """The writer marks line 4 "needs" (a value the sources don't give); the look-up names a page."""
+    import json as _j
+    from studio import claude, topics
+    fc, tid = fakes
+    base = claude.RUNNER
+    seen = {"lookups": 0}
+
+    def runner(prompt, timeout, web):
+        if prompt.startswith("Use web search. For each value"):
+            assert web and "own text states that value" in prompt and "the wavelength of red light: 700 nm" in prompt
+            seen["lookups"] += 1
+            return _j.dumps({"4": {"url": "https://science.nasa.gov/ems/09_visiblelight/", "quote": "...", "source": "NASA"}})
+        out = base(prompt, timeout, web)
+        if prompt.startswith("Write a YouTube Short script"):
+            assert '"needs"' in prompt and "Never call a value \"typical\"" in prompt
+            d = _j.loads(out)
+            d["lines"][3]["facts"] = ["needs"]
+            d["needs"] = [{"line": 4, "what": "the wavelength of red light", "value": "700 nm"}]
+            return _j.dumps(d)
+        return out
+    monkeypatch.setattr(claude, "RUNNER", runner)
+    monkeypatch.setattr(topics, "PAGE", lambda url: page if "nasa.gov/ems" in url else "")
+    monkeypatch.setattr(topics, "FETCH", lambda url: 200)
+    return fc, tid, seen
+
+
+def test_a_needed_value_counts_only_when_the_downloaded_page_states_it(fakes, monkeypatch):
+    from studio import db, jobs, script, topics
+    fc, tid, seen = _with_need(fakes, monkeypatch, "Red light has the longest wavelength, about 700 nanometers (700 nm).")
+    vid = jobs.create(tid, title="x")
+    row = script.make(topics.topic(tid), vid, progress=lambda s: None)
+    st = json.loads(row["structure"])
+    assert row["status"] == "passed" and seen["lookups"] == 1
+    assert st["lines"][3]["facts"] == ["F3"] and len(st["lines"]) == len(BODY)
+    src = db.one("SELECT * FROM sources WHERE topic_id=? AND video_id IS NULL AND url LIKE '%nasa.gov/ems%'", tid)
+    assert src and src["verdict"] == "reachable" and "700 nm" in src["claim"]
+    assert len(script._facts(topics.topic(tid))) == 3          # reloads in the same order: F3 is still that page
+
+
+def test_a_needed_value_no_page_states_is_dropped(fakes, monkeypatch):
+    from studio import db, jobs, lessons, script, topics
+    fc, tid, seen = _with_need(fakes, monkeypatch, "Visible light spans many colours.")   # no 700 on the page
+    vid = jobs.create(tid, title="x")
+    row = script.make(topics.topic(tid), vid, progress=lambda s: None)
+    st = json.loads(row["structure"])
+    assert len(st["lines"]) == len(BODY) - 1 and all("needs" not in (ln.get("facts") or []) for ln in st["lines"])
+    assert not db.one("SELECT 1 FROM sources WHERE url LIKE '%nasa.gov/ems%'")
+    assert "missing_value" in lessons.counts("script")

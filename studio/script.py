@@ -188,18 +188,25 @@ Rules:
   facts don't say (like "the forecast could change" or "this is an average"). A transition is a question or a plain
   link with no claim in it.
 - Plain words, short sentences, US spelling and units with metric where useful. No hype words, no clickbait.
-- Original: your own explanation and wording, not a summary of a known video. Make it yours with ONE concrete
-  comparison or everyday example of your own (a kitchen, a car, a stadium, a phone) that carries the calculation,
-  and say the result in a way a textbook wouldn't. Avoid stock explainer lines ("here's the thing", "it turns out",
+- Original: your own explanation and wording, not a summary of a known video. Make it yours with ONE concrete,
+  unusual image or everyday example of your own (a specific object, place or moment, like a kitchen, a car,
+  a stadium, a phone) that carries the calculation from the hook to the last line, and say the result in a way a
+  textbook wouldn't. Not the standard textbook analogy or diagram for this topic: that scores 5/10. Avoid stock explainer lines ("here's the thing", "it turns out",
   "scientists say", "mind-blowing").
 - Standard textbook science (a named law or formula such as Newton's laws, Kepler's third law, E = mc^2, or a
   well-known constant like g = 9.8 m/s^2 or the speed of light) may be used without a fact: mark that line's facts
   as ["general"]. Every number about THIS topic must still come from the facts above.
+- No number, constant or reference value beyond the facts above, apart from the standard textbook science just
+  described. Never call a value "typical" or "about" to get around this. If the explanation truly needs a value the
+  facts don't give (like the wavelength of red light), write that line with the value, mark its facts ["needs"]
+  and list it in "needs". Jarvis then looks for a real page that states it; if none does, the line is dropped. At
+  most two needs, and only when the Short doesn't work without them.
 - "visual" says what the screen shows for that line (diagram, chart, number, map, simple animation; no footage).
 Also write 5 different hooks (each could replace line 1) and 3 title options (under 60 characters, honest).{learned}{fix}
 
 JSON only: {{"hooks": ["..." x5], "lines": [{{"text": "...", "facts": ["F1"], "visual": "..."}}],
-"calcs": [{{"expr": "...", "result": 0.0, "unit": "...", "says": "what it shows"}}], "titles": ["..." x3]}}"""
+"calcs": [{{"expr": "...", "result": 0.0, "unit": "...", "says": "what it shows"}}], "titles": ["..." x3],
+"needs": [{{"line": 4, "what": "the wavelength of red light", "value": "700 nm"}}]}} ("needs" is usually empty)"""
     ans = None
     if not feedback and not previous and _local_draft_turn():
         ans = _local_draft(prompt, facts)              # the trial: a first draft written on this computer
@@ -209,12 +216,76 @@ JSON only: {{"hooks": ["..." x5], "lines": [{{"text": "...", "facts": ["F1"], "v
         raise ScriptRejected("Claude didn't return a script")
     ans["lines"] = [ln for ln in ans["lines"] if isinstance(ln, dict) and str(ln.get("text", "")).strip()]
     ans["hooks"] = [str(h) for h in (ans.get("hooks") or []) if str(h).strip()][:5]
+    ans = fill_needs(ans, topic)
     for _ in range(2):                            # wrong length: fix it here, before a costly fact-check
         n = len(text_of(ans, ans["hooks"][0] if ans["hooks"] else None).split())
         if WORDS_MIN <= n <= WORDS_MAX:
             break
         ans = _fit_length(ans, n) or ans
     return ans
+
+
+MAX_NEEDS = 2
+
+
+def fill_needs(draft, topic):
+    """Lines the writer marked "needs" use a value the topic's sources don't give. One web search looks for a
+    reputable page that states each one; Jarvis then downloads that page itself and keeps the value only if the
+    page's own text has its numbers. A kept page becomes one more source of the topic (with its link, cited in the
+    description) and the line points at it, so the fact-checker checks it like any other line. Anything else is
+    dropped: a line is never left resting on the writer's word."""
+    from studio import lessons, topics
+    marked = [i for i, ln in enumerate(draft.get("lines") or [], 1) if "needs" in [str(f) for f in ln.get("facts") or []]]
+    asked = {}
+    for nd in draft.get("needs") or []:
+        if isinstance(nd, dict) and str(nd.get("line", "")).isdigit() and int(nd["line"]) in marked:
+            asked.setdefault(int(nd["line"]), {"what": str(nd.get("what") or "")[:200], "value": str(nd.get("value") or "")[:60]})
+    draft.pop("needs", None)
+    if not marked:
+        return draft
+    found = {}
+    todo = {k: v for k, v in list(asked.items())[:MAX_NEEDS] if v["what"] and topics._nums(v["value"])}
+    if todo:
+        from studio import claude
+        ans = claude.ask_json(
+            "Use web search. For each value below, find ONE reputable page (a university, government or science "
+            "agency, standards body, encyclopedia or textbook publisher) whose own text states that value. Only "
+            "pages you opened; if none states it, leave it out. Don't round or adjust the value.\n\n"
+            + "\n".join(f"{k}. {v['what']}: {v['value']}" for k, v in todo.items())
+            + '\n\nJSON object keyed by the number: {"4": {"url": "https://...", "quote": "the page\'s own sentence", '
+            '"source": "publisher"}}', timeout=300, web=True, purpose=f"look up values: {topic['title']}")
+        for k, v in todo.items():
+            hit = ans.get(str(k)) if isinstance(ans, dict) else None
+            url = str((hit or {}).get("url") or "").strip() if isinstance(hit, dict) else ""
+            if not url.startswith(("http://", "https://")):
+                continue
+            text = topics.page_text(url)               # the value only counts if it's on the downloaded page
+            if not text or not topics._nums(v["value"]) <= topics._nums(text):
+                continue
+            status = topics.check_url(url)
+            if not topics._reachable(status):
+                continue
+            claim = f"{v['what']}: {v['value']}"
+            row = {"topic_id": topic["id"], "claim": claim[:400], "url": url[:500], "title": str(hit.get("source") or "")[:200],
+                   "domain": topics.domain(url), "tier": topics.tier(url), "http_status": status, "verdict": "reachable"}
+            row["id"] = db.insert("INSERT INTO sources(topic_id, claim, url, title, domain, tier, http_status, verdict, retrieved) "
+                                  "VALUES(?,?,?,?,?,?,?,?,?)", row["topic_id"], row["claim"], row["url"], row["title"],
+                                  row["domain"], row["tier"], row["http_status"], "reachable", time.time())
+            topic.setdefault("sources", []).append(row)      # same order as topics.topic() reloads them (by id)
+            found[k] = f"F{len(_facts(topic))}"
+    lines, dropped = [], []
+    for i, ln in enumerate(draft["lines"], 1):
+        if i in marked:
+            if i not in found:
+                dropped.append(asked.get(i, {}).get("what") or f"line {i}")
+                continue
+            ln = dict(ln, facts=[found[i] if str(f) == "needs" else f for f in ln.get("facts") or []])
+        lines.append(ln)
+    draft["lines"] = lines
+    if dropped:
+        lessons.record("script", [f"a line needed a value no source states ({w}), so it was dropped" for w in dropped],
+                       topic)
+    return draft
 
 
 def _fit_length(draft, n):
@@ -325,7 +396,7 @@ def _local_draft(prompt, facts):
 def _draft_problem(ans, facts):
     if not isinstance(ans, dict) or not isinstance(ans.get("lines"), list) or len(ans["lines"]) < 4:
         return "no script"
-    ids = {f"F{i + 1}" for i in range(len(facts))} | {"general"}
+    ids = {f"F{i + 1}" for i in range(len(facts))} | {"general", "needs"}
     hooks = [str(h) for h in ans.get("hooks") or [] if str(h).strip()]
     if len(hooks) < 3:
         return "too few hooks"
@@ -605,12 +676,38 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     from studio import lessons
     lessons.record("script", rev["hard_problems"], topic, video_id)
     tries = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status='failed'", video_id)["n"]
+    again = _repeated(video_id, row["id"], rev["hard_problems"])
+    if again:                                     # the same kind of problem twice in a row: move on to the next idea
+        _trial_outcome(topic, video_id, False)
+        topics.set_status(topic["id"], script_status="failed")
+        guard.audit("script.failed", True, {"topic": topic["id"], "video": video_id, "repeated": again,
+                                            "problems": rev["hard_problems"][:5]})
+        raise ScriptRejected(f"the same problem came back after a revision ({again.replace('_', ' ')}): "
+                             + "; ".join(rev["hard_problems"][:3]))
     if tries > max_revisions:
         _trial_outcome(topic, video_id, False)
         topics.set_status(topic["id"], script_status="failed")
         guard.audit("script.failed", True, {"topic": topic["id"], "video": video_id, "problems": rev["hard_problems"][:5]})
         raise ScriptRejected("the script still failed the fact-check: " + "; ".join(rev["hard_problems"][:4]))
     return "revise", row
+
+
+REPEAT_STOPS = ("unsupported", "wrong_fact", "originality", "missing_value")
+
+
+def _repeated(video_id, row_id, problems):
+    """The problem category (e.g. "unsupported") that this failed version shares with the one just before it, or
+    None. A revision that brings back the same kind of problem rarely passes on a third try, so the job stops
+    there and the autopilot moves on to the next idea instead of spending more Claude calls."""
+    from studio import lessons
+    prev = db.one("SELECT checks FROM scripts WHERE video_id IS ? AND status='failed' AND id<? ORDER BY id DESC LIMIT 1",
+                  video_id, row_id)
+    if not prev:
+        return None
+    before = {lessons.categorize(p) for p in (json.loads(prev["checks"] or "{}").get("hard_problems") or [])}
+    now = {lessons.categorize(p) for p in problems}
+    same = [c for c in REPEAT_STOPS if c in before and c in now]
+    return same[0] if same else None
 
 
 LINE_PROBLEM = re.compile(r"^line (\d+) is (unsupported|wrong)\b")

@@ -24,10 +24,15 @@ RULES = [
     ("too_short", "script", r"words; it must be .*add",
      "Scripts ran too short {n} time(s): aim for 75-95 words."),
     ("originality", "script", r"originality \d+(\.\d+)?/10|mass-produced template|too close to the script",
-     "Scripts were judged unoriginal {n} time(s): explain it your own way with a specific worked example or "
-     "comparison nobody else uses; no stock explainer phrasing."),
+     "Scripts were judged unoriginal {n} time(s), usually 5/10 for the standard textbook explanation: build the whole "
+     "Short around ONE concrete, unusual image (a specific object, place or everyday moment) that carries the "
+     "calculation; never the usual analogy or diagram for the topic, no stock explainer phrasing."),
     ("unsupported", "script", r"is unsupported",
-     "Lines were unsupported by the sources {n} time(s): every factual line must come straight from a listed fact."),
+     "Lines were unsupported by the sources {n} time(s): every factual line must come straight from a listed fact. "
+     "No constants, typical values or extra details the facts don't give (mark a truly needed value \"needs\")."),
+    ("missing_value", "script", r"needed a value no source states",
+     "Lines were dropped {n} time(s) because no page stated the value they needed: build the Short from the listed "
+     "facts' own numbers."),
     ("wrong_fact", "script", r"is wrong",
      "Lines contradicted their sources {n} time(s): copy numbers and dates exactly as the sources give them."),
     ("calc", "script", r"no worked calculation|couldn't re-run|\bis [-\d.e+]+, not ",

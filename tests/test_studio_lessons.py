@@ -100,4 +100,4 @@ def test_failed_review_is_recorded(monkeypatch):
                   tid, "c", url, "reachable", 3, 200, topics.domain(url))
     with pytest.raises(script.ScriptRejected):
         script.make(topics.topic(tid))
-    assert lessons.counts().get("wrong_fact") == 3                     # first draft + two rewrites
+    assert lessons.counts().get("wrong_fact") == 2                     # first draft + one rewrite, then the repeat stops it
