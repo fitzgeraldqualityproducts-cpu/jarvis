@@ -52,7 +52,7 @@ def test_export_switches_this_computer_off_and_never_packs_the_sign_in(studio_ho
     assert "studio_data/videos/2/short.mp4" in names                  # waiting to go out: travels
     assert "studio_data/videos/1/short.mp4" not in names              # already on YouTube: stays behind
     assert "studio_data/videos/1/report.json" in names
-    assert man["protected_channels"] == ["UC_SAUCE"] and man["channel"]["youtube_channel_id"] == "UC_HUSS"
+    assert man["protected_channels"] == sorted(["UC_SAUCE", "UCamLvdxlcfg3YqISoj4jlcA"]) and man["channel"]["youtube_channel_id"] == "UC_HUSS"
     assert "enabled" not in man["settings"] and "autopilot" not in man["settings"]
     assert man["settings"]["voice"] == "am_michael"
     handover.undo()
@@ -97,7 +97,7 @@ def test_import_on_the_pc_repoints_paths_and_keeps_the_autopilot_off(studio_home
     assert not config.enabled()
     r = handover.import_(z, log=lambda *a: None)
     new_home = (pc / "studio_data").as_posix()
-    assert r["channel"]["title"] == "HussUniversity" and r["protected"] == ["UC_SAUCE"]
+    assert r["channel"]["title"] == "HussUniversity" and set(r["protected"]) == {"UC_SAUCE", "UCamLvdxlcfg3YqISoj4jlcA"}
     s = config.general()
     assert config.enabled() and s["allow_windows"] and s["autopilot"] is False and not s.get("handed_over")
     assert s["voice"] == "am_michael" and s["engines"] == {"visuals": "manim"}

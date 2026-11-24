@@ -118,7 +118,7 @@ does not do what it says; **Duplicate** = overlaps another part; **Unused** = pr
 | qa.py | Full (21 render checks). It does not produce a weighted score |
 | publish.py | Full for upload and resume. Partial for verifying the result (see Y5) |
 | analytics.py | Partial: only Data API counts so far. No retention rows yet (the only video is private) |
-| eligibility.py | **Broken thresholds** (see Y8). Has never run (0 rows), because it waits for a public video |
+| eligibility.py | **Incomplete thresholds** (see Y8, fixed in Phase 2). Has never run (0 rows), because it waits for a public video |
 | experiments table | Unused: the table exists, but no code writes to it |
 | drive.py | Unused on the PC: never connected |
 | dashboard.py | Full, with one misleading label (see Y6) |
@@ -140,6 +140,6 @@ does not do what it says; **Duplicate** = overlaps another part; **Unused** = pr
 | Doc says | Code does |
 |---|---|
 | `studio/narration.py`, `guard.ACTIONS` and others say "on this Mac" | The studio runs on the Windows PC since 2026-11-23 |
-| `eligibility.py` says it compares with "YouTube's published thresholds" | The thresholds in it do not match YouTube's pages (Y8) |
+| `eligibility.py` says it compares with "YouTube's published thresholds" | The thresholds in it were incomplete (Y8, fixed in Phase 2) |
 | Memory note says "#7 first private test Short uploaded" | The database marks it `published` and the dashboard says "Live on YouTube" |
 | `guard.py` docstring: "every tool the studio uses is registered" | Five newer engines are not registered |

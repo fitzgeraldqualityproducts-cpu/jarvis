@@ -17,16 +17,16 @@ tested. "Live" means switched on on the PC.
 
 397 tests: **396 passed, 1 failed** (21 minutes). The one failure, `test_selftune.py::test_section_falls_back_to_the_whole_video`, is the cloud machine missing `yt-dlp`, not a code fault. GitHub CI installs `yt-dlp` and was green on #82.
 
-## Phase 2: Protect: waiting
+## Phase 2: Protect: built, in review
 
 | Step | State |
 |---|---|
-| Handover-style backup on the PC (`D:\Jarvis\backups\2026-11-24\`) | Waiting on Connor's typed OK in the PC thread |
-| 2.1 Automatic verified backups | Not started |
-| 2.2 Guard hardening (S1, S2) | Not started |
-| 2.3 YPP thresholds fixed | Not started |
-| 2.4 Private uploads labelled honestly | Not started |
-| 2.5 Regression tests | Not started |
+| One-off backup on the PC (`D:\Jarvis\backups\2026-11-24\`) | **Done** 2026-11-24 on Connor's typed OK. studio.db integrity ok, 25 tables, row counts match. config and secrets hashes match |
+| 2.1 Automatic verified backups (`studio/backup.py`, `python -m studio backup ...`) | Built and tested. Runs daily in the worker's spare time. 14 daily + 8 weekly copies on D:. Restore only with Jarvis closed, after a safety copy |
+| 2.2 Guard hardening: Connor's channel id in code, an empty or protected lock refused, guard files checked against GitHub before each upload, self-edits can't touch guard files or guarded settings | Built and tested |
+| 2.3 YPP tracker: all routes (watch hours or Shorts views), uploads rule, the Feb 2027 new-applicant numbers and notes, each cited | Built and tested |
+| 2.4 Dashboard: "Shorts live" counts public only, private uploads are shown as private | Built and tested |
+| 2.5 Regression tests (`tests/test_studio_protect.py`, 17 tests) | Passing |
 
 ## Phases 3-7: not started
 

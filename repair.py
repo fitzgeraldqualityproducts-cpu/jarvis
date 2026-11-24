@@ -167,6 +167,7 @@ def fix(goal, role, task, error, extra="", mission=None):
     print(f"(self-repair: {role}: {error[:200]})")
     with selfedit_lock():
         selfedit.ensure_repo()
+        settings_before = selfedit.guarded_settings()
         npm = ["npm install", "npm ci", "npm rebuild", "npm run build", "npx prisma generate"]
         allowed = ["Read", "Edit", "Write", "Glob", "Grep"] + [f"Bash({c}:*)" for c in npm] + [f"Bash({c})" for c in npm]
         try:
@@ -180,6 +181,7 @@ def fix(goal, role, task, error, extra="", mission=None):
             text = out.stdout or ""
         except subprocess.TimeoutExpired:
             text = ""
+        selfedit.restore_guarded_settings(settings_before)
         res = _parse(text) or {"fixed": False, "retry": False, "cause": "", "owner_needs": "",
                                "say": "I couldn't work out what broke."}
         changed = [f for f in selfedit._changed_files() if not f.startswith((".night", "team/"))]

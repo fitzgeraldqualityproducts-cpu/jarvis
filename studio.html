@@ -236,7 +236,8 @@ function render(d){
   $("s-views").textContent = num(s.views == null ? null : +s.views);
   $("s-views-n").textContent = s.fetched ? "all time" : "";
   $("s-live").textContent = d.live_count;
-  $("s-live-n").textContent = d.ideas + " idea" + (d.ideas === 1 ? "" : "s") + " waiting";
+  $("s-live-n").textContent = (d.private_count ? d.private_count + " still private · " : "") +
+    d.ideas + " idea" + (d.ideas === 1 ? "" : "s") + " waiting";
   if (s.ypp && s.ypp.share != null) {
     const pct = s.ypp.share * 100;
     $("s-ypp").textContent = (pct < 10 ? pct.toFixed(1) : Math.round(pct)) + "%";
