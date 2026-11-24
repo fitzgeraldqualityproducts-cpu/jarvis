@@ -295,6 +295,15 @@ function render(d){
     ["Upload mode", {manual: "You upload", private: "Private", public: "Public"}[d.mode] || d.mode, d.mode === "public" ? "" : "warn"],
     ["Running cost", "$" + Math.round(d.cost_usd || 0), (d.cost_usd || 0) > 0 ? "bad" : ""],
   ];
+  const hw = d.hardware || {};
+  if (hw.gpu) rows.push(["Graphics card", `${hw.gpu.used_gb} of ${hw.gpu.total_gb} GB` +
+      (hw.gpu.temp_c != null ? ` · ${Math.round(hw.gpu.temp_c)}°C` : ""), hw.gpu.temp_c >= 85 ? "bad" : hw.gpu.temp_c >= 78 ? "warn" : ""]);
+  if (hw.load != null) rows.push(["Processor", Math.round(hw.load * 100) + "% busy", hw.load > 0.9 ? "warn" : ""]);
+  if (hw.memory != null) rows.push(["Memory", Math.round(hw.memory * 100) + "% used", hw.memory > 0.9 ? "warn" : ""]);
+  for (const [k, v] of Object.entries(hw.drives || {}))
+    rows.push([k.length === 1 ? `Drive ${k}: free` : "Disk free", v + " GB", v < 10 ? "bad" : v < 25 ? "warn" : ""]);
+  if (d.backup) rows.push(["Last backup", d.backup.hours_ago == null ? "none yet" : d.backup.hours_ago < 1 ? "under an hour ago" :
+      Math.round(d.backup.hours_ago) + " h ago", d.backup.hours_ago == null || d.backup.hours_ago > 36 ? "warn" : ""]);
   $("health").innerHTML = rows.map(r => `<div class="row"><span>${r[0]}</span><em class="${r[2]}">${esc(r[1])}</em></div>`).join("");
 
   $("upd").textContent = "Live · updated " + clock(now);

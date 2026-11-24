@@ -445,6 +445,21 @@ def main(argv):
         return _video(argv)
     elif cmd == "upload":
         return _upload(argv)
+    elif cmd == "experiment":
+        from studio import experiments
+        sub = argv[1] if len(argv) > 1 else "status"
+        if sub == "start" and len(argv) > 2:
+            experiments.start(argv[2])
+        elif sub == "stop":
+            experiments.stop()
+        elif sub != "status":
+            print("python -m studio experiment [status | start <" + "|".join(experiments.CATALOG) + "> | stop]")
+            return 1
+        print(experiments.status_text())
+    elif cmd == "registry":
+        from studio import registry
+        registry.register_all()
+        print(registry.text())
     elif cmd == "backup":
         return _backup(argv)
     elif cmd == "dashboard":

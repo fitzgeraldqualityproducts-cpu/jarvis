@@ -254,3 +254,113 @@ def test_a_private_upload_is_not_counted_as_live():
     texts = [a["text"] for a in s.get("activity") or []]
     if texts:
         assert any("uploaded (private)" in t for t in texts) and sum("went live" in t for t in texts) == 1
+
+
+def test_hardware_readings_for_the_dashboard(monkeypatch):
+    from studio import dashboard, health
+    health._gpu_cache.clear()
+    monkeypatch.setattr(health, "GPU_RUN", lambda: "NVIDIA GeForce RTX 2060, 1536, 6144, 37, 61")
+    g = health.gpu(max_age=0)
+    assert g == {"name": "NVIDIA GeForce RTX 2060", "used_gb": 1.5, "total_gb": 6.0, "util": 0.37, "temp_c": 61.0}
+    r = health.resources()
+    assert r["gpu"]["temp_c"] == 61.0 and r["drives"] and "load" in r
+    s = dashboard.state()
+    assert s["hardware"]["gpu"]["total_gb"] == 6.0 and s["backup"] == {"hours_ago": None}
+    monkeypatch.setattr(health, "GPU_RUN", lambda: (_ for _ in ()).throw(RuntimeError("no card")))
+    assert health.gpu(max_age=0) is None                                     # no card: nothing made up
+
+
+def test_registry_lists_every_engine_at_zero_cost(capsys):
+    from studio import __main__ as cli, engines, guard, registry
+    assert registry.register_all() == len(registry.TOOLS)
+    areas = {v[8] for v in registry.TOOLS.values() if v[8]}
+    assert areas == set(engines.UPGRADED) - {"look", "edit"}  # every optional engine ("look" and "edit" are own code)
+    for r in registry.rows():
+        assert r["registered"] and r["cost_usd"] == 0 and r["fallback"] and r["source"]
+    assert all(not any(b in n for b in guard.BANNED_TOOLS) for n in registry.TOOLS)
+    cli.main(["registry"])
+    out = capsys.readouterr().out
+    assert "| sdxl-turbo |" in out and "| pexels |" in out and "$0" in out
+
+
+def test_quality_score_is_weighted_and_never_guesses():
+    from studio import qa
+    best = qa.quality({"lufs": -14, "loop_diff": 0, "timing": 1.0, "speech_start": 0, "hook": 100, "originality": 10,
+                       "confidence": 1.0})
+    assert best["score"] == 100.0 and not best["missing"]
+    mid = qa.quality({"lufs": -16, "loop_diff": 7, "timing": 0.925, "speech_start": 0.175, "hook": 50,
+                      "originality": 7.5, "confidence": 0.5})
+    assert mid["score"] == 50.0
+    part = qa.quality({"lufs": -14, "hook": None})
+    assert part["score"] == 100.0 and "hook" in part["missing"] and "loop" in part["missing"]
+    assert qa.quality({})["score"] is None
+
+
+def test_policy_watch_tells_connor_and_changes_nothing(monkeypatch):
+    from studio import config, db, health, policy
+    base = "Creators can apply when they reach 1,000 subscribers and 4,000 watch hours in the last 12 months. " * 8
+    pages = {u: base for u in policy.PAGES.values()}
+    before = json.dumps(config.general(), sort_keys=True, default=str)
+    first = policy.check(read=lambda u: pages[u])
+    assert {r["state"] for r in first} == {"first"} and not health.peek_news(5)
+    assert {r["state"] for r in policy.check(read=lambda u: pages[u])} == {"same"}
+    url = policy.PAGES["Partner Program eligibility"]
+    pages[url] = base.replace("4,000 watch hours", "8,000 watch hours")[:300] + \
+        " From February 2027 new channels need 8,000 watch hours or 20 million Shorts views to join. " * 6
+    rows = {r["url"]: r for r in policy.check(read=lambda u: pages[u])}
+    assert rows[url]["state"] == "changed" and any("8,000" in s for s in rows[url]["new"])
+    msgs = [m for _, m in health.peek_news(5)]
+    assert any("Partner Program eligibility" in m and "haven't changed anything" in m for m in msgs)
+    assert json.dumps(config.general(), sort_keys=True, default=str) == before        # no setting touched
+    pages[url] = ""
+    assert {r["url"]: r for r in policy.check(read=lambda u: pages[u])}[url]["state"] == "unreadable"
+    assert db.get("policy_pages")[url]["text"]                                        # the last good copy is kept
+
+
+def test_policy_watch_runs_weekly(monkeypatch):
+    from studio import config, policy
+    calls = []
+    monkeypatch.setattr(config, "enabled", lambda: True)
+    monkeypatch.setattr(policy, "check", lambda now=None: calls.append(now) or [])
+    t = time.time()
+    policy.maybe_check(t)
+    assert policy.maybe_check(t + 3600) is None and len(calls) == 1
+    policy.maybe_check(t + policy.EVERY + 1)
+    assert len(calls) == 2
+
+
+def test_experiments_only_run_when_started_and_only_suggest(monkeypatch):
+    from studio import config, db, experiments, health
+    assert experiments.instruction({"id": 1}) == ""                       # nothing runs unless Connor starts it
+    experiments.start("hook_style")
+    with pytest.raises(experiments.ExperimentError):
+        experiments.start("length")                                        # one variable at a time
+    arms = [experiments.instruction({"id": t}) for t in range(1, 13)]
+    assert sum('arm "question"' in a for a in arms) == 6 and sum('arm "number"' in a for a in arms) == 6
+    assert experiments.instruction({"id": 1}) == arms[0]                  # assigned once
+    assert experiments.evaluate(index={})["state"] == "waiting"
+    assign = experiments.running()["result"]["assign"]
+    idx = {f"yt{t}": {"topic_id": t, "index": (70 + t % 3 if assign[str(t)] == "number" else 45 + t % 3)}
+           for t in range(1, 13)}
+    before = json.dumps(config.general(), sort_keys=True, default=str)
+    res = experiments.evaluate(index=idx)
+    assert res["state"] == "clear" and res["winner"] == "number"
+    assert json.dumps(config.general(), sort_keys=True, default=str) == before   # nothing changed by itself
+    assert any("only a suggestion" in m for _, m in health.peek_news(5))
+    assert experiments.running() is None and experiments.instruction({"id": 99}) == ""
+
+
+def test_experiment_with_no_clear_difference_changes_nothing():
+    from studio import experiments
+    experiments.start("length")
+    for t in range(1, 13):
+        experiments.instruction({"id": t})
+    idx = {f"yt{t}": {"topic_id": t, "index": 50 + (t % 5)} for t in range(1, 13)}
+    assert experiments.evaluate(index=idx)["state"] == "no difference"
+
+
+def test_the_writer_gets_the_arm(monkeypatch):
+    import inspect
+    from studio import script
+    src = inspect.getsource(script.write)
+    assert "experiments.instruction(topic)" in src and "if not feedback" in src

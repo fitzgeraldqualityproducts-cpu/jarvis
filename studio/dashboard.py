@@ -236,7 +236,27 @@ def state(now=None):
         "cards": cards, "ideas": ideas, "published": pub, "live_count": live_count, "private_count": private_count,
         "next_upload": nxt, "stats": _stats(), "activity": _activity(now),
         "cost_usd": sum(t["cost_usd"] or 0 for t in db.q("SELECT cost_usd FROM tools")),
+        "hardware": _hardware(), "backup": _backup(),
     }
+
+
+def _hardware():
+    try:
+        from studio import health
+        m, load = health.memory_pressure(), health.cpu_load()     # light readings only (no folder walk)
+        return {"gpu": health.gpu(), "load": None if load is None else round(load, 2),
+                "memory": None if m is None else round(m, 2), "drives": health._drives()}
+    except Exception:
+        return {}
+
+
+def _backup():
+    try:
+        from studio import backup
+        last = backup.status()["last"]
+        return {"hours_ago": last["hours_ago"] if last else None}
+    except Exception:
+        return None
 
 
 def _handle():

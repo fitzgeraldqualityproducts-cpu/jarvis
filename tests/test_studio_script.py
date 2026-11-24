@@ -32,6 +32,7 @@ class FakeClaude:
         self.orig = 8
         self.standard_only = False
         self.orig_on = {}           # review number -> originality score for that review only
+        self.flag = {}              # review number -> [(line, verdict)] extra flagged lines
 
     def __call__(self, prompt, timeout, web):
         if prompt.startswith("This Short script is"):
@@ -65,8 +66,10 @@ class FakeClaude:
                                "hooks": {str(i): {"curiosity": 9, "clarity": 8, "specificity": 8, "honesty": 9, "speed": 8}
                                          for i in range(5)}, "originality": 8, "inauthentic_risk": "low", "problems": []})
         return json.dumps({
-            "claims": [{"line": 2, "verdict": "wrong" if bad else "supported", "fact": "F1", "note": "NASA says 2,950" if bad else ""},
-                       {"line": 3, "verdict": "supported", "fact": "F2", "note": ""}, {"line": 7, "verdict": "n/a"}],
+            "claims": [{"line": 2, "verdict": "wrong" if bad else "supported", "fact": "F1", "note": "NASA says 2,950" if bad else "",
+                        "quote": "liftoff mass of 2,970 tonnes", "confidence": 0.95, "source_date": "2023-05-01"},
+                       {"line": 3, "verdict": "supported", "fact": "F2", "note": ""}, {"line": 7, "verdict": "n/a"}]
+            + [{"line": ln, "verdict": v, "note": "no source says this"} for ln, v in self.flag.get(self.reviews, [])],
             "hooks": {str(i): {"curiosity": 9 - i, "clarity": 8, "specificity": 8, "honesty": 9, "speed": 8} for i in range(5)},
             "originality": self.orig_on.get(self.reviews, self.orig_first if (self.orig_first is not None and self.reviews == 1) else self.orig),
             "originality_fix": "the rocket-as-a-bottle idea is the usual one; compare it to a "
@@ -124,6 +127,10 @@ def test_script_passes_and_records_claims(fakes):
     assert ck["words"] >= script.WORDS_MIN and ck["claims"][0]["verdict"] == "supported"
     assert json.loads(row["structure"])["calcs"][0]["ok"]
     assert db.one("SELECT COUNT(*) n FROM sources WHERE video_id=? AND verdict='supported'", vid)["n"] == 2
+    rec = db.one("SELECT * FROM sources WHERE video_id=? AND claim='line 2'", vid)
+    assert rec["passage"] == "liftoff mass of 2,970 tonnes" and rec["confidence"] == 0.95
+    assert rec["source_date"] == "2023-05-01" and "Saturn V" in rec["line_text"]
+    assert 'Source says: "liftoff mass' in script.report(vid)
     assert db.one("SELECT script_status FROM topics WHERE id=?", tid)["script_status"] == "passed"
     assert "## Fact-check" in script.report(vid) and "✓" in script.report(vid)
 
@@ -344,3 +351,35 @@ def test_a_needed_value_no_page_states_is_dropped(fakes, monkeypatch):
     assert len(st["lines"]) == len(BODY) - 1 and all("needs" not in (ln.get("facts") or []) for ln in st["lines"])
     assert not db.one("SELECT 1 FROM sources WHERE url LIKE '%nasa.gov/ems%'")
     assert "missing_value" in lessons.counts("script")
+
+
+def test_one_extra_line_is_cut_instead_of_failing_the_short(fakes):
+    """Phase 3 (2026-11-24): most stops were one unsourced line in a good script. If that line can go without
+    breaking the script, it's cut; every line that stays was already checked word for word."""
+    from studio import db, jobs, script, topics
+    fc, tid = fakes
+    fc.flag = {1: [(5, "unsupported")]}             # "An empty tank is dead weight." (next line starts "So")
+    vid = jobs.create(tid)
+    row = script.make(topics.topic(tid), vid, progress=lambda s: None)
+    assert row["status"] == "passed" and row["version"] == 2
+    assert fc.reviews == 1 and fc.line_fixes == 0 and fc.writes == 1          # no extra Claude call
+    st, ck = json.loads(row["structure"]), json.loads(row["checks"])
+    assert "dead weight" not in row["body"] and len(st["lines"]) == len(BODY) - 1
+    assert st["pruned"]["lines"][0][0] == 5 and any("cut line 5" in p for p in ck["problems"])
+    assert [c["line"] for c in ck["claims"]] == [2, 3, 6]                       # renumbered to the new lines
+    first = db.one("SELECT status FROM scripts WHERE video_id=? AND version=1", vid)
+    assert first["status"] == "failed"                                          # the record stays honest
+
+
+def test_a_line_is_not_cut_when_the_next_one_leans_on_it(fakes):
+    from studio import script
+    draft = {"hooks": [BODY[0]], "lines": [{"text": t, "beat": b} for t, b in
+                                           zip(BODY, ("hook", "setup", "setup", "math", "setup", "payoff", "loop"))]}
+    rev = {"hook": BODY[0], "hard_problems": ["line 2 is unsupported: x"]}
+    assert script._prune(draft, rev) is None                                    # line 3 starts "Its ..."
+    for bad in (["line 6 is wrong: x"], ["line 7 is unsupported: x"], ["line 1 is unsupported: x"],
+                ["line 5 is unsupported: x", "originality 5/10: generic"],
+                ["line 2 is unsupported: x", "line 3 is unsupported: x", "line 5 is unsupported: x"]):
+        assert script._prune(draft, dict(rev, hard_problems=bad)) is None       # payoff, loop, hook, other problems, too many
+    ok = script._prune(draft, dict(rev, hard_problems=["line 5 is unsupported: x"]))
+    assert ok and ok[2] == {1: 1, 2: 2, 3: 3, 4: 4, 6: 5, 7: 6}

@@ -163,6 +163,7 @@ def run_one(v):
             raise Permanent(f"stage {stage} returned an unknown state {nxt!r}")
         db.set_video(v["id"], state=nxt, stage_done=stage, attempts=0, owner=None, error=None, error_kind=None,
                      not_before=0, finished=time.time() if nxt in db.FINAL else None)
+        _log(f"Short #{v['id']}: {stage.replace('_', ' ')} done -> {nxt.replace('_', ' ')}")
         return nxt
     except Exception as e:
         return _failed(v, stage, e)
@@ -198,7 +199,17 @@ def _failed(v, stage, err):
                  not_before=time.time() + wait, finished=time.time() if state == "failed" else None)
     db.insert("INSERT INTO errors(t, kind, video_id, stage, detail, recovery, result, remaining) VALUES(?,?,?,?,?,?,?,?)",
               time.time(), kind, v["id"], stage, msg, recovery, state, remaining)
+    _log(f"Short #{v['id']}: {stage.replace('_', ' ')} problem ({kind}): {msg[:200]} -> {recovery}")
     return state
+
+
+def _log(line):
+    """One line in jarvis.log (Jarvis mirrors what's printed there), so the worker's progress is visible
+    without opening the database. Secrets are already redacted from error text."""
+    try:
+        print(f"(studio: {line})", flush=True)
+    except Exception:
+        pass
 
 
 def _note(v, msg):
@@ -300,9 +311,9 @@ def start(busy=lambda: False):
         return False
     report = health.startup()
     recover()
-    from studio import analytics, autopilot, backup, drive, eligibility, pipeline, playlists, topics
+    from studio import analytics, autopilot, backup, drive, eligibility, experiments, pipeline, playlists, policy, topics
     pipeline.register()
-    for f in (backup.maybe_run, topics.expire, topics.maybe_discover, analytics.maybe_run, eligibility.maybe_check, drive.maybe_run,
+    for f in (backup.maybe_run, policy.maybe_check, experiments.maybe_evaluate, topics.expire, topics.maybe_discover, analytics.maybe_run, eligibility.maybe_check, drive.maybe_run,
               autopilot.maybe_make, playlists.maybe_sync):
         if f not in IDLE:
             IDLE.append(f)

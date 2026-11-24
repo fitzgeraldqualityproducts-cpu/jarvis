@@ -172,9 +172,12 @@ def write(topic, feedback=None, previous=None):
     d, plan = _niche()
     facts = _facts(topic)
     fact_list = "\n".join(f"F{i + 1}. {s['claim']} (source: {s['url']})" for i, s in enumerate(facts))
-    from studio import lessons
+    from studio import experiments, lessons
     learned = lessons.advice("script")
     learned = ("\n\n" + learned) if learned else ""
+    test = experiments.instruction(topic) if not feedback else ""      # a revision keeps the arm it was written in
+    if test:
+        learned += "\n\n" + test
     fix = ""
     if feedback:
         tips = [p.split("(", 1)[1].rstrip(")") for p in feedback if p.startswith("originality ") and "(" in p]
@@ -735,7 +738,12 @@ sentence naming what reads generic and a concrete idea to make it the channel's 
 "low/medium/high" (does it read like mass-produced template content?), and "problems": anything else a careful
 editor would fix (confusing step, misleading simplification, unit mistake).
 
-JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|wrong|n/a", "fact": "F1", "note": "..."}}],
+For each "supported" or "wrong" claim also give "quote": the source's own words that settle it (at most 25 words,
+copied exactly), "confidence": 0.0-1.0 (how sure you are of the verdict), and "source_date": the page's
+published or updated date if it shows one (YYYY-MM-DD), else "".
+
+JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|wrong|n/a", "fact": "F1", "note": "...",
+"quote": "...", "confidence": 0.9, "source_date": ""}}],
 "hooks": {{"0": {{"curiosity": 0, "clarity": 0, "specificity": 0, "honesty": 0, "speed": 0}}}},
 "loop": 0, "rehook": 0, "originality": 0, "originality_fix": "...", "inauthentic_risk": "low", "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
     if not isinstance(ans, dict):
@@ -842,12 +850,33 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     row = dict(db.one("SELECT * FROM scripts WHERE id=?", row["id"]))
     if rev["ok"]:
         _trial_outcome(topic, video_id, True)
-        _record_claims(topic, video_id, rev)
+        _record_claims(topic, video_id, rev, draft["lines"])
         topics.set_status(topic["id"], script_status="passed")
         guard.audit("script.passed", True, {"topic": topic["id"], "video": video_id, "version": row["version"]})
         return "passed", row
     from studio import lessons
     lessons.record("script", rev["hard_problems"], topic, video_id)
+    pruned = _prune(draft, rev)
+    if pruned:                                    # one or two extra lines were the only problem: cut them, no new call
+        draft2, gone, mapping = pruned
+        st2 = dict(st, lines=draft2["lines"], pruned={"from_version": row["version"], "lines": gone,
+                                                     "why": rev["hard_problems"][:4]})
+        claims = [dict(c, line=mapping[c["line"]]) for c in rev["claims"]
+                  if isinstance(c.get("line"), int) and c["line"] in mapping]
+        body = text_of(draft2, rev["hook"])
+        checks2 = dict(checks, ok=True, hard_problems=[], claims=claims, words=len(body.split()),
+                       problems=[p for p in rev["problems"] if p.startswith("editor: ")]
+                       + [f"cut line {n} (it was the only problem: {why[:120]})" for n, why in gone])
+        rid = db.insert("INSERT INTO scripts(video_id, version, hooks, hook, body, structure, checks, status, created) "
+                        "VALUES(?,?,?,?,?,?,?,?,?)", video_id, row["version"] + 1, json.dumps(draft2["hooks"]),
+                        rev["hook"], body, json.dumps(st2), json.dumps(checks2), "passed", time.time())
+        prow = dict(db.one("SELECT * FROM scripts WHERE id=?", rid))
+        _trial_outcome(topic, video_id, True)
+        _record_claims(topic, video_id, dict(rev, claims=claims), draft2["lines"])
+        topics.set_status(topic["id"], script_status="passed")
+        guard.audit("script.passed", True, {"topic": topic["id"], "video": video_id, "version": prow["version"],
+                                            "pruned": [n for n, _ in gone]})
+        return "passed", prow
     tries = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status='failed'", video_id)["n"]
     again = _repeated(video_id, row["id"], rev["hard_problems"])
     if again:                                     # the same kind of problem twice in a row: move on to the next idea
@@ -863,6 +892,50 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
         guard.audit("script.failed", True, {"topic": topic["id"], "video": video_id, "problems": rev["hard_problems"][:5]})
         raise ScriptRejected("the script still failed the fact-check: " + "; ".join(rev["hard_problems"][:4]))
     return "revise", row
+
+
+PRUNE_MAX = 2                      # at most this many flagged lines are simply cut
+PRUNE_MIN_LINES = 5                # and at least this many lines must stay
+PRUNE_KEEP_BEATS = ("hook", "payoff", "loop")
+REFERS_BACK = ("that", "this", "these", "those", "which", "it", "it's", "its", "they", "there", "same")
+
+
+def _prune(draft, rev):
+    """When the ONLY hard problems are one or two lines the fact-check flagged, and those lines aren't the hook,
+    the payoff, the loop or the last step of the math, the script works without them: (pruned draft, [(line,
+    why)], {old line: new line}). Every line that stays was checked in this very review, word for word, so no
+    new fact-check is needed. None when cutting isn't safe (then the usual revision runs)."""
+    hard = rev.get("hard_problems") or []
+    if not hard:
+        return None
+    flagged = {}
+    for h in hard:
+        m = LINE_PROBLEM.match(h)
+        if not m:
+            return None
+        flagged[int(m.group(1))] = h
+    lines = draft.get("lines") or []
+    n = len(lines)
+    if len(flagged) > PRUNE_MAX or n - len(flagged) < PRUNE_MIN_LINES:
+        return None
+    for k in flagged:
+        if not 1 < k < n or str(lines[k - 1].get("beat") or "") in PRUNE_KEEP_BEATS:
+            return None
+    keep = [i for i in range(1, n + 1) if i not in flagged]
+    if not any(str(lines[i - 1].get("beat")) == "math" for i in keep) and any(
+            str(ln.get("beat")) == "math" for ln in lines):
+        return None
+    for k in flagged:                       # the line after a cut one mustn't lean on it ("That's why...")
+        nxt = next((i for i in keep if i > k), None)
+        if nxt:
+            first = re.sub(r"[^a-z']", "", (str(lines[nxt - 1].get("text") or "").split() or [""])[0].lower())
+            if first in REFERS_BACK:
+                return None
+    out = dict(draft, lines=[lines[i - 1] for i in keep])
+    words = len(text_of(out, rev.get("hook")).split())
+    if not WORDS_MIN <= words <= WORDS_MAX:
+        return None
+    return out, sorted(flagged.items()), {old: new for new, old in enumerate(keep, 1)}
 
 
 REPEAT_STOPS = ("unsupported", "wrong_fact", "originality", "missing_value")
@@ -964,7 +1037,16 @@ def make(topic, video_id=None, progress=print, max_revisions=MAX_REVISIONS):
         revise_step(topic, video_id)
 
 
-def _record_claims(topic, video_id, rev):
+def _confidence(v):
+    try:
+        return max(0.0, min(1.0, float(v)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _record_claims(topic, video_id, rev, lines=None):
+    """One sources row per checked claim: the line, its verdict, the fact's URL, the source's own words that
+    settle it, the checker's confidence and the source's date (as far as the checker could see them)."""
     facts = _facts(topic)
     now = time.time()
     for c in rev["claims"]:
@@ -972,10 +1054,17 @@ def _record_claims(topic, video_id, rev):
             continue
         m = re.match(r"F(\d+)", str(c.get("fact") or ""))
         src = facts[int(m.group(1)) - 1] if m and 0 < int(m.group(1)) <= len(facts) else {}
-        db.insert("INSERT INTO sources(video_id, topic_id, claim, url, title, retrieved, verdict, note, domain, tier, http_status) "
-                  "VALUES(?,?,?,?,?,?,?,?,?,?,?)", video_id, topic["id"], f"line {c.get('line')}", src.get("url"),
-                  src.get("title"), now, c["verdict"], str(c.get("note", ""))[:400], src.get("domain"), src.get("tier"),
-                  src.get("http_status"))
+        n = c.get("line")
+        text = ""
+        if lines and isinstance(n, int) and 0 < n <= len(lines):
+            text = str((lines[n - 1] or {}).get("text") or "")[:400]
+        date = str(c.get("source_date") or "").strip()
+        db.insert("INSERT INTO sources(video_id, topic_id, claim, url, title, retrieved, verdict, note, domain, tier, http_status, "
+                  "line_text, passage, confidence, source_date) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  video_id, topic["id"], f"line {n}", src.get("url"), src.get("title"), now, c["verdict"],
+                  str(c.get("note", ""))[:400], src.get("domain"), src.get("tier"), src.get("http_status"), text,
+                  str(c.get("quote") or "")[:300] or None, _confidence(c.get("confidence")),
+                  date if re.fullmatch(r"\d{4}-\d{2}(-\d{2})?", date) else None)
 
 
 def latest(video_id, status="passed"):
@@ -999,7 +1088,10 @@ def report(video_id):
     lines += [f"- {c.get('says', '')}: `{c.get('expr')}` = {c.get('actual')} {c.get('unit', '')} {'✓' if c.get('ok') else '✗'}"
               for c in st.get("calcs") or []]
     lines += ["", "## Fact-check", ""]
-    lines += [f"- line {c.get('line')}: **{c.get('verdict')}** {c.get('note', '')}" for c in ck.get("claims") or []]
+    for c in ck.get("claims") or []:
+        extra = (f' Source says: "{c["quote"]}"' if c.get("quote") else "") + (
+            f" (confidence {_confidence(c['confidence']):.0%})" if _confidence(c.get("confidence")) is not None else "")
+        lines.append(f"- line {c.get('line')}: **{c.get('verdict')}** {c.get('note', '')}{extra}")
     lines += ["", "## Title ideas", ""] + [f"- {t}" for t in st.get("titles") or []]
     lines += ["", "## Other hooks", ""] + [f"- {h}" for h in json.loads(row["hooks"]) if h != row["hook"]]
     if ck.get("problems"):

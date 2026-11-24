@@ -218,3 +218,24 @@ def test_thin_sources_get_a_second_search_and_old_rejects_come_back(setup, monke
     revived = topics.retry_rejected(progress=lambda s: None)
     assert [r["id"] for r in revived] == [tid] and db.one("SELECT status FROM topics WHERE id=?", tid)["status"] == "idea"
     assert topics.retry_rejected(progress=lambda s: None) == []
+
+
+def test_ordinary_angles_are_dropped_before_any_script(setup):
+    """Phase 3 (2026-11-24): 10 of 30 script stops were "originality 5/10" after the full script and fact-check
+    spend. An idea rated under 6 for originality is now turned down at the topic stage, for free."""
+    from studio import db
+    topics = setup
+    r = {"relevance": 8, "interest": 7, "novelty": 6, "curiosity": 7, "value": 7, "story": 6, "feasibility": 8,
+         "originality": 5, "copyright_risk": 0}
+    _, f = topics.score_one(r, 8)
+    c = {"_checked": [{"http_status": 200, "url": "https://a.org/1"}, {"http_status": 200, "url": "https://b.org/2"}]}
+    assert any("too ordinary" in w for w in topics.gate(c, r, 8, f))
+    _, f = topics.score_one(dict(r, originality=7), 8)
+    assert not topics.gate(c, dict(r, originality=7), 8, f)
+    # an ordinary idea already in the pool is skipped (and turned down) when picking
+    old = _idea(db, "plain one", "A", 90)
+    db.run("UPDATE topics SET scores=? WHERE id=?", json.dumps({"factors": {"originality": {"score": 5}}}), old)
+    good = _idea(db, "fresh one", "B", 70)
+    assert topics.pick_next()["id"] == good
+    row = db.one("SELECT status, reject_reason FROM topics WHERE id=?", old)
+    assert row["status"] == "rejected" and "too ordinary" in row["reject_reason"]
