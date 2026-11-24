@@ -18,7 +18,20 @@ from studio import db
 
 WINDOW_DAYS = 30
 # category -> (area, regex over the problem text, advice; {n} = times in the window)
+JUDGE_ADVICE = {
+    "hook": "the hook: the number or the question must land in the first three words, concrete and specific",
+    "payoff": "the payoff: end on a result that genuinely surprises, said as a concrete comparison the viewer can picture",
+    "clarity": "clarity: one step per line, round numbers with their units, nothing the ear has to hold for long",
+    "momentum": "momentum: an honest re-hook halfway and no line that repeats or idles",
+    "you": "talking to the viewer: put the calculation in their own world with \"you\"",
+    "original": "originality: not the standard textbook analogy, one unusual image of your own",
+}
 RULES = [
+    *[(f"weak_{k}", "script", rf"^judge: weaker {k}\b",
+       f"Side-by-side drafts lost on {v.split(': ')[0]} {{n}} time(s): {v.split(': ', 1)[1]}.")
+      for k, v in JUDGE_ADVICE.items()],
+    ("stock_phrase", "script", r"stock phrase",
+     "Drafts were dropped {n} time(s) for stock explainer phrases: say the re-hook and transitions in your own words."),
     ("too_long", "script", r"\d+ words; it must be .*cut|words; it must be \d+-\d+.*cut",
      "Scripts ran too long {n} time(s) recently: aim for 85-95 words in total, counting the hook."),
     ("too_short", "script", r"words; it must be .*add",
@@ -102,6 +115,14 @@ def advice(area, now=None):
                      for r in db.q("SELECT detail FROM lessons WHERE category='qa' AND t>=? ORDER BY id DESC LIMIT 5", since)]
             what = ", ".join(dict.fromkeys(names)) or "various checks"
         lines.append(("MUST: " if n >= FIRM_AT else "") + adv.format(n=n, what=what))
+    if area == "script":
+        since = (now or time.time()) - WINDOW_DAYS * 86400
+        notes = [r["detail"].split(" | ", 1)[1] for r in db.q(
+            "SELECT detail FROM lessons WHERE stage='draft' AND category LIKE 'weak_%' AND detail LIKE '% | %' AND t>=? "
+            "ORDER BY id DESC LIMIT 12", since)]
+        notes = list(dict.fromkeys(n.strip() for n in notes if n.strip()))[:3]
+        if notes:
+            lines.append("Recent judge notes on drafts that lost: " + " / ".join(f"\"{n[:160]}\"" for n in notes))
     if not lines:
         return ""
     return "Lessons from this channel's own rejected work (follow them):\n" + "\n".join(f"- {l}" for l in lines)
@@ -135,7 +156,8 @@ def summary(now=None):
     names = {"too_long": "too long", "too_short": "too short", "originality": "not original enough",
              "unsupported": "a line not backed by sources", "wrong_fact": "a line contradicting a source",
              "calc": "calculation problems", "hook": "weak hooks", "no_checkable": "no checkable facts",
-             "thin_sources": "thin sources", "qa": "failed video checks", "youtube": "YouTube rejections",
+             "thin_sources": "thin sources", "stock_phrase": "stock phrases in drafts",
+             **{f"weak_{k}": f"drafts that lost on {k}" for k in JUDGE_ADVICE}, "qa": "failed video checks", "youtube": "YouTube rejections",
              "other": "other problems"}
     parts = [f"{names.get(k, k)} {v}" for k, v in sorted(c.items(), key=lambda kv: -kv[1])]
     return (f"In the last 30 days the checks stopped work {total} time(s): " + ", ".join(parts) +

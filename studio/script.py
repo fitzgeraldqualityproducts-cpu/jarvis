@@ -292,7 +292,7 @@ def _screen(d):
     problems += [c["problem"] for c in calcs if not c["ok"]]
     n = len(text_of(d, hooks[0] if hooks else None).split()) if d.get("lines") else 0
     if not WORDS_MIN - 20 <= n <= WORDS_MAX + 25:          # a little over or under is fixed later; far off isn't
-        problems.append(f"{n} words")
+        problems.append(f"{n} words; it must be {WORDS_MIN}-{WORDS_MAX}: " + ("cut" if n > WORDS_MAX else "add"))
     low = " ".join(str(ln["text"]).lower() for ln in d.get("lines") or [])
     problems += [f"stock phrase \"{p}\"" for p in STOCK_REHOOKS if p in low]
     return problems
@@ -322,14 +322,49 @@ Score each 0-10: "hook" (would a scroller stop in the first second?), "payoff" (
 result is), "clarity" (can you follow the math by ear, once?), "momentum" (a real re-hook halfway, no dead or
 repeated lines), "you" (puts it in the viewer's own world), "original" (not the standard textbook explainer).
 
-JSON only: {"scores": {"A": {"hook": 0, "payoff": 0, "clarity": 0, "momentum": 0, "you": 0, "original": 0}}, "best": "A", "why": "one sentence"}""",
+For every draft that is NOT best, "notes": one sentence on what held it back, written as advice a writer could
+follow next time (e.g. "the hook gave the answer away before the question").
+
+JSON only: {"scores": {"A": {"hook": 0, "payoff": 0, "clarity": 0, "momentum": 0, "you": 0, "original": 0}}, "best": "A",
+"why": "one sentence", "notes": {"B": "..."}}""",
                           timeout=300, web=False, purpose=f"pick a draft: {topic['title']}")
-    out = {}
-    for k, v in ((ans or {}).get("scores") or {}).items() if isinstance(ans, dict) else []:
-        k = str(k).strip().upper()[:1]
-        if k in letters[:len(pool)] and isinstance(v, dict):
-            out[letters.index(k)] = v
-    return out, (str(ans.get("why") or "")[:300] if isinstance(ans, dict) else "")
+    out, notes = {}, {}
+    if isinstance(ans, dict):
+        for key, into in (("scores", out), ("notes", notes)):
+            for k, v in (ans.get(key) or {}).items() if isinstance(ans.get(key), dict) else []:
+                k = str(k).strip().upper()[:1]
+                if k in letters[:len(pool)] and (isinstance(v, dict) if key == "scores" else str(v).strip()):
+                    into[letters.index(k)] = v if key == "scores" else " ".join(str(v).split())[:200]
+    return out, (str(ans.get("why") or "")[:300] if isinstance(ans, dict) else ""), notes
+
+
+def _learn_from_drafts(topic, drafts, good, scores, notes, best):
+    """The drafts that didn't go through become lessons the writer reads next time (studio/lessons.py), kept apart
+    from real script rejections (stage "draft", so an idea's pillar isn't marked as failing):
+    - each hard problem that screened a draft out (a calculation that doesn't re-run, no usable hook, far off length,
+      a stock phrase);
+    - each judge score where a losing draft was clearly weaker than the winner (2+ points behind and 6 or under),
+      with the judge's own note on what held it back."""
+    from studio import lessons
+    try:
+        for i, d in enumerate(drafts):
+            if not any(d is g for _, g in good):
+                lessons.record("draft", [f"draft screened out: {p}" for p in _screen(d)[:3]], topic)
+        win = scores.get(best) or {}
+        for k, sc in scores.items():
+            if k == best or not isinstance(sc, dict):
+                continue
+            weak = []
+            for dim in JUDGE_WEIGHTS:
+                a, b = sc.get(dim), win.get(dim)
+                if isinstance(a, (int, float)) and isinstance(b, (int, float)) and a <= 6 and b - a >= 2:
+                    weak.append((b - a, f"judge: weaker {dim} ({a:g} vs {b:g})" + (f" | {notes[k]}" if notes.get(k) else "")))
+            weak = [w for _, w in sorted(weak, key=lambda x: -x[0])]   # the biggest gaps first
+            if not weak and notes.get(k):
+                weak.append(f"judge: weaker {min(JUDGE_WEIGHTS, key=lambda d: sc.get(d, 10) if isinstance(sc.get(d), (int, float)) else 10)} | {notes[k]}")
+            lessons.record("draft", weak[:2], topic)
+    except Exception as e:                        # learning never stops a script
+        print(f"(couldn't save what the losing drafts taught: {str(e)[:120]})")
 
 
 def pick_draft(raw, topic):
@@ -341,13 +376,15 @@ def pick_draft(raw, topic):
         return None
     good = [(i, d) for i, d in enumerate(drafts) if not _screen(d)]
     pool = good or [(i, d) for i, d in enumerate(drafts)]
-    scores, why = {}, ""
+    scores, why, notes = {}, "", {}
     if len(pool) > 1:
         try:
-            scores, why = _judge(pool, topic)
+            scores, why, notes = _judge(pool, topic)
         except Exception as e:
             print(f"(couldn't judge the drafts: {str(e)[:120]}; using the first good one)")
     best = max(range(len(pool)), key=lambda k: (judge_score(scores.get(k)), -k)) if scores else 0
+    if len(drafts) > 1:
+        _learn_from_drafts(topic, drafts, good, scores, notes, best)
     chosen = dict(pool[best][1])
     chosen.pop("angle", None)
     chosen["picked"] = {"of": len(drafts), "passed_screen": len(good), "angle": str(pool[best][1].get("angle") or "")[:160],

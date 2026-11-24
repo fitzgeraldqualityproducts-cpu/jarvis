@@ -39,7 +39,8 @@ class ThreeDrafts(FakeClaude):
             self.judged += 1
             return json.dumps({"scores": {"A": {"hook": 6, "payoff": 6, "clarity": 7, "momentum": 5, "you": 4, "original": 5},
                                           "B": {"hook": 9, "payoff": 8, "clarity": 8, "momentum": 8, "you": 8, "original": 8}},
-                               "best": "B", "why": "the water bottles make the drop easy to picture"})
+                               "best": "B", "why": "the water bottles make the drop easy to picture",
+                               "notes": {"A": "the hook hands over the answer before asking the question"}})
         return super().__call__(prompt, timeout, web)
 
 
@@ -152,3 +153,21 @@ def test_chatterbox_gets_the_segments(three, fake_voice, monkeypatch, tmp_path):
     with pytest.raises(engines.EngineError):
         narration._chatterbox(row["body"], narration.settings(), tmp_path / "x.wav", vid)
     assert len(seen["segments"]) == 7 and seen["gap"] == narration.GAP
+
+
+def test_losing_drafts_become_lessons_for_the_writer(three):
+    from studio import db, lessons, script, topics
+    fc, tid = three
+    t = topics.topic(tid)
+    script.write(t)
+    rows = [dict(r) for r in db.q("SELECT stage, category, detail FROM lessons")]
+    assert {r["stage"] for r in rows} == {"draft"}
+    cats = {r["category"] for r in rows}
+    assert "calc" in cats                                  # the broken-maths draft that was screened out
+    assert {"weak_hook", "weak_you"} <= cats                # the judge's clear gaps for the losing draft
+    adv = lessons.advice("script")
+    assert "lost on the hook" in adv and "hands over the answer" in adv and "Calculations failed" in adv
+    assert lessons.risk(t) == 0                             # a lost draft never marks the idea's pillar as failing
+    fc.prompts.clear()
+    script.write(t)                                         # the next writer is told
+    assert "hands over the answer" in fc.prompts[0]
