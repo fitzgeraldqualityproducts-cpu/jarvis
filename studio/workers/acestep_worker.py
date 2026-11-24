@@ -48,30 +48,40 @@ def _no_resources(e):
 
 
 def _old_card():
-    """True on a graphics card older than the RTX 30 series (Turing and before: no bfloat16). There
-    ACE-Step's float16 overflows into NaN, so it has to run in float32, as ACE-Step itself advises."""
+    """True on a graphics card older than the RTX 30 series (Turing and before: no bfloat16). There ACE-Step
+    picks float16, which overflows into NaN (silent music), so it has to run in float32 instead."""
     import torch
     return torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] < 8
 
 
-def _bad_numbers(e):
-    t = str(e)
-    return "NaN" in t or "Inf latents" in t
+def _to_float32(dit):
+    """ACE-Step chooses its number format inside initialize_service with no setting for it, and re-casts to
+    dit.dtype during generation. So after it loads: set dtype to float32 and move the models it uses there."""
+    import torch
+    dit.dtype = torch.float32
+    for name in ("model", "text_encoder"):
+        m = getattr(dit, name, None)
+        if m is not None:
+            m.to(torch.float32)
+    if getattr(dit, "silence_latent", None) is not None:
+        dit.silence_latent = dit.silence_latent.float()
 
 
-def generate(device, small, quant=True):
+def generate(device, small, fp32=False):
     """One instrumental piece on this device. Returns the path ACE-Step wrote (inside a temp folder that the
     caller copies from) and the folder to clean up."""
     _lean_loading()
     from acestep.handler import AceStepHandler
     from acestep.inference import GenerationConfig, GenerationParams, generate_music
     dit = AceStepHandler()
+    quant = "int8_weight_only" if small and device == "cuda" and not fp32 else None
     msg, ok = dit.initialize_service(project_root=os.environ.get("JV_ACESTEP_SRC") or os.getcwd(),
                                      config_path="acestep-v15-turbo", device=device,
-                                     offload_to_cpu=small, offload_dit_to_cpu=small,
-                                     quantization="int8_weight_only" if quant and small and device == "cuda" else None)
+                                     offload_to_cpu=small, offload_dit_to_cpu=small, quantization=quant)
     if not ok:
         raise RuntimeError(f"ACE-Step didn't start: {msg}"[:300])
+    if fp32:
+        _to_float32(dit)
     params = GenerationParams(caption=job["caption"], lyrics="[Instrumental]", instrumental=True,
                               duration=float(job["duration"]), bpm=job.get("bpm"), seed=int(job.get("seed", 7)),
                               thinking=False, use_cot_metas=False, use_cot_caption=False, use_cot_language=False)
@@ -88,18 +98,16 @@ try:
     import torch
     cuda = torch.cuda.is_available()
     device, note = ("cuda" if cuda else "cpu"), ""
-    if _old_card():
-        os.environ["ACESTEP_DTYPE"] = "float32"   # read by ACE-Step when it loads; must be set before that
+    old = _old_card()
     try:
         try:
-            path, tmp = generate(device, small=_vram() < 12)
+            path, tmp = generate(device, small=_vram() < 12, fp32=old)
         except Exception as e:
-            if not (cuda and _bad_numbers(e)):
+            if not (cuda and not old and ("NaN" in str(e) or "Inf latents" in str(e))):
                 raise
-            torch.cuda.empty_cache()             # once more without the 8-bit weights, in full precision
-            os.environ["ACESTEP_DTYPE"] = "float32"
+            torch.cuda.empty_cache()             # silent result: once more in full precision
             note = "made again in full precision after the first try came out silent"
-            path, tmp = generate(device, small=True, quant=False)
+            path, tmp = generate(device, small=True, fp32=True)
     except Exception as e:
         if _no_resources(e):                     # the processor would need the same memory: don't retry
             raise RuntimeError("the computer ran out of memory loading the music model (RAM plus page file); "
@@ -107,7 +115,7 @@ try:
         if not (cuda and ("out of memory" in str(e).lower() or isinstance(e, torch.cuda.OutOfMemoryError))):
             raise
         torch.cuda.empty_cache()                 # the card is too full today: make it on the processor instead
-        device, note = "cpu", "the graphics card ran out of memory, so it was made on the processor"
+        device, note = "cpu", "the graphics card ran out of memory, so it was made on the processor (slower)"
         path, tmp = generate("cpu", small=False)
     shutil.copy(path, job["out"])
     shutil.rmtree(tmp, ignore_errors=True)
