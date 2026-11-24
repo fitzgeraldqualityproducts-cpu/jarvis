@@ -70,9 +70,10 @@ try:
     class Short(Scene):
         spec = {}
         seconds = 1.5
+        bg = job["background"]
 
         def construct(self):
-            bg = ImageMobject(job["background"])
+            bg = ImageMobject(self.bg)
             bg.height = 16
             self.add(bg)
             if job.get("handle"):
@@ -225,6 +226,7 @@ try:
         try:
             Short.spec = sc["spec"]
             Short.seconds = float(sc.get("seconds", 3))
+            Short.bg = sc.get("background") or job["background"]      # the scene's own AI picture, if it has one
             config.output_file = f"scene{i}"
             scene = Short()
             scene.render()
