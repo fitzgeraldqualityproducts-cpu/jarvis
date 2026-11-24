@@ -91,7 +91,20 @@ def is_duplicate(title, angle=""):
     for r in db.q("SELECT id, title FROM videos WHERE title IS NOT NULL AND title<>''"):
         if _overlap(title, r["title"]) >= DUPLICATE_AT + 0.2:
             return True, f"video {r['id']}"
+    from studio import trends
+    sim, what = trends.same_meaning(title, angle)       # the same idea in other words
+    if what and sim >= trends.threshold():
+        return True, what
     return False, None
+
+
+def _same_as_batch(c, cands):
+    from studio import trends
+    if not cands:
+        return False
+    sim, _ = trends.same_meaning(c["title"], c.get("angle", ""), [(k["title"], f"{k['title']}. {k.get('angle', '')}")
+                                                                    for k in cands])
+    return sim >= trends.threshold()
 
 
 def niche():
@@ -597,6 +610,8 @@ def propose(pillar, n=6, competitor=()):
     mistakes = lessons.advice("ideas")
     if mistakes:
         comp += "\n" + mistakes
+    from studio import trends
+    comp += trends.hint()
     prompt = f"""You find topics for a YouTube Shorts channel (25-45 s, US English, narrated, original graphics).
 Niche: {d.get('name', '')}. Positioning: {plan.get('positioning', '')}. Audience: {plan.get('audience', '')}.
 Pillar: {pillar['name']}: {pillar.get('description', '')}
@@ -737,7 +752,8 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
         for c in propose(p, per_pillar, comp):
             c["kind"] = c.get("kind") if c.get("kind") in KINDS else "evergreen"
             dup, _ = is_duplicate(c["title"], c.get("angle", ""))
-            if dup or any(_overlap(c["title"], k["title"]) >= DUPLICATE_AT + 0.2 for k in cands):
+            if dup or any(_overlap(c["title"], k["title"]) >= DUPLICATE_AT + 0.2 for k in cands) or \
+                    _same_as_batch(c, cands):
                 dups += 1
                 continue
             cands.append(c)
@@ -767,17 +783,24 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
         scored.sort(key=lambda x: -x[0])
         added, rejected = [], []
         for rank, (overall, i, c, r, rel, factors) in enumerate(scored):
-            measured = med = None
+            measured = med = wiki = None
             if rank < measure_top and not gate(c, r, rel, factors):
-                measured, med = measured_interest([str(k) for k in c.get("keywords") or []])
+                from studio import trends
+                kw = [str(k) for k in c.get("keywords") or []]
+                measured, med = measured_interest(kw)
                 if measured is not None:
                     searches += 1
-                    overall, factors = score_one(r, rel, measured)
+                w_score, wiki = trends.wiki_interest(c["title"], kw)
+                both = [x for x in (measured, w_score) if x is not None]
+                if both:                                 # YouTube views and Wikipedia readers, as measured
+                    overall, factors = score_one(r, rel, round(sum(both) / len(both), 1))
+                    if wiki:
+                        factors["interest"]["basis"] += " (incl. Wikipedia views)"
             why = gate(c, r, rel, factors)
             now = time.time()
             status = "rejected" if why else "idea"
             scores = {"version": SCORING_VERSION, "factors": factors, "note": str(r.get("note", ""))[:300],
-                      "median_views": med}
+                      "median_views": med, **({"wikipedia": wiki} if wiki else {})}
             tid = db.insert(
                 "INSERT INTO topics(title, fingerprint, pillar, kind, sources, score, scores, status, discovered, updated, "
                 "angle, hook, why, keywords, origin, fresh_until, reject_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",

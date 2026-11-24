@@ -34,6 +34,8 @@ def clipper_home(tmp_path, monkeypatch):
     def no_web(url):
         raise OSError("no reference sources in tests")
     monkeypatch.setattr(topics, "API", no_web)               # nor Wikipedia or arXiv
+    from studio import trends
+    monkeypatch.setattr(trends, "EMBED", lambda text: None)    # no meaning model while testing
     from studio import finalreview
     monkeypatch.setattr(finalreview, "mode", lambda: "off")   # no extra Claude call in other tests' Shorts
     yield tmp_path
