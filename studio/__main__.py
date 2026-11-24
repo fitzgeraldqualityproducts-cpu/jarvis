@@ -307,6 +307,54 @@ def _drive(argv):
     return 0
 
 
+def _backup(argv):
+    from studio import backup
+    sub = argv[1] if len(argv) > 1 else "status"
+    if sub == "now":
+        rep = backup.make("manual")
+        if rep["ok"]:
+            backup.rotate()
+        print(("Backup made and verified: " if rep["ok"] else "Backup FAILED its checks: ") + rep["folder"])
+        print(f"  {len(rep['files'])} files: {', '.join(rep['files'])}")
+        for p in rep["problems"]:
+            print("  problem:", p)
+        if not rep["separate_disk"]:
+            print("  note: this backup is on the same disk as the data (set studio.backups_dir to use another).")
+        return 0 if rep["ok"] else 1
+    if sub == "status":
+        print(json.dumps(backup.status(), indent=2))
+        return 0
+    folder = argv[2] if len(argv) > 2 else (backup.latest() and str(backup.latest()))
+    if not folder:
+        print("There are no backups yet. Run: python -m studio backup now")
+        return 1
+    if sub == "verify":
+        rep = backup.verify(folder)
+        print(("OK: " if rep["ok"] else "NOT OK: ") + f"{folder} ({rep['files']} files)")
+        for p in rep["problems"]:
+            print("  problem:", p)
+        return 0 if rep["ok"] else 1
+    if sub == "plan":
+        for r in backup.plan(folder):
+            extra = (f"rows now {r['now_rows']:,} -> backup {r['backup_rows']:,}" if "backup_rows" in r
+                     else ("same as now" if r.get("same") else "differs from now") + ", only if named")
+            print(f"  {r['action']:7} {r['name']}: {extra}")
+            for t, (now, then) in (r.get("changed_tables") or {}).items():
+                print(f"            {t}: {now:,} now -> {then:,} in the backup")
+        print("Nothing was changed. To restore the databases: python -m studio backup restore <folder> --yes")
+        return 0
+    if sub == "restore":
+        if "--yes" not in argv:
+            print("Add --yes to really restore (see 'backup plan' first). Nothing was changed.")
+            return 1
+        also = [a.split("=", 1)[1] for a in argv if a.startswith("--also=")]
+        rep = backup.restore(folder, also=also)
+        print(f"Restored {', '.join(rep['restored'])}. What was there before is saved in {rep['safety_copy']}.")
+        return 0
+    print("python -m studio backup [status | now | verify [folder] | plan [folder] | restore <folder> --yes]")
+    return 1
+
+
 def _dashboard(argv):
     """Opens Jarvis's /studio page when Jarvis is running; otherwise serves the dashboard here."""
     import subprocess
@@ -397,6 +445,8 @@ def main(argv):
         return _video(argv)
     elif cmd == "upload":
         return _upload(argv)
+    elif cmd == "backup":
+        return _backup(argv)
     elif cmd == "dashboard":
         return _dashboard(argv)
     elif cmd == "publish-mode":

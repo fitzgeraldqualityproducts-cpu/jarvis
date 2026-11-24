@@ -98,10 +98,15 @@ def check_scopes(scopes):
 
 # ---------- the channel lock ----------
 
+# Connor's own, existing channel (Sauce, @sauce2010). Written into the code so that no setting, sign-in
+# or reset can ever take it off the never-publish list. The business channel is never on this list.
+PERMANENT_PROTECTED = ("UCamLvdxlcfg3YqISoj4jlcA",)
+
+
 def protected_channels():
-    """Channel ids the studio must never publish to: Connor's existing channel(s). Read from the
-    clipper's connected channels and config "studio": {"protected_channels": [...]}."""
-    ids = set(config.general().get("protected_channels") or [])
+    """Channel ids the studio must never publish to: Connor's existing channel(s). The permanent list
+    above, plus config "studio": {"protected_channels": [...]} and the clipper's connected channels."""
+    ids = set(PERMANENT_PROTECTED) | set(config.general().get("protected_channels") or [])
     try:
         from clipper import db as clip_db
         if clip_db.path().exists():
@@ -142,10 +147,81 @@ def verify_destination(signed_in_channel_id):
     cur = locked_channel()
     if not cur:
         raise WrongChannel("The studio has no dedicated channel connected yet, so nothing can be uploaded.")
-    if signed_in_channel_id in protected_channels() or signed_in_channel_id != cur["youtube_channel_id"]:
+    protected = protected_channels()
+    if not protected:
+        audit("youtube.upload.destination", False, {"why": "empty protected list"})
+        raise WrongChannel("The never-publish list is empty, which should be impossible, so I stopped the upload.")
+    if cur["youtube_channel_id"] in protected:
+        audit("youtube.upload.destination", False, {"locked": cur["youtube_channel_id"], "why": "lock is protected"})
+        raise WrongChannel("The locked channel is on the never-publish list, so I stopped the upload.")
+    state, changed = integrity()
+    if state == "changed":
+        audit("youtube.upload.destination", False, {"why": "guard files changed", "files": changed})
+        raise WrongChannel("The channel-safety code on this computer differs from Jarvis's GitHub copy ("
+                           + ", ".join(changed) + "), so uploads are stopped until it matches again.")
+    if not signed_in_channel_id or signed_in_channel_id in protected or signed_in_channel_id != cur["youtube_channel_id"]:
         audit("youtube.upload.destination", False, {"signed_in": signed_in_channel_id, "locked": cur["youtube_channel_id"]})
         raise WrongChannel("The signed-in YouTube channel isn't the business channel, so I stopped the upload.")
     return True
+
+
+# ---------- the safety code itself ----------
+
+# The files that decide where Shorts may go and what the studio may do. Jarvis's self-editing (voice
+# edits, night school, self-repair) may never change them (selfedit._check refuses), and before every
+# upload they must match a version that came from GitHub.
+GUARDED_FILES = ("studio/guard.py", "studio/publish.py", "studio/ytauth.py", "studio/config.py",
+                 "studio/backup.py", "selfedit.py", "nightschool.py", "repair.py")
+INTEGRITY = None            # tests swap this: () -> (state, changed files)
+_integrity_cache = {}
+
+
+def integrity(max_age=600):
+    """("ok" | "changed" | "unknown", [changed files]). "ok": every guarded file is exactly a version from
+    the GitHub branch the updater installs (its tip or one of its last 40 changes). "unknown": there's no
+    git or no GitHub copy yet to compare with (a fresh zip install), which doesn't stop uploads."""
+    if INTEGRITY:
+        return INTEGRITY()
+    hit = _integrity_cache.get("v")
+    if hit and time.time() - hit[0] < max_age:
+        return hit[1]
+    res = _integrity_now()
+    _integrity_cache["v"] = (time.time(), res)
+    return res
+
+
+def _blob(data):
+    """git's id for a file's content, with Windows line endings counted as plain ones (a copy unpacked
+    from the install zip may have them; that's not a change)."""
+    import hashlib
+    data = data.replace(b"\r\n", b"\n")
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def _integrity_now():
+    try:
+        import updater
+        ref = updater.REMOTE_REF
+        if updater._git("rev-parse", "--verify", "-q", ref).returncode != 0:
+            return "unknown", []
+        files = [f for f in GUARDED_FILES if (updater.HERE / f).exists()]
+        local = {f: _blob((updater.HERE / f).read_bytes()) for f in files}
+        known = {f: set() for f in files}
+        tip = updater._git("ls-tree", ref, "--", *files)
+        for line in tip.stdout.splitlines():
+            meta, _, path = line.partition("\t")
+            if path in known:
+                known[path].add(meta.split()[2])
+        hist = updater._git("log", "-n", "40", "--raw", "--no-abbrev", "--format=", ref, "--", *files)
+        for line in hist.stdout.splitlines():
+            meta, _, path = line.partition("\t")
+            parts = meta.split()
+            if path in known and len(parts) >= 4:
+                known[path].add(parts[3])
+        changed = [f for f in files if local.get(f) not in known[f]]
+        return ("changed" if changed else "ok"), changed
+    except Exception:
+        return "unknown", []
 
 
 # ---------- the $0 tool registry ----------

@@ -123,9 +123,11 @@ def _activity(now, limit=14):
         out.append({"t": r["t"], "kind": "info", "text": f"{(r['area'] or '').capitalize()}: {r['decision']}"})
     for r in db.q("SELECT t, level, msg FROM notices WHERE t>? ORDER BY t DESC LIMIT 20", day):
         out.append({"t": r["t"], "kind": "warn" if r["level"] in ("warn", "error") else "info", "text": r["msg"]})
+    privacy = {r["video_id"]: r["privacy"] for r in db.q("SELECT video_id, privacy FROM published")}
     for r in db.q("SELECT id, title, state, updated FROM videos WHERE updated>? ORDER BY updated DESC LIMIT 20", day):
         st = r["state"]
-        word = {"ready": "finished and passed every check", "published": "went live", "failed": "failed",
+        went = "went live" if privacy.get(r["id"]) == "public" else f"was uploaded ({privacy.get(r['id']) or 'not public yet'})"
+        word = {"ready": "finished and passed every check", "published": went, "failed": "failed",
                 "rejected": "was turned down by the safety checks", "scheduled": "was uploaded and scheduled"}.get(st)
         if word:
             out.append({"t": r["updated"], "kind": "good" if st in ("ready", "published", "scheduled") else "bad",
@@ -159,7 +161,8 @@ def _stats():
         if tier:
             rules = tier["rules"]
             shares = [r["share"] for r in rules.values() if r["share"] is not None]
-            out["ypp"] = {"share": min(shares) if shares else None, "met": tier["met"], "checked": rep["checked"],
+            share = tier.get("share", min(shares) if shares else None)     # with routes: the best route counts
+            out["ypp"] = {"share": share, "met": tier["met"], "checked": rep["checked"],
                           "rules": {k: {"have": r["have"], "need": r["need"], "met": r["met"]} for k, r in rules.items()},
                           "estimate": any("ESTIMATE" in b for b in (rep.get("basis") or {}).values())}
     return out
@@ -199,7 +202,11 @@ def state(now=None):
         pub.append({"id": r["video_id"], "youtube_id": r["youtube_id"], "title": r["title"], "privacy": r["privacy"],
                     "published_at": r["published_at"], "views": _views(r["youtube_id"]),
                     "thumb": bool(r["video_id"] and _thumb(r["video_id"]))})
-    live_count = db.one("SELECT COUNT(*) n FROM videos WHERE state='published'")["n"]
+    # "Live" means public on YouTube; an upload that's still private is counted (and shown) as private
+    live_count = db.one("SELECT COUNT(*) n FROM videos v JOIN published p ON p.video_id=v.id "
+                        "WHERE v.state='published' AND p.privacy='public'")["n"]
+    private_count = db.one("SELECT COUNT(*) n FROM videos v LEFT JOIN published p ON p.video_id=v.id "
+                           "WHERE v.state='published' AND COALESCE(p.privacy, '')<>'public'")["n"]
 
     mode = publish.mode()
     sched = [float(r["publish_at"]) for r in db.q("SELECT publish_at FROM publish_jobs WHERE publish_at IS NOT NULL")
@@ -226,7 +233,7 @@ def state(now=None):
                     "connected": bool(ch)},
         "run": run, "mode": mode, "autopilot": ap, "stop_after": g["stop_after_failures"],
         "stations": [{"key": k, "label": lab, "icon": ic, "count": counts[k]} for k, lab, ic, _ in STATIONS],
-        "cards": cards, "ideas": ideas, "published": pub, "live_count": live_count,
+        "cards": cards, "ideas": ideas, "published": pub, "live_count": live_count, "private_count": private_count,
         "next_upload": nxt, "stats": _stats(), "activity": _activity(now),
         "cost_usd": sum(t["cost_usd"] or 0 for t in db.q("SELECT cost_usd FROM tools")),
     }

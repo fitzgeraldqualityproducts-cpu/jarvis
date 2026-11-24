@@ -121,10 +121,67 @@ def _changed_files():
     return [line[3:].strip().strip('"') for line in out if line.strip()]
 
 
+# The channel-safety files (the same list as studio/guard.py GUARDED_FILES, kept here so this check
+# works even if the studio can't load). A self-edit that touches one is always undone.
+GUARDED = ("studio/guard.py", "studio/publish.py", "studio/ytauth.py", "studio/config.py",
+           "studio/backup.py", "selfedit.py", "nightschool.py", "repair.py")
+# Settings in config.json "studio" that a self-edit may never change (config.json isn't in git, so
+# apply() and self-repair compare them before and after).
+GUARDED_SETTINGS = ("protected_channels", "publish_mode", "enabled", "autopilot", "max_new_per_day",
+                    "claude_calls_per_day", "engines", "allow_windows", "backups_dir")
+
+
+def guarded_touched(folder=None):
+    """The guarded files a change in this folder touched (compared with its last commit)."""
+    folder = Path(folder or HERE)
+    r = subprocess.run(["git", "-C", str(folder), "status", "--porcelain", "--", *GUARDED],
+                       capture_output=True, text=True)
+    return [line[3:].strip().strip('"') for line in r.stdout.splitlines() if line.strip()]
+
+
+def guarded_settings():
+    """A copy of the guarded studio settings, to compare after a self-edit."""
+    try:
+        studio = json.loads((HERE / "config.json").read_text()).get("studio") or {}
+    except Exception:
+        return None
+    return {k: studio.get(k) for k in GUARDED_SETTINGS}
+
+
+def restore_guarded_settings(before):
+    """Puts the guarded studio settings back if a self-edit changed them. Returns the names it put back."""
+    if before is None:
+        return []
+    p = HERE / "config.json"
+    try:
+        cfg = json.loads(p.read_text())
+    except Exception:
+        return []
+    studio = cfg.get("studio") or {}
+    fixed = [k for k in GUARDED_SETTINGS if studio.get(k) != before.get(k)]
+    if not fixed:
+        return []
+    for k in fixed:
+        if before.get(k) is None:
+            studio.pop(k, None)
+        else:
+            studio[k] = before[k]
+    cfg["studio"] = studio
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cfg, indent=2))
+    tmp.replace(p)
+    print(f"(self-edit tried to change protected studio settings; put back: {', '.join(fixed)})")
+    return fixed
+
+
 def _check(folder=None):
     """Returns None if the code still looks healthy, otherwise what's wrong. folder: a copy of
     Jarvis to check instead of this one (night school builds its fixes in a copy)."""
     folder = Path(folder or HERE)
+    touched = guarded_touched(folder)
+    if touched:
+        return ("it changed the channel-safety code (" + ", ".join(touched) + "), which only an update "
+                "from GitHub may do")
     for f in folder.glob("*.py"):
         r = subprocess.run([sys.executable, "-m", "py_compile", str(f)], capture_output=True, text=True)
         if r.returncode != 0:
@@ -153,6 +210,7 @@ def apply(request):
         return "I can't find Claude Code, so I can't edit myself.", False
     ensure_repo()
     print(f"(self-edit: {request})")
+    settings_before = guarded_settings()
     try:
         out = brain.run_claude(
             [claude, "-p", PROMPT.format(request=request.replace('"', "'")),
@@ -161,9 +219,11 @@ def apply(request):
             timeout=900, cwd=HERE)
     except subprocess.TimeoutExpired:
         _rollback()
+        restore_guarded_settings(settings_before)
         return "That took too long, so I've left everything as it was.", False
     summary = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else ""
     print(f"(self-edit result: {out.stdout.strip()[-600:]} {out.stderr.strip()[-300:]})")
+    restore_guarded_settings(settings_before)
     changed = _changed_files()
     if not changed:
         return summary or "I didn't end up changing anything.", False
