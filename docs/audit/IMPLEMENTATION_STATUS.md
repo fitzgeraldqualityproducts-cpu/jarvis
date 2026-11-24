@@ -57,6 +57,19 @@ tested. "Live" means switched on on the PC.
 | Timing report: every stage of every Short, each heavy job inside it (pictures, sharpening and depth, Manim, voice, captions, music, Remotion render), each Claude call, and time spent waiting for the graphics card. `python -m studio timings [id]` and "Where the minutes go" on the dashboard (average of the last 10 Shorts, slowest first) | Built and tested. Real numbers start with the first Short made on the PC after this update |
 | Saved source pages: each page the fact-check reads is kept (gzip, `D:\Jarvis\studio\pages` on the PC) for 7 days, so fix rounds and re-checks don't download it again. Deleted after 30 days. Empty or blocked pages are never saved | Built and tested |
 
+## Tokens (asked for 2026-11-24)
+
+Measured with real Claude in the cloud (Sonnet, the lean studio calls) on two test topics, and on the PC from
+`python -m studio usage`: a Short that passes first time uses about 40,000 tokens, of which about 9,000-10,000 are
+written by Claude. The 3-draft writer is most of that (about 7,000-9,600 output tokens, about 60% of them its own
+thinking), then the fact-check (about 2,000-3,000 each).
+
+| Step | State |
+|---|---|
+| Fact-check answers: no entries for opinion or transition lines, and no "note" on supported claims (the quote already says it) | Built and tested. Same script checked twice with each prompt: output tokens 2,426 and 2,470 before, 1,972 and 2,000 after (about 19% fewer); the same verdict on every checkable line, the same originality, re-hook and best hook |
+| After "fix lines", only the changed lines are checked again (the whole script is shown for context); kept lines keep their verdicts, and the hook, loop, re-hook and originality ratings carry over. A full check still runs if a hook, re-hook, payoff or loop line changed, the hooks changed, the length was refitted, or the earlier failure wasn't just flagged lines. Config `studio.partial_recheck` (on) | Built and tested with fakes (a still-unsupported line fails again as before). Saves most of one full fact-check each time a line fix happens |
+| Writer's thinking | Not changed: it is where the drafts get their quality |
+
 ## Phases 6-7: validate and activate
 
 Each change goes live on the PC by update. New styles and tools stay off until a sample is approved.
