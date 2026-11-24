@@ -59,6 +59,8 @@ RULES = [
      "(agencies, universities, journals), each a page you opened."),
     ("qa", "video", r"^qa:",
      "Finished videos failed QA {n} time(s) ({what}): keep on-screen text short and inside the frame."),
+    ("retention", "retention", r"^retention:",
+     "Real viewers left fastest during some lines {n} time(s): see the writer's real-viewer advice."),
     ("youtube", "publish", r"youtube rejected",
      "YouTube rejected {n} upload(s): check the details before the next one."),
 ]
@@ -123,6 +125,14 @@ def advice(area, now=None):
         notes = list(dict.fromkeys(n.strip() for n in notes if n.strip()))[:3]
         if notes:
             lines.append("Recent judge notes on drafts that lost: " + " / ".join(f"\"{n[:160]}\"" for n in notes))
+    if area == "script":
+        try:
+            from studio import retention
+            real = retention.advice()
+        except Exception:
+            real = ""
+        if real:
+            lines.append(real)
     if not lines:
         return ""
     return "Lessons from this channel's own rejected work (follow them):\n" + "\n".join(f"- {l}" for l in lines)
@@ -150,6 +160,10 @@ def usable(topic):
 
 def summary(now=None):
     c = counts(now=now)
+    real = c.pop("retention", 0)              # not a stop: lines real viewers left during (retention.py)
+    if not c and real:
+        return (f"Nothing has been rejected in the last 30 days. Real viewers left fastest during {real} line(s), "
+                "and that is told to the writer.")
     if not c:
         return "Nothing has been rejected in the last 30 days, so there are no lessons yet."
     total = sum(c.values())
@@ -158,6 +172,7 @@ def summary(now=None):
              "calc": "calculation problems", "hook": "weak hooks", "no_checkable": "no checkable facts",
              "thin_sources": "thin sources", "stock_phrase": "stock phrases in drafts",
              **{f"weak_{k}": f"drafts that lost on {k}" for k in JUDGE_ADVICE}, "qa": "failed video checks", "youtube": "YouTube rejections",
+             "retention": "lines where real viewers left fastest",
              "other": "other problems"}
     parts = [f"{names.get(k, k)} {v}" for k, v in sorted(c.items(), key=lambda kv: -kv[1])]
     return (f"In the last 30 days the checks stopped work {total} time(s): " + ", ".join(parts) +

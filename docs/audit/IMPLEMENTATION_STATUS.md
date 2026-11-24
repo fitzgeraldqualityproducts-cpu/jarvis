@@ -37,7 +37,7 @@ tested. "Live" means switched on on the PC.
 | 3.3 Per-claim records: the line, the source's own words (quote), the checker's confidence, the source's date (migration 5). Shown in the script report | Built and tested |
 | 3.4 Semantic duplicate detection (local embeddings) | Not started |
 | 3.5 Genuinely different draft approaches, opening-frame concepts | Partly there since #82 (3 drafts around different images); more later |
-| 4.1 Retention intelligence (beat-level) | Not started. No retention data exists yet (the only upload is private). Connor skipped retention learning on 2026-11-24 in the visuals thread, so this will ask him first |
+| 4.1 Retention intelligence (beat-level) | Built and tested (Connor asked for it 2026-11-24). `studio/retention.py`: YouTube's retention curve laid over each Short's line timings (saved with every render from now on), fast-leaving lines become lessons once per Short, the writer is told once 3+ Shorts agree on a kind of line. Shorts without a curve (too few views) or without line timings are listed, never guessed. Studio's "swiped away" share isn't in the API, so hook hold (still watching at 10%) is the closest real number. `python -m studio retention` and the weekly report |
 | 4.2 Hardware monitor: GPU memory, temperature and use, Windows CPU, C: and D: free space, backup age on the dashboard | Built and tested (GPU read with nvidia-smi, read-only) |
 | 4.3 Full software registry, `python -m studio registry`: 21 tools with version, licence, source, local or external, $0, hardware, fallback. All registered in the $0 table at start-up | Built and tested |
 | 4.4 Weighted quality score (0-100) next to the 21 hard checks. It never passes or stops a Short | Built and tested |
@@ -69,6 +69,12 @@ thinking), then the fact-check (about 2,000-3,000 each).
 | Fact-check answers: no entries for opinion or transition lines, and no "note" on supported claims (the quote already says it) | Built and tested. Same script checked twice with each prompt: output tokens 2,426 and 2,470 before, 1,972 and 2,000 after (about 19% fewer); the same verdict on every checkable line, the same originality, re-hook and best hook |
 | After "fix lines", only the changed lines are checked again (the whole script is shown for context); kept lines keep their verdicts, and the hook, loop, re-hook and originality ratings carry over. A full check still runs if a hook, re-hook, payoff or loop line changed, the hooks changed, the length was refitted, or the earlier failure wasn't just flagged lines. Config `studio.partial_recheck` (on) | Built and tested with fakes (a still-unsupported line fails again as before). Saves most of one full fact-check each time a line fix happens |
 | Writer's thinking | Not changed: it is where the drafts get their quality |
+
+## Self-review score (asked for 2026-11-24)
+
+| Step | State |
+|---|---|
+| After each measured Short: the quality score made before upload next to the real performance index. With 5+ Shorts: rank correlation for the score and each part, in the weekly report. Suggestions only; weights change only by an approved update | Built and tested |
 
 ## Phases 6-7: validate and activate
 

@@ -936,7 +936,8 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
            "timing": timing, "speech_start": round(float(words[0]["s"] or 0), 2) if words else None,
            "tail_seconds": round(end - max(last_word, speech_end), 2),
            "trimmed_lead": round(lead - 0.08, 3) if lead > 0.25 else 0.0,
-           "scene_boxes": boxes, "words": len(words), "engines": used, **rep}
+           "scene_boxes": boxes, "words": len(words), "engines": used,
+           "line_starts": [round(float(x), 3) for x in starts], **rep}
     if not record:
         return rep
     meta["render"] = rep
