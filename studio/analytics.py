@@ -93,14 +93,32 @@ def _video_analytics(v, start):
     return {h: rows[0][i] for i, h in enumerate(heads) if rows[0][i] is not None}
 
 
+def _curve(v, start):
+    """YouTube's audience-retention curve for one Short: [[share of the video, share of viewers still watching,
+    relative retention or None], ...] (up to 100 points), or [] while YouTube has too few views to show one."""
+    r = _report({"ids": "channel==MINE", "startDate": start, "endDate": _date(time.time()),
+                 "metrics": "audienceWatchRatio,relativeRetentionPerformance", "dimensions": "elapsedVideoTimeRatio",
+                 "filters": f"video=={v['youtube_id']}"})
+    heads = [h.get("name") for h in r.get("columnHeaders") or []]
+    col = {n: i for i, n in enumerate(heads)}
+    out = []
+    for row in r.get("rows") or []:
+        x = row[col.get("elapsedVideoTimeRatio", 0)]
+        w = row[col["audienceWatchRatio"]] if "audienceWatchRatio" in col else (row[1] if len(row) > 1 else None)
+        rel = row[col["relativeRetentionPerformance"]] if "relativeRetentionPerformance" in col else None
+        if x is not None and w is not None:
+            out.append([round(float(x), 3), round(float(w), 4), None if rel is None else round(float(rel), 4)])
+    return sorted(out)
+
+
+def hold_at(curve, at=0.1):
+    after = [p for p in curve or [] if p[0] >= at]
+    return round(float(after[0][1]), 3) if after else None
+
+
 def _hook_hold(v, start):
     """Share of viewers still watching at about 10% of the Short (YouTube's own retention curve)."""
-    r = _report({"ids": "channel==MINE", "startDate": start, "endDate": _date(time.time()),
-                 "metrics": "audienceWatchRatio", "dimensions": "elapsedVideoTimeRatio",
-                 "filters": f"video=={v['youtube_id']}"})
-    rows = sorted((row for row in r.get("rows") or [] if row[0] is not None), key=lambda x: x[0])
-    after = [row for row in rows if row[0] >= 0.1]
-    return round(float(after[0][1]), 3) if after else None
+    return hold_at(_curve(v, start))
 
 
 def fetch(now=None):
@@ -134,11 +152,14 @@ def fetch(now=None):
             a = _video_analytics(v, start)
             missing = [k for k in METRICS if k not in a]
             if a and (now - (_iso_ts(v.get("published_at")) or now)) >= 2 * 86400:
-                hold = _hook_hold(v, start)
+                curve = _curve(v, start)
+                hold = hold_at(curve)
                 if hold is None:
                     missing.append("hook_hold")
                 else:
                     a["hook_hold"] = hold
+                if curve:                                  # kept whole, for the line-by-line view (retention.py)
+                    _save(v["youtube_id"], v["video_id"], "retention", {"curve": curve}, [])
             _save(v["youtube_id"], v["video_id"], "analytics", a, missing or [])
         done += 1
     return done
@@ -246,7 +267,11 @@ def learn(now=None):
         db.insert("INSERT INTO decisions(t, area, decision, evidence) VALUES(?,?,?,?)", time.time(), "learning",
                   "pillar nudges: " + (", ".join(f"{k} {v:+.1f}" for k, v in sorted(nudges.items())) or "none yet"),
                   json.dumps(summary))
-    return {"measured": len(idx), "nudges": nudges, "groups": summary}
+    from studio import retention
+    ret = retention.analyze(now, idx)              # where real viewers left, line by line
+    score = retention.score_review(idx)            # how well the quality score predicted real results
+    return {"measured": len(idx), "nudges": nudges, "groups": summary, "retention": ret.get("analyzed", 0),
+            "score_review": score.get("n", 0)}
 
 
 def nudge(pillar):
@@ -312,6 +337,9 @@ def report(now=None, save=True):
                 lines.append(f"- {label} {k}: index {v['mean']:.0f} over {v['n']} Short(s)")
         lines.append("- Topic picking: " + (", ".join(f"{k} {v:+.1f} points" for k, v in sorted(nud.items()))
                                             if nud else f"no changes yet (needs {MIN_PER_PILLAR}+ measured Shorts per pillar)"))
+    from studio import retention
+    lines += ["", "## Where viewers left", ""] + retention.text().rstrip("\n").split("\n")
+    lines += ["", "## Does the quality score predict real results?", ""] + retention.score_text().rstrip("\n").split("\n")
     from studio import eligibility
     if eligibility.latest():
         lines += [""] + eligibility.text().rstrip("\n").split("\n")
