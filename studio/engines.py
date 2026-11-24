@@ -51,6 +51,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -356,12 +357,17 @@ def heavy(what, wait=900):
             if time.time() - t0 > wait:
                 raise EngineError(f"another heavy job kept the computer busy, so {what} was skipped")
             time.sleep(2)
+        from studio import timings
+        waited = time.time() - t0
+        if waited >= 2:
+            timings.add(timings.current(), "waiting for the graphics card", waited, "wait")
         f.seek(0)
         f.truncate()
         f.write(f"{os.getpid()} {what} {time.time():.0f}\n")
         f.flush()
         _free_local_brain()
-        yield
+        with timings.step(what, "heavy"):
+            yield
     finally:
         _unlock(f)
         f.close()
@@ -486,15 +492,156 @@ def remotion_render(props, public_dir, out, timeout=None):
     if os.environ.get("JARVIS_REMOTION_BROWSER"):                 # a browser already on this computer
         cmd.append(f"--browser-executable={os.environ['JARVIS_REMOTION_BROWSER']}")
     env = _temp_env(_node_env(REMOTION_DISABLE_TELEMETRY="1"))
-    try:
-        p = subprocess.run(cmd, cwd=REMOTION, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout or SPECS["remotion"]["timeout"],
-                           env=env)
-    except subprocess.TimeoutExpired:
-        raise EngineError("Remotion took too long")
+    with _REMOTION_LOCK:                       # one render at a time: the prepared copy has one picture folder
+        bundle = remotion_bundle(env) if config.general().get("remotion_prepared", True) else None
+        prepared = bool(bundle) and _point_public(bundle, public_dir)
+        try:
+            p, gpu = _remotion_both(cmd, str(bundle) if prepared else None, out, env, timeout)
+            if prepared and (p.returncode != 0 or not Path(out).exists()):
+                _BUNDLE_BAD.add(bundle.name)   # the prepared copy didn't work: build it the old way from now on
+                prepared = False
+                p, gpu = _remotion_both(cmd, None, out, env, timeout)
+        finally:
+            if bundle:
+                _unpoint_public(bundle)
     if p.returncode != 0 or not Path(out).exists():
         tail = (p.stderr or p.stdout or "").strip().splitlines()[-3:]
         raise EngineError(f"Remotion failed: {' | '.join(tail)[:300]}")
-    return {"path": str(out)}
+    return {"path": str(out), "encoder": "nvenc" if gpu else "libx264", "prepared": prepared}
+
+
+def _remotion_both(cmd, entry, out, env, timeout):
+    """(result, gpu used): the render from entry (the prepared copy, or the source when None), on the card's
+    encoder first when there is one, then on the processor."""
+    c = list(cmd)
+    if entry:
+        c[c.index("src/index.ts")] = entry
+    gpu = remotion_gpu()
+    p = _remotion_run(c + (REMOTION_GPU_ARGS if gpu else []), env, timeout)
+    if gpu and (p.returncode != 0 or not Path(out).exists()):     # the card's encoder failed: encode on the processor
+        from clipper import media
+        media.nvenc_failed()
+        p = _remotion_run(c, env, timeout)
+        gpu = False
+    return p, gpu
+
+
+# ---------- Remotion prepared once per update ----------
+# "remotion render src/index.ts" builds the whole project (webpack) and copies the Short's folder into a new temporary
+# copy before every render. The build only changes when the composition's code does, so it is made once per update
+# (tools/remotion-bundle/<hash of the code>) and each render points the copy's picture folder at the Short's own
+# folder (a junction on Windows, a symlink elsewhere) instead of copying it. Same code, same frames. Any problem
+# falls back to the old way for that render.
+
+_REMOTION_LOCK = threading.Lock()
+_BUNDLE_BAD = set()
+
+
+def _remotion_code_hash():
+    import hashlib
+    h = hashlib.sha256()
+    files = sorted((REMOTION / "src").rglob("*")) + [REMOTION / n for n in
+                                                    ("remotion.config.ts", "package.json", "package-lock.json")]
+    for f in files:
+        if f.is_file():
+            h.update(str(f.relative_to(REMOTION)).replace("\\", "/").encode())
+            h.update(f.read_bytes().replace(b"\r\n", b"\n"))
+    return h.hexdigest()[:16]
+
+
+def remotion_bundle(env=None):
+    """The prepared Remotion build for the current code (made now if it's missing), or None."""
+    try:
+        name = _remotion_code_hash()
+    except OSError:
+        return None
+    if name in _BUNDLE_BAD:
+        return None
+    base = TOOLS / "remotion-bundle"
+    d = base / name
+    if (d / "index.html").exists():
+        return d
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        tmp, empty = base / f"{name}.building", base / "empty-public"
+        empty.mkdir(exist_ok=True)
+        if tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+        p = subprocess.run([*_node_cmd("npx"), "remotion", "bundle", "src/index.ts", f"--out-dir={tmp}",
+                            f"--public-dir={empty}", "--log=error"], cwd=REMOTION, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=600,
+                           env=env or _temp_env(_node_env(REMOTION_DISABLE_TELEMETRY="1")))
+        if p.returncode != 0 or not (tmp / "index.html").exists():
+            raise EngineError((p.stderr or p.stdout or "").strip()[-200:])
+        os.replace(tmp, d)
+        for old in base.iterdir():                                  # builds for older code
+            if old.is_dir() and old.name not in (name, "empty-public") and not old.name.endswith(".building"):
+                _unpoint_public(old)
+                shutil.rmtree(old, ignore_errors=True)
+        return d
+    except Exception:
+        _BUNDLE_BAD.add(name)
+        return None
+
+
+def _is_link(p):
+    p = Path(p)
+    try:
+        return p.is_symlink() or bool(getattr(os.lstat(p), "st_file_attributes", 0) & 0x400)  # 0x400: a junction
+    except OSError:
+        return False
+
+
+def _unpoint_public(bundle):
+    """Takes away the link (never the files it points at). Leaves a real folder alone unless it's empty."""
+    pub = Path(bundle) / "public"
+    try:
+        if _is_link(pub):
+            if os.name == "nt":
+                os.rmdir(pub)                  # removes a junction itself; its target is untouched
+            else:
+                os.unlink(pub)
+        elif pub.is_dir():
+            os.rmdir(pub)                      # only succeeds when empty
+    except OSError:
+        pass
+
+
+def _point_public(bundle, public_dir):
+    """Points the prepared copy's picture folder at this Short's folder. False if it couldn't."""
+    pub = Path(bundle) / "public"
+    _unpoint_public(bundle)
+    if pub.exists():
+        return False
+    try:
+        if os.name == "nt":
+            r = subprocess.run(["cmd", "/c", "mklink", "/J", str(pub), str(Path(public_dir).resolve())],
+                               capture_output=True, text=True, timeout=30)
+            return r.returncode == 0 and pub.exists()
+        os.symlink(str(Path(public_dir).resolve()), str(pub), target_is_directory=True)
+        return True
+    except OSError:
+        return False
+
+
+# Remotion 4.0.228+ can encode with NVENC on Windows and Linux ("if-possible" probes its own ffmpeg and falls back to
+# libx264). It refuses crf with hardware encoding and NVENC's own default bitrate is low, so a fixed 12 Mbit/s is
+# given: about what YouTube recommends for 1080p uploads, and plenty for a 1080x1920 Short.
+REMOTION_GPU_ARGS = ["--hardware-acceleration=if-possible", "--video-bitrate=12M"]
+
+
+def remotion_gpu():
+    """True when the Remotion render should try the graphics card's encoder (an NVIDIA card that ffmpeg can use)."""
+    from clipper import media
+    return nvidia() is not None and media.nvenc_ok()
+
+
+def _remotion_run(cmd, env, timeout):
+    try:
+        return subprocess.run(cmd, cwd=REMOTION, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=timeout or SPECS["remotion"]["timeout"], env=env)
+    except subprocess.TimeoutExpired:
+        raise EngineError("Remotion took too long")
 
 
 # ---------- install and status ----------

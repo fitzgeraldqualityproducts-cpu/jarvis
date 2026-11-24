@@ -136,8 +136,7 @@ def scene_clip(src, seconds, out, shade_png=None, W=1080, H=1920, fps=30, start=
         args += ["-i", str(shade_png), "-filter_complex", f"[0:v]{vf}[b];[b][1:v]overlay=0:0[v]", "-map", "[v]"]
     else:
         args += ["-vf", vf]
-    media.run(args + ["-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", 18, "-pix_fmt", "yuv420p",
-                      "-movflags", "+faststart", str(out)])
+    media.run_h264(args + ["-an"], ["-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)], 18)
     return Path(out)
 
 

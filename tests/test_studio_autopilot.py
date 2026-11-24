@@ -141,3 +141,47 @@ def test_restart_mid_upload_resumes_without_a_second_upload(line, monkeypatch):
     jobs.recover()
     assert jobs.tick() == "processing"
     assert len(fake.posts) == 1 and publish.job(vid)["youtube_id"] == "yt1"   # same session, one upload
+
+
+def test_the_next_short_is_written_while_this_one_is_built(line):
+    """Speed (2026-11-24): the next Short's research, script and fact-check happen while this one renders.
+    Never two being written, never two being built, and the one being built counts towards the buffer."""
+    from studio import autopilot, config
+    config.set_values(publish_mode="public", ready_buffer=2, max_new_per_day=3)
+    a = autopilot.maybe_make()
+    assert autopilot.maybe_make() is None                          # a is still being written
+    line.set_video(a, state="rendering")
+    b = autopilot.maybe_make()
+    assert b and b != a                                            # written while a renders
+    assert autopilot.maybe_make() is None                          # b is being written
+    line.set_video(b, state="generating_audio")
+    assert autopilot.maybe_make() is None                          # two being built would be too many
+    line.set_video(a, state="ready")
+    assert autopilot.maybe_make() is None                          # 1 ready + 1 being built = the buffer of 2
+    line.set_video(a, state="scheduled")
+    c = autopilot.maybe_make()
+    assert c
+    line.set_video(c, state="rendering")
+    line.set_video(b, state="scheduled")
+    assert autopilot.maybe_make() is None                          # the day's limit of 3 still holds
+    config.set_values(overlap=False, max_new_per_day=9)
+    assert autopilot.maybe_make() is None                          # overlap off: one at a time, as before
+
+
+def test_writing_lane_works_only_while_a_short_is_being_built(line, monkeypatch):
+    import threading
+    from studio import jobs
+    ran = []
+    jobs.STAGES.clear()
+    jobs.register("scripting", lambda v, ctx: ran.append(threading.current_thread().name) or "fact_checking")
+    jobs.register("rendering", lambda v, ctx: "validating")
+    w = jobs.create(idem_key="w")
+    line.set_video(w, state="scripting")
+    assert jobs.light_tick() is None and not ran                   # nothing is being built: the main worker does it
+    jobs._building.set()
+    try:
+        assert jobs.light_tick() == "fact_checking" and ran
+        line.set_video(w, state="rendering")
+        assert jobs.light_tick() is None                           # never a building stage in the writing lane
+    finally:
+        jobs._building.clear()

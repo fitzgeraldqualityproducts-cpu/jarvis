@@ -203,6 +203,71 @@ def detect(path, kind):
     return list(zip(starts, ends))
 
 
+# ---------- H.264 encoder: the NVIDIA card's own encoder (NVENC) when it works, else the processor ----------
+
+_NVENC = []          # [True/False] once probed; a failed GPU encode sets it to False for the rest of the run
+NVENC_TEST = None    # tests: a function returning True/False in place of the real probe
+
+
+def nvenc_ok():
+    """True if ffmpeg can encode H.264 on an NVIDIA card here (one tiny test encode, remembered).
+    Off with the environment variable JARVIS_GPU_ENCODE=0. Always False on a Mac."""
+    if os.environ.get("JARVIS_GPU_ENCODE", "1").strip() in ("0", "false", "off", "no"):
+        return False
+    if _NVENC:
+        return _NVENC[0]
+    if NVENC_TEST is not None:
+        ok = bool(NVENC_TEST())
+    elif sys.platform == "darwin":
+        ok = False
+    else:
+        try:
+            r = run(["-f", "lavfi", "-i", "color=c=black:s=256x256:r=30:d=0.2"] + _nvenc(20) +
+                    ["-f", "null", "-"], timeout=30, check=False)
+            ok = r.returncode == 0
+        except Exception:
+            ok = False
+    _NVENC[:] = [ok]
+    return ok
+
+
+def nvenc_failed():
+    """Called after a GPU encode fails: every later encode in this run uses the processor."""
+    _NVENC[:] = [False]
+
+
+def _nvenc(crf):
+    # constant-quality VBR; cq ~ crf + 1 looks about the same as libx264 at that crf on a Turing card
+    return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", int(crf) + 1,
+            "-b:v", 0, "-profile:v", "high"]
+
+
+def h264_args(crf, preset="veryfast", gpu=True):
+    """ffmpeg video-encoder arguments for H.264 at about this quality (libx264 crf scale)."""
+    if gpu and nvenc_ok():
+        return _nvenc(crf)
+    return ["-c:v", "libx264", "-preset", preset, "-crf", crf, "-profile:v", "high"]
+
+
+def encoder_name(args):
+    return "nvenc" if "h264_nvenc" in [str(a) for a in args] else "libx264"
+
+
+def run_h264(before, after, crf, preset="veryfast", gpu=True, timeout=None):
+    """media.run(before + encoder + after), trying the GPU first and the processor if the GPU encode fails.
+    Returns "nvenc" or "libx264"."""
+    enc = h264_args(crf, preset, gpu)
+    try:
+        run(before + enc + after, timeout=timeout)
+        return encoder_name(enc)
+    except MediaError:
+        if encoder_name(enc) != "nvenc":
+            raise
+        nvenc_failed()
+    run(before + h264_args(crf, preset, gpu=False) + after, timeout=timeout)
+    return "libx264"
+
+
 class FrameReader:
     """Decodes frames (BGR, numpy) from start for duration at a fixed fps, scaled so the height
     is at most max_h. Frame k is at source time start + k / fps."""
@@ -251,12 +316,13 @@ class FrameReader:
 class FrameWriter:
     """Encodes BGR frames + a WAV file into an H.264/AAC MP4 made for phones."""
 
-    def __init__(self, out, w, h, fps, audio, preset="veryfast", crf=20, vf=None):
+    def __init__(self, out, w, h, fps, audio, preset="veryfast", crf=20, vf=None, gpu=True):
         self.out = str(out)
+        enc = h264_args(crf, preset, gpu)
+        self.encoder = encoder_name(enc)
         self.proc = popen(["-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}", "-r", fps, "-i", "-",
-                           "-i", audio, "-map", "0:v", "-map", "1:a"] + (["-vf", vf] if vf else []) +
-                          ["-c:v", "libx264", "-preset", preset,
-                           "-crf", crf, "-profile:v", "high", "-pix_fmt", "yuv420p", "-r", fps,
+                           "-i", audio, "-map", "0:v", "-map", "1:a"] + (["-vf", vf] if vf else []) + enc +
+                          ["-pix_fmt", "yuv420p", "-r", fps,
                            "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart",
                            "-shortest", self.out], stdin=subprocess.PIPE, stderr=subprocess.PIPE)
         self.frames = 0
@@ -265,6 +331,8 @@ class FrameWriter:
         try:
             self.proc.stdin.write(np.ascontiguousarray(frame, dtype=np.uint8).tobytes())
         except (BrokenPipeError, OSError):
+            if self.encoder == "nvenc":
+                nvenc_failed()                      # the job's retry encodes on the processor
             raise MediaError("the video encoder stopped: " + self._err())
         self.frames += 1
 
@@ -281,6 +349,8 @@ class FrameWriter:
             pass
         code = self.proc.wait()
         if code != 0:
+            if self.encoder == "nvenc":
+                nvenc_failed()
             raise MediaError("the video encoder failed: " + self._err())
 
 

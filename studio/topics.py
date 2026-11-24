@@ -15,6 +15,7 @@ Everything lands in the topics / sources / discovery_runs tables of studio_data/
 import json
 import math
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -186,6 +187,74 @@ def page_text(url, limit=600_000):
     guard.allow("web.read", url[:200], record=False)
     if PAGE:
         return PAGE(url)
+    hit = _cached(url)
+    if hit is not None:
+        return hit
+    text = _download(url, limit)
+    if text:
+        _save(url, text)
+    return text
+
+
+# ---------- saved pages: a page read once is kept for PAGE_DAYS, so re-checks and fix rounds don't download it again
+
+PAGE_DAYS = 7
+PAGE_KEEP_DAYS = 30      # older saved pages are deleted
+_SWEPT = []
+
+
+def _page_dir():
+    from studio import engines
+    return engines.outputs_dir("pages")      # D:\Jarvis\studio\pages on the PC
+
+
+def _page_file(url):
+    import hashlib
+    return _page_dir() / (hashlib.sha256(str(url).encode("utf-8")).hexdigest()[:40] + ".json.gz")
+
+
+def _cached(url):
+    import gzip
+    try:
+        f = _page_file(url)
+        if not f.exists() or time.time() - f.stat().st_mtime > PAGE_DAYS * 86400:
+            return None
+        with gzip.open(f, "rt", encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d["text"] if d.get("url") == url and d.get("text") else None
+    except Exception:
+        return None
+
+
+def _save(url, text):
+    import gzip
+    import os
+    try:
+        f = _page_file(url)
+        tmp = f.with_name(f.name + f".{os.getpid()}.{threading.get_ident()}.tmp")
+        with gzip.open(tmp, "wt", encoding="utf-8") as fh:
+            json.dump({"url": url, "at": time.time(), "text": text}, fh)
+        os.replace(tmp, f)
+        _sweep()
+    except Exception:
+        pass
+
+
+def _sweep():
+    """Deletes saved pages older than PAGE_KEEP_DAYS (once per run)."""
+    if _SWEPT:
+        return
+    _SWEPT.append(1)
+    cut = time.time() - PAGE_KEEP_DAYS * 86400
+    for f in _page_dir().glob("*.json.gz"):
+        try:
+            if f.stat().st_mtime < cut:
+                f.unlink()
+        except OSError:
+            pass
+
+
+def _download(url, limit):
     from clipper import youtube
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh) research-check",
                                                "Accept": "text/html,*/*"})

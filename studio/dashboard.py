@@ -236,8 +236,20 @@ def state(now=None):
         "cards": cards, "ideas": ideas, "published": pub, "live_count": live_count, "private_count": private_count,
         "next_upload": nxt, "stats": _stats(), "activity": _activity(now),
         "cost_usd": sum(t["cost_usd"] or 0 for t in db.q("SELECT cost_usd FROM tools")),
-        "hardware": _hardware(), "backup": _backup(),
+        "hardware": _hardware(), "backup": _backup(), "timings": _timings(),
     }
+
+
+def _timings():
+    """The average minutes per step over the last 10 Shorts, slowest first (None before the first one)."""
+    try:
+        from studio import timings
+        s = timings.summary()
+        if not s["shorts"]:
+            return None
+        return {"shorts": s["shorts"], "total": s["total"], "stages": s["stages"][:7], "parts": s["parts"][:5]}
+    except Exception:
+        return None
 
 
 def _hardware():
