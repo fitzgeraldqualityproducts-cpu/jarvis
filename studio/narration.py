@@ -161,17 +161,57 @@ def read_any_wav(path):
     return np.clip(x, -1, 1).reshape(-1, ch), int(rate)
 
 
-def _chatterbox(text, s, out):
+# How the narrator leans on each beat of the script (studio/script.py BEATS): more feeling on the payoff (the
+# surprising result) and the re-hook, a short pause just before them. Chatterbox speeds up when it's more
+# expressive, so the guidance (cfg) drops a little there to keep the pace calm.
+DELIVERY = {"hook": {"exaggeration": 0.1, "pause_before": 0.0},
+            "rehook": {"exaggeration": 0.12, "cfg": -0.1, "pause_before": 0.3},
+            "payoff": {"exaggeration": 0.22, "cfg": -0.15, "pause_before": 0.42}}
+GAP = 0.18
+
+
+def segments(text, video_id=None, base_ex=0.5, base_cfg=0.5):
+    """The script as [{text, exaggeration, cfg_weight, pause_before, beat}] when the passed script's lines (with
+    their beats) make up exactly this text; else None (the whole text is read evenly, as before)."""
+    if video_id is None:
+        return None
+    try:
+        import json
+        from studio import script
+        row = script.latest(video_id, "passed")
+        lines = json.loads(row["structure"] or "{}").get("lines") or [] if row else []
+        texts = [" ".join(str(ln.get("text", "")).split()) for ln in lines]
+        if texts:
+            texts[0] = " ".join(str(row["hook"]).split())
+        if not texts or " ".join(texts) != " ".join(str(text).split()):
+            return None
+        out = []
+        for ln, t in zip(lines, texts):
+            d = DELIVERY.get(str(ln.get("beat") or ""), {})
+            out.append({"text": t, "beat": ln.get("beat") or "",
+                        "exaggeration": round(min(0.9, base_ex + d.get("exaggeration", 0.0)), 2),
+                        "cfg_weight": round(max(0.2, base_cfg + d.get("cfg", 0.0)), 2),
+                        "pause_before": d.get("pause_before", 0.0)})
+        return out if any(o["beat"] in DELIVERY for o in out) else None
+    except Exception:
+        return None
+
+
+def _chatterbox(text, s, out, video_id=None):
     """(samples, rate, info) from Chatterbox in the channel's voice. Raises engines.EngineError."""
     from clipper import media
     from studio import engines
     g = config.general()
     raw = Path(out).with_suffix(".cb.wav")
+    ex, cfg = float(g.get("chatterbox_exaggeration") or 0.5), float(g.get("chatterbox_cfg_weight") or 0.5)
+    job = {"text": text, "out": str(raw), "reference": str(reference_clip(s)), "exaggeration": ex, "cfg_weight": cfg,
+           "seed": 7, "gap": GAP}
+    segs = segments(text, video_id, ex, cfg) if g.get("expressive_delivery", True) else None
+    if segs:
+        job["segments"] = segs
     with engines.heavy("Chatterbox narration"):
-        info = engines.run("chatterbox", "chatterbox_worker", {
-            "text": text, "out": str(raw), "reference": str(reference_clip(s)),
-            "exaggeration": float(g.get("chatterbox_exaggeration") or 0.5),
-            "cfg_weight": float(g.get("chatterbox_cfg_weight") or 0.5), "seed": 7})
+        info = engines.run("chatterbox", "chatterbox_worker", job)
+    info["delivery"] = "by beat" if segs else "even"
     try:
         x, rate = read_any_wav(raw)
     finally:
@@ -203,10 +243,10 @@ def narrate(text, out, video_id=None, engine=None, record=True):
     if engine == "chatterbox":
         t0 = time.time()
         try:
-            samples, rate, info = _chatterbox(text, s, out)
+            samples, rate, info = _chatterbox(text, s, out, video_id)
             rec = _finish(samples, rate, out, text, video_id, s, "chatterbox", "chatterbox-tts==0.1.7 (channel voice "
                           f"{s['voice']})", t0)
-            rec["engine_info"] = {k: info.get(k) for k in ("device", "sentences", "took")}
+            rec["engine_info"] = {k: info.get(k) for k in ("device", "sentences", "took", "delivery")}
             if rec["checks"]["ok"]:
                 return _save(rec, record)
             fallback = "Chatterbox's audio failed its checks: " + "; ".join(rec["checks"]["problems"])

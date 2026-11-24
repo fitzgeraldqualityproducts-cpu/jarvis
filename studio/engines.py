@@ -21,6 +21,18 @@ tool is missing, too slow, short of memory or fails, the studio uses what it use
   look     "diagram" (default) | "hud"         "hud" is the cinematic look from Connor's reference video: a
                                                full-screen AI picture per scene, a counter in the top left and
                                                one serif sentence at a time. Needs the AI pictures (images).
+  sharpen  "none" (default)    | "esrgan"      Real-ESRGAN x4plus (BSD-3): each AI picture made 4x sharper
+                                               (runs in the sdxl environment, weights 64 MB on D:).
+  motion   "zoom" (default)    | "depth"       Depth Anything V2 Small (Apache-2.0) finds how far away every
+                                               pixel is and the camera moves through the picture (near things
+                                               move more than far ones) instead of a flat zoom.
+  edit     "calm" (default)    | "lively"      animated diagrams over the picture (bars, calculations, steps),
+                                               a counter that pops when it lands, a flash on the re-hook, a
+                                               punch-in and shake on the payoff, a jump zoom in long scenes.
+  sfx      "none" (default)    | "synth"       sound effects made by Jarvis itself (whooshes, ticks, a hit on
+                                               the payoff), under the voice. Nothing downloaded.
+  footage  "none" (default)    | "pexels"      real stock clips from Pexels for some scenes (free key, saved
+                                               with Connect Stock Footage); the AI picture stays the fallback.
 
 Config: "studio": {"engines": {"voice": ..., "align": ..., "visuals": ..., "compose": ...}}.
 `python -m studio engines install` sets the tools up (free downloads, a few GB), `... status` shows
@@ -49,9 +61,11 @@ TOOLS = ROOT / "tools"
 WORKERS = Path(__file__).parent / "workers"
 REMOTION = Path(__file__).parent / "remotion"
 DEFAULTS = {"voice": "kokoro", "align": "whisper", "visuals": "classic", "compose": "classic", "images": "classic",
-            "music": "none", "look": "diagram"}
+            "music": "none", "look": "diagram", "sharpen": "none", "motion": "zoom", "edit": "calm", "sfx": "none",
+            "footage": "none"}
 UPGRADED = {"voice": "chatterbox", "align": "whisperx", "visuals": "manim", "compose": "remotion", "images": "sdxl",
-            "music": "acestep", "look": "hud"}
+            "music": "acestep", "look": "hud", "sharpen": "esrgan", "motion": "depth", "edit": "lively",
+            "sfx": "synth", "footage": "pexels"}
 # ACE-Step 1.5 at a fixed commit (its own pyproject pins the CUDA PyTorch for Windows), as a zip: no git needed
 ACESTEP_COMMIT = "ca1e85fe9430179831e6bc6be790c332190a3866"
 ACESTEP_ZIP = f"https://github.com/ACE-Step/ACE-Step-1.5/archive/{ACESTEP_COMMIT}.zip"
