@@ -64,7 +64,8 @@ SPECS = {
     "sdxl": {"python": "3.12", "pip": ["diffusers==0.32.2", "transformers==4.48.3", "accelerate==1.3.0",
                                        "safetensors==0.5.2", "pillow==11.1.0"],
              "mem_gb": 3.0, "timeout": 1200, "gpu_only": True},
-    "acestep": {"python": "3.12", "project": ACESTEP_ZIP, "mem_gb": 4.0, "timeout": 1800, "gpu_only": True},
+    "acestep": {"python": "3.12", "project": ACESTEP_ZIP, "mem_gb": 4.0, "timeout": 1800, "gpu_only": True,
+                "commit_gb": 8.0},   # Windows: loads the full 4.6 GB model into memory before shrinking it
 }
 GPU_TOOLS = ("chatterbox", "whisperx", "sdxl")  # these run on an NVIDIA card when there is one
 MODELS_ON_D = ("sdxl", "acestep")              # their model downloads go to models_dir()
@@ -119,6 +120,26 @@ def outputs_dir(*parts):
     d = Path(base).joinpath(*parts) if base else data_dir(*parts)
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def temp_dir():
+    """Scratch space for the tools (D:\\Jarvis\\temp on the PC, so big temporary files never fill C:)."""
+    big = config.general().get("temp_dir") or (_big_drive() and _big_drive() / "temp")
+    if not big:
+        return None
+    d = Path(big)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return d
+
+
+def _temp_env(env):
+    t = temp_dir()
+    if t:
+        env.update(TEMP=str(t), TMP=str(t), TMPDIR=str(t))
+    return env
 
 
 def installed(tool):
@@ -263,6 +284,29 @@ def free_gb():
     return None
 
 
+def commit_free_gb():
+    """Windows only: how much more memory programs may reserve right now (RAM + page file, the "commit
+    limit"). Loading a big model fails with error 1450 when this runs out, even with RAM free. None elsewhere."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        class MS(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        m = MS()
+        m.dwLength = ctypes.sizeof(MS)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
+            return None
+        return m.ullAvailPageFile / 2 ** 30
+    except Exception:
+        return None
+
+
 def enough_memory(tool):
     """(ok, free GB, needed GB). Under normal macOS memory pressure half the nominal need is enough,
     because macOS compresses idle memory to make room; under warning or critical pressure the full
@@ -379,12 +423,17 @@ def run(tool, worker, payload, timeout=None):
     ok, free, need = enough_memory(tool)
     if not ok:
         raise EngineError(f"{tool} needs about {need:.1f} GB of free memory and only {free:.1f} GB is free")
-    with tempfile.TemporaryDirectory(prefix=f"jv-{tool}-") as tmp:
+    commit, want = commit_free_gb(), spec.get("commit_gb")
+    if want and commit is not None and commit < want:
+        raise EngineError(f"{tool} needs about {want:.0f} GB of Windows memory (RAM plus page file) and only "
+                          f"{commit:.1f} GB is left; a bigger page file on D: would make room")
+    with tempfile.TemporaryDirectory(prefix=f"jv-{tool}-", dir=temp_dir()) as tmp:
         pin, pout = Path(tmp) / "in.json", Path(tmp) / "out.json"
         pin.write_text(json.dumps(payload))
         env = dict(os.environ, PYTHONNOUSERSITE="1", TOKENIZERS_PARALLELISM="false",
                    HF_HUB_DISABLE_TELEMETRY="1", JV_WORKERS=str(WORKERS))
         env.pop("PYTHONPATH", None)
+        _temp_env(env)
         env["PATH"] = str(_tool_bin()) + os.pathsep + env.get("PATH", "")
         md = models_dir() if tool in MODELS_ON_D else None
         if md:
@@ -422,7 +471,7 @@ def remotion_render(props, public_dir, out, timeout=None):
            "--log=error", "--overwrite"]
     if os.environ.get("JARVIS_REMOTION_BROWSER"):                 # a browser already on this computer
         cmd.append(f"--browser-executable={os.environ['JARVIS_REMOTION_BROWSER']}")
-    env = _node_env(REMOTION_DISABLE_TELEMETRY="1")
+    env = _temp_env(_node_env(REMOTION_DISABLE_TELEMETRY="1"))
     try:
         p = subprocess.run(cmd, cwd=REMOTION, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout or SPECS["remotion"]["timeout"],
                            env=env)
