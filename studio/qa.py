@@ -118,6 +118,17 @@ def check(video_id):
     if row:
         sim, other = script.similar_script(row["body"], video_id)
         _add(checks, "not a remake", sim < script.SIMILAR_SCRIPT, f"{sim:.0%} overlap with video {other}" if other else "")
+    if all(c["passed"] for c in checks):          # the editor's look, only for a Short that passed everything else
+        from studio import finalreview
+        try:
+            fr = finalreview.review(video_id)
+        except Exception as e:
+            if finalreview.mode() == "block":
+                raise
+            fr = {"ok": True, "skipped": str(e)[:160]}
+        if fr is not None:
+            _add(checks, "final-cut review", fr["ok"], f"skipped ({fr['skipped']})" if fr.get("skipped")
+                 else finalreview.detail(fr))
     guard.audit("qa.check", True, {"video": video_id, "failed": [c["name"] for c in checks if not c["passed"]]})
     ck = json.loads(row["checks"] or "{}") if row else {}
     conf = db.one("SELECT AVG(confidence) c FROM sources WHERE video_id=? AND confidence IS NOT NULL", video_id)["c"]

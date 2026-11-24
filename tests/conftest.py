@@ -29,6 +29,13 @@ def clipper_home(tmp_path, monkeypatch):
     monkeypatch.setattr(media, "_NVENC", [])
     from studio import footage
     monkeypatch.setattr(footage, "NASA_GET", lambda url: {"collection": {"items": []}})   # never asks NASA while testing
+    from studio import topics
+
+    def no_web(url):
+        raise OSError("no reference sources in tests")
+    monkeypatch.setattr(topics, "API", no_web)               # nor Wikipedia or arXiv
+    from studio import finalreview
+    monkeypatch.setattr(finalreview, "mode", lambda: "off")   # no extra Claude call in other tests' Shorts
     yield tmp_path
     db.reset_connections()
 
