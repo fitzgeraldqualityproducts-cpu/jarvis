@@ -357,3 +357,22 @@ def test_pexels_key_and_choice(studio_home):  # noqa: F811
     assert footage.choose({"videos": [{"id": 1, "duration": 3, "video_files": [
         {"link": "x", "file_type": "video/mp4", "width": 1080, "height": 1920}]}]}, 5) is None   # too short
     assert footage.pick_scenes([{"footage": "a"}] * 6, [3, 3, 1, 4, 3, 3]) == [1, 3, 4]       # never the hook, at most half
+
+
+def test_sample_can_add_footage_searches_to_an_old_plan(three, fake_voice, monkeypatch, tmp_path):  # noqa: F811
+    from studio import config, db, engines, video
+    from test_studio_video import SCENES, _make
+    seen, got = [], {}
+    monkeypatch.setattr(engines, "RUNNER", _upgraded_runner(seen, got))
+    calls = _fake_pexels(monkeypatch, tmp_path)
+    config.set_values(outputs_dir=str(tmp_path / "D-Jarvis" / "studio"))
+    vid, states = _make(three, fake_voice, monkeypatch)              # planned before footage: no searches
+    assert states[-1] == "ready" and not any(s.get("footage") for s in json.loads(db.video(vid)["meta"])["scenes"])
+    fresh = [dict(s, type="headline", footage="rocket launch" if k == 3 else "") for k, s in enumerate(SCENES)]
+    monkeypatch.setattr(video, "plan", lambda row: fresh)
+    before = json.loads(db.video(vid)["meta"])["scenes"]
+    rep = video.render(vid, engines_override=dict(engines.UPGRADED), out_name="x_sample.mp4", record=False,
+                       footage_terms=True)
+    assert rep["engines"]["footage"] == "Pexels: 1 scene" and calls == ["rocket launch"]
+    assert json.loads(db.video(vid)["meta"])["scenes"] == before      # a sample saves nothing
+    assert got["scenes"][3]["motion"] == "footage_04.mp4"

@@ -32,7 +32,8 @@
   similar     the most alike earlier topics by meaning (to tune "duplicate_meaning_at")
   footage     stock footage (Pixabay/Pexels free key, NASA no key): footage connect (asks for a key) | footage (status)
   sample      makes a side-by-side sample with the upgraded tools from a finished Short (--video <id>):
-              its voice and video next to the current ones; changes nothing and uploads nothing"""
+              its voice and video next to the current ones; changes nothing and uploads nothing.
+              --footage: a Short planned before stock footage existed gets footage searches (one Claude call)"""
 import json
 import os
 import sys
@@ -120,7 +121,8 @@ def _sample(argv):
     print("2/2 Video with every upgrade: AI pictures, background music, the cinematic look, whisperX timing "
           "and Remotion...")
     rep = video.render(vid, progress=lambda s: print("    " + s), engines_override=engines.UPGRADED,
-                       out_name="sample/short_upgraded.mp4", record=False, voice_path=v["path"])
+                       out_name="sample/short_upgraded.mp4", record=False, voice_path=v["path"],
+                       footage_terms="--footage" in argv)
     for k, why in rep["engines"].items():
         print(f"    {k}: {why}")
     old = db.one("SELECT path FROM voiceovers WHERE video_id=? ORDER BY id DESC LIMIT 1", vid)
