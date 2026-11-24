@@ -133,6 +133,13 @@ def advice(area, now=None):
             real = ""
         if real:
             lines.append(real)
+        try:
+            from studio import packaging
+            pk = packaging.advice()
+        except Exception:
+            pk = ""
+        if pk:
+            lines.append(pk)
     if not lines:
         return ""
     return "Lessons from this channel's own rejected work (follow them):\n" + "\n".join(f"- {l}" for l in lines)

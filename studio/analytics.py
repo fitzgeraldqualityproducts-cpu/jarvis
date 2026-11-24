@@ -267,7 +267,11 @@ def learn(now=None):
         db.insert("INSERT INTO decisions(t, area, decision, evidence) VALUES(?,?,?,?)", time.time(), "learning",
                   "pillar nudges: " + (", ".join(f"{k} {v:+.1f}" for k, v in sorted(nudges.items())) or "none yet"),
                   json.dumps(summary))
-    from studio import retention
+    from studio import packaging, retention
+    try:
+        packaging.learn(idx)                       # which title and first-frame styles did better
+    except Exception:
+        pass
     ret = retention.analyze(now, idx)              # where real viewers left, line by line
     score = retention.score_review(idx)            # how well the quality score predicted real results
     return {"measured": len(idx), "nudges": nudges, "groups": summary, "retention": ret.get("analyzed", 0),

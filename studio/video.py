@@ -967,6 +967,8 @@ def metadata(video_id):
     st = json.loads(row["structure"])
     t = topics.topic(v["topic_id"]) if v["topic_id"] else {"title": v["title"], "pillar": "", "keywords": "[]"}
     titles = [x for x in (st.get("titles") or []) + [t["title"]] if x and not script.hook_checks_title(x)]
+    from studio import packaging
+    titles = packaging.pick(titles)                          # a title style that clearly works goes first
     title = (titles[0] if titles else t["title"])[:100]
     used = db.q("SELECT DISTINCT url FROM sources WHERE video_id=? AND verdict='supported' AND url IS NOT NULL", video_id)
     srcs = [r["url"] for r in used] or [s["url"] for s in (t.get("sources") or []) if s.get("verdict") == "reachable"]
@@ -1007,4 +1009,9 @@ def metadata(video_id):
     meta["upload"] = up
     db.set_video(video_id, title=title, meta=json.dumps(meta))
     (data_dir("videos", str(video_id)) / "upload.json").write_text(json.dumps(up, indent=2))
+    if v["path"]:
+        try:
+            packaging.record(video_id, title, v["path"], row["hook"])     # its title and first-frame style
+        except Exception:
+            pass
     return up
