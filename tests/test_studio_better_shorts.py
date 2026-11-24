@@ -289,7 +289,7 @@ def test_upgrades_fall_back_one_by_one(three, fake_voice, monkeypatch, tmp_path)
     assert states[-1] == "ready", db.video(vid)["error"]
     used = json.loads(db.video(vid)["meta"])["render"]["engines"]
     assert "CUDA out of memory" in used["sharpen"] and used["motion"].startswith("flat push-in")
-    assert "no Pexels key" in used["footage"] and used["edit"] == "calm" and "sfx" not in used
+    assert used["footage"].startswith("none") and used["edit"] == "calm" and "sfx" not in used
     assert all("motion" not in s for s in got["scenes"]) and "fx" not in got
 
 
@@ -346,7 +346,9 @@ def test_depth_move_parallax():
 
 
 def test_pexels_key_and_choice(studio_home):  # noqa: F811
-    from studio import footage
+    from studio import config, footage
+    assert footage.sources() == ["nasa"]                     # NASA needs no key
+    config.set_values(footage_nasa=False)
     assert not footage.ready()
     with pytest.raises(ValueError):
         footage.save_key("not a key!")

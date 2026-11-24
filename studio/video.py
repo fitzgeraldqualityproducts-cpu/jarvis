@@ -644,13 +644,14 @@ def _depth_moves(raws, enh, starts, folder, pal, used):
 
 
 def _footage_moves(video_id, scenes, starts, folder, used, record):
-    """{scene: {"video", "kind"}}: real Pexels clips for the scenes the planner gave a footage search."""
+    """{scene: {"video", "kind"}}: real stock clips (Pexels, Pixabay or NASA) for the scenes the planner gave a
+    footage search."""
     from studio import art, footage
     if not footage.ready():
-        used["footage"] = "none (no Pexels key yet: run Connect Stock Footage)"
+        used["footage"] = "none (no footage library: run Connect Stock Footage)"
         return {}
     spans = [starts[k + 1] - starts[k] for k in range(len(scenes))]
-    out, why, seen = {}, [], {}
+    out, why, seen, libs = {}, [], {}, []
     shade = None
     for k in footage.pick_scenes(scenes, spans):
         need = spans[k] + FADE + 0.1
@@ -659,20 +660,25 @@ def _footage_moves(video_id, scenes, starts, folder, used, record):
             why.append(info)
             continue
         # a clip used again starts further in, so the same shot never plays twice
-        start = max(0.0, min(seen.get(info["id"], 0.0), info["duration"] - need - 0.2))
+        start = max(0.0, min(seen.get(info["id"], info.get("skip") or 0.0), info["duration"] - need - 0.2))
         try:
             shade = shade or footage.shade_png(art.hud_shade(W, H), folder / "shade.png")
-            p = footage.scene_clip(src, need, folder / f"footage_{k + 1:02d}.mp4", shade, W, H, FPS, start=start)
+            p = footage.scene_clip(src, need, folder / f"footage_{k + 1:02d}.mp4", shade, W, H, FPS, start=start,
+                                   layout=info.get("layout") or "cover")
         except Exception as e:
             why.append(str(e)[:120])
             continue
         seen[info["id"]] = start + need
         out[k] = {"video": p.name, "kind": "footage"}
+        site = info.get("source") or "pexels"
+        libs.append(footage.NAMES[site])
         if record:
             db.insert("INSERT INTO assets(video_id, kind, path, origin, source_url, license, attribution, sha256, created) "
                       "VALUES(?,?,?,?,?,?,?,?,?)", video_id, "footage:scene", str(p), "stock", info["page"] or None,
-                      footage.LICENCE, f"Video by {info['user'] or 'a Pexels creator'} on Pexels", _sha(p), time.time())
-    used["footage"] = (f"Pexels: {len(out)} scene{'s' if len(out) != 1 else ''}" if out else "none") + (f" ({why[0]})" if why else "")
+                      footage.LICENCES[site], info.get("credit") or f"Video by {info['user'] or 'a Pexels creator'} on Pexels",
+                      _sha(p), time.time())
+    names = " + ".join(dict.fromkeys(libs))
+    used["footage"] = (f"{names}: {len(out)} scene{'s' if len(out) != 1 else ''}" if out else "none") + (f" ({why[0]})" if why else "")
     return out
 
 
@@ -974,12 +980,17 @@ def metadata(video_id):
     eng_used = (meta.get("render") or {}).get("engines") or {}
     ai_pictures = str(eng_used.get("images", "")).startswith("SDXL")
     ai_music = str(eng_used.get("music", "")).startswith("ACE-Step")
-    stock = str(eng_used.get("footage", "")).startswith("Pexels")
+    from studio import footage
+    libs = str(eng_used.get("footage", "")).split(":", 1)[0].split(" + ")
+    libs = [n for n in libs if n in footage.NAMES.values()]
+    stock = bool(libs)
     if stock:
         credits = [r["attribution"] for r in db.q("SELECT DISTINCT attribution FROM assets WHERE video_id=? AND "
                                                   "kind='footage:scene'", video_id) if r["attribution"]]
-        stock_line = "Some scenes are stock footage from Pexels (" + "; ".join(credits[:4]) + ")." if credits else \
-            "Some scenes are stock footage from Pexels."
+        where = " and ".join(libs)
+        stock_line = f"Some scenes are stock footage from {where}" + (" (" + "; ".join(credits[:4]) + ")" if credits else "") + "."
+        if "NASA" in libs:
+            stock_line += " NASA does not endorse this channel."
     if ai_pictures or ai_music or stock:          # said plainly, before the hashtags
         pics = ("The other pictures are AI-generated illustrations." if stock else
                 "The pictures are AI-generated illustrations, not real footage.") if ai_pictures else ""

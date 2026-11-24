@@ -29,7 +29,7 @@
               engines (status) | engines install [tool|all] | engines check | engines use on|off [area...] [--if-ready]
   handover    moves the business to another computer: handover export (old one; switches it off there)
               | handover import [zip] [--replace] (new one; autopilot stays off) | handover undo
-  footage     stock footage from Pexels (free key): footage connect (asks for the key) | footage (status)
+  footage     stock footage (Pixabay/Pexels free key, NASA no key): footage connect (asks for a key) | footage (status)
   sample      makes a side-by-side sample with the upgraded tools from a finished Short (--video <id>):
               its voice and video next to the current ones; changes nothing and uploads nothing"""
 import json
@@ -544,8 +544,10 @@ def main(argv):
                 print(e)
                 return 1
         else:
-            print("Pexels stock footage: " + ("key saved, ready" if footage.ready() else
-                                              "no key yet (run: python -m studio footage connect)"))
+            libs = [footage.NAMES[s] for s in footage.sources()]
+            print("Stock footage libraries: " + (", ".join(libs) if libs else "none") +
+                  ("" if footage.key("pixabay") or footage.key("pexels") else
+                   " (add a free Pixabay key with: python -m studio footage connect)"))
     elif cmd == "run":
         jobs.start()
         try:

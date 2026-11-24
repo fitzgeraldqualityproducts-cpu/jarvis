@@ -13,7 +13,7 @@ if not exist "studio\footage.py" (
   pause
   exit /b 1
 )
-echo Saves a free Pexels key so some scenes in the Shorts can use real stock footage.
+echo Saves a free Pixabay key so some scenes in the Shorts can use real stock footage. NASA footage needs no key.
 ".venv\Scripts\python.exe" -m studio footage connect
 echo.
 pause

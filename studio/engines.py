@@ -31,8 +31,9 @@ tool is missing, too slow, short of memory or fails, the studio uses what it use
                                                punch-in and shake on the payoff, a jump zoom in long scenes.
   sfx      "none" (default)    | "synth"       sound effects made by Jarvis itself (whooshes, ticks, a hit on
                                                the payoff), under the voice. Nothing downloaded.
-  footage  "none" (default)    | "pexels"      real stock clips from Pexels for some scenes (free key, saved
-                                               with Connect Stock Footage); the AI picture stays the fallback.
+  footage  "none" (default)    | "pexels"      real stock clips for some scenes from Pexels or Pixabay (free key,
+                                               saved with Connect Stock Footage) or NASA's library (no key); the
+                                               AI picture stays the fallback. (The value keeps its old name.)
 
 Config: "studio": {"engines": {"voice": ..., "align": ..., "visuals": ..., "compose": ...}}.
 `python -m studio engines install` sets the tools up (free downloads, a few GB), `... status` shows
