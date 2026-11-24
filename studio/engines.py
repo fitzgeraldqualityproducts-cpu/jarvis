@@ -12,6 +12,15 @@ tool is missing, too slow, short of memory or fails, the studio uses what it use
                                                circles and steps instead of still pictures.
   compose  "classic" (default) | "remotion"    Remotion (free for individuals and companies of up to 3
                                                people): animated captions, transitions, motion.
+  images   "classic" (default) | "sdxl"        SDXL-Turbo (Stability AI Community License: free, also for
+                                               commercial use, under $1M a year in revenue): an AI
+                                               illustration behind each scene's numbers. NVIDIA card only.
+  music    "none" (default)    | "acestep"     ACE-Step 1.5 (MIT; its music may be used commercially): quiet
+                                               instrumental music under the voice, matched to the Short.
+                                               NVIDIA card only. (MusicGen was ruled out: CC-BY-NC weights.)
+  look     "diagram" (default) | "hud"         "hud" is the cinematic look from Connor's reference video: a
+                                               full-screen AI picture per scene, a counter in the top left and
+                                               one serif sentence at a time. Needs the AI pictures (images).
 
 Config: "studio": {"engines": {"voice": ..., "align": ..., "visuals": ..., "compose": ...}}.
 `python -m studio engines install` sets the tools up (free downloads, a few GB), `... status` shows
@@ -20,7 +29,9 @@ memory than the computer has right now is skipped for that job.
 
 Windows PC with an NVIDIA card: Chatterbox and whisperX get the CUDA build of PyTorch (so they run on
 the graphics card), Manim comes from PyPI (its drawing libraries have Windows wheels) and Remotion
-uses Node.js (its official portable copy in tools/node if the PC has none)."""
+uses Node.js (its official portable copy in tools/node if the PC has none). SDXL-Turbo and ACE-Step keep
+their model downloads and raw outputs on D:\\Jarvis when the PC has a D: drive (code and environments stay
+in tools/ on C:); config "studio.models_dir" / "studio.outputs_dir" can point elsewhere."""
 import json
 import os
 import platform
@@ -37,18 +48,29 @@ from studio import ROOT, config, data_dir
 TOOLS = ROOT / "tools"
 WORKERS = Path(__file__).parent / "workers"
 REMOTION = Path(__file__).parent / "remotion"
-DEFAULTS = {"voice": "kokoro", "align": "whisper", "visuals": "classic", "compose": "classic"}
-UPGRADED = {"voice": "chatterbox", "align": "whisperx", "visuals": "manim", "compose": "remotion"}
+DEFAULTS = {"voice": "kokoro", "align": "whisper", "visuals": "classic", "compose": "classic", "images": "classic",
+            "music": "none", "look": "diagram"}
+UPGRADED = {"voice": "chatterbox", "align": "whisperx", "visuals": "manim", "compose": "remotion", "images": "sdxl",
+            "music": "acestep", "look": "hud"}
+# ACE-Step 1.5 at a fixed commit (its own pyproject pins the CUDA PyTorch for Windows), as a zip: no git needed
+ACESTEP_COMMIT = "ca1e85fe9430179831e6bc6be790c332190a3866"
+ACESTEP_ZIP = f"https://github.com/ACE-Step/ACE-Step-1.5/archive/{ACESTEP_COMMIT}.zip"
 # what each tool needs: its environment's python, the packages, free memory (GB) and a time limit (s)
 SPECS = {
     "chatterbox": {"python": "3.11", "pip": ["chatterbox-tts==0.1.7", "setuptools<81"], "mem_gb": 3.0, "timeout": 1500},
     "whisperx": {"python": "3.12", "pip": ["whisperx==3.8.6", "num2words==0.5.14"], "mem_gb": 1.5, "timeout": 600},
     "manim": {"conda": ["python=3.12", "manim"], "mem_gb": 1.0, "timeout": 1200},
     "remotion": {"node": True, "mem_gb": 1.5, "timeout": 1800},
+    "sdxl": {"python": "3.12", "pip": ["diffusers==0.32.2", "transformers==4.48.3", "accelerate==1.3.0",
+                                       "safetensors==0.5.2", "pillow==11.1.0"],
+             "mem_gb": 3.0, "timeout": 1200, "gpu_only": True},
+    "acestep": {"python": "3.12", "project": ACESTEP_ZIP, "mem_gb": 4.0, "timeout": 1800, "gpu_only": True},
 }
-GPU_TOOLS = ("chatterbox", "whisperx")         # these run on an NVIDIA card when there is one
+GPU_TOOLS = ("chatterbox", "whisperx", "sdxl")  # these run on an NVIDIA card when there is one
+MODELS_ON_D = ("sdxl", "acestep")              # their model downloads go to models_dir()
 CUDA_BACKEND = "cu126"
-TOOL_FOR = {"voice": "chatterbox", "align": "whisperx", "visuals": "manim", "compose": "remotion"}
+TOOL_FOR = {"voice": "chatterbox", "align": "whisperx", "visuals": "manim", "compose": "remotion", "images": "sdxl",
+            "music": "acestep"}
 RUNNER = None          # tests swap this: (tool, worker, payload, timeout) -> dict
 
 
@@ -76,6 +98,27 @@ def python(tool):
     d = env_dir(tool)
     p = d / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     return p
+
+
+def _big_drive():
+    """D:\\Jarvis on a Windows PC that has a D: drive (the roomy one), else None."""
+    if os.name == "nt" and Path("D:/").exists():
+        return Path("D:/Jarvis")
+    return None
+
+
+def models_dir():
+    """Where SDXL-Turbo and ACE-Step download their models (None: each library's usual cache)."""
+    p = config.general().get("models_dir") or (_big_drive() and _big_drive() / "models")
+    return Path(p) if p else None
+
+
+def outputs_dir(*parts):
+    """Where raw AI pictures and music are kept (D:\\Jarvis\\studio\\... on the PC, else the studio folder)."""
+    base = config.general().get("outputs_dir") or (_big_drive() and _big_drive() / "studio")
+    d = Path(base).joinpath(*parts) if base else data_dir(*parts)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def installed(tool):
@@ -331,6 +374,8 @@ def run(tool, worker, payload, timeout=None):
         return RUNNER(tool, worker, payload, timeout)
     if not installed(tool):
         raise EngineError(f"{tool} isn't installed (run: python -m studio engines install)")
+    if spec.get("gpu_only") and not nvidia():
+        raise EngineError(f"{tool} needs an NVIDIA graphics card")
     ok, free, need = enough_memory(tool)
     if not ok:
         raise EngineError(f"{tool} needs about {need:.1f} GB of free memory and only {free:.1f} GB is free")
@@ -341,6 +386,12 @@ def run(tool, worker, payload, timeout=None):
                    HF_HUB_DISABLE_TELEMETRY="1", JV_WORKERS=str(WORKERS))
         env.pop("PYTHONPATH", None)
         env["PATH"] = str(_tool_bin()) + os.pathsep + env.get("PATH", "")
+        md = models_dir() if tool in MODELS_ON_D else None
+        if md:
+            env["HF_HOME"] = str(md / "huggingface")
+            env["ACESTEP_CHECKPOINTS_DIR"] = str(md / "acestep")
+        if tool == "acestep":
+            env["JV_ACESTEP_SRC"] = str(TOOLS / "acestep-src")
         cmd = [str(python(tool)), "-I", str(WORKERS / f"{worker}.py"), str(pin), str(pout)]
         try:
             p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=tmp)
@@ -433,6 +484,11 @@ def install(tool, log=print):
         log("Downloading Remotion's headless browser...")
         subprocess.run([*npx, "remotion", "browser", "ensure"], cwd=REMOTION, check=False, env=_node_env())
         return
+    if spec.get("gpu_only") and not nvidia():
+        raise EngineError(f"{tool} needs an NVIDIA graphics card, so it isn't set up on this computer")
+    if "project" in spec:
+        _install_project(tool, spec, log)
+        return
     if "conda" in spec and sys.platform != "darwin":
         spec = {"python": "3.12", "pip": ["manim==0.22.1"]}       # PyPI has Windows/Linux wheels for its drawing libraries
     if "conda" in spec:
@@ -463,6 +519,35 @@ def install(tool, log=print):
             return
         log(f"Couldn't get the graphics-card version, so installing the slower processor-only {tool}.")
     subprocess.run(cmd, check=True)
+
+
+def _install_project(tool, spec, log=print):
+    """A tool that is a whole project with its own locked dependencies (ACE-Step): its source zip at a fixed
+    commit into tools/<tool>-src, then `uv sync` from its lock file into tools/<tool>."""
+    import io
+    import urllib.request
+    import zipfile
+    uv = _uv()
+    if not uv:
+        raise EngineError("uv isn't installed (it's what Jarvis uses to make Python environments)")
+    src = TOOLS / f"{tool}-src"
+    log(f"Downloading {tool} (source at a fixed version)...")
+    from clipper import youtube
+    with urllib.request.urlopen(spec["project"], timeout=120, context=youtube._ctx()) as r:
+        data = r.read()
+    tmp = TOOLS / f"{tool}-src.new"
+    shutil.rmtree(tmp, ignore_errors=True)
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        z.extractall(tmp)
+    inner = next(p for p in tmp.iterdir() if p.is_dir())
+    shutil.rmtree(src, ignore_errors=True)
+    inner.rename(src)
+    shutil.rmtree(tmp, ignore_errors=True)
+    log(f"Installing {tool} (Python {spec['python']}, for the graphics card, about 4 GB)...")
+    env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(env_dir(tool)), UV_PYTHON=spec["python"])
+    if subprocess.run([uv, "sync", "--frozen", "--no-dev"], cwd=src, env=env).returncode != 0:
+        log("The locked install didn't work; trying once more without the lock...")
+        subprocess.run([uv, "sync", "--no-dev"], cwd=src, env=env, check=True)
 
 
 def check(tool):

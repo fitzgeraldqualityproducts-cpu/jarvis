@@ -35,6 +35,7 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
 from studio import health, jobs, status
 
@@ -73,8 +74,9 @@ def _engines(argv):
         if on and "--if-ready" in argv:                  # only switch on the tools that pass their check here
             keep = []
             for area in areas or list(engines.DEFAULTS):
-                ok, why = engines.check(engines.TOOL_FOR[area])
-                print(f"{area} ({engines.TOOL_FOR[area]}): {'switching on' if ok else 'not ready, left as it is'} ({why})")
+                tool = engines.TOOL_FOR.get(area)
+                ok, why = engines.check(tool) if tool else (True, "no tool of its own")
+                print(f"{area} ({tool or 'style'}): {'switching on' if ok else 'not ready, left as it is'} ({why})")
                 if ok:
                     keep.append(area)
             areas = keep
@@ -105,10 +107,16 @@ def _sample(argv):
     folder = data_dir("videos", str(vid))
     out = data_dir("videos", str(vid), "sample")
     print(f"Sample for Short {vid}: {db.video(vid)['title'] or ''}")
-    print("1/2 Narration with Chatterbox (the channel's voice, more expressive)...")
-    v = narration.narrate(row["body"], out / "voice_upgraded.wav", vid, engine="chatterbox", record=False)
-    print(f"    {v['engine']}: {v['seconds']} s" + (f"  ({v['fallback']})" if v.get("fallback") else ""))
-    print("2/2 Video with whisperX timing, Manim animations and Remotion captions...")
+    cur = db.one("SELECT path, engine FROM voiceovers WHERE video_id=? ORDER BY id DESC LIMIT 1", vid)
+    if cur and cur["engine"] == "chatterbox" and cur["path"] and Path(cur["path"]).exists():
+        print("1/2 Narration: this Short already has the Chatterbox voice, so it's reused")
+        v = {"path": cur["path"]}
+    else:
+        print("1/2 Narration with Chatterbox (the channel's voice, more expressive)...")
+        v = narration.narrate(row["body"], out / "voice_upgraded.wav", vid, engine="chatterbox", record=False)
+        print(f"    {v['engine']}: {v['seconds']} s" + (f"  ({v['fallback']})" if v.get("fallback") else ""))
+    print("2/2 Video with every upgrade: AI pictures, background music, the cinematic look, whisperX timing "
+          "and Remotion...")
     rep = video.render(vid, progress=lambda s: print("    " + s), engines_override=engines.UPGRADED,
                        out_name="sample/short_upgraded.mp4", record=False, voice_path=v["path"])
     for k, why in rep["engines"].items():
@@ -123,7 +131,7 @@ def _sample(argv):
     diff = float(np.mean(np.abs(first.astype(np.int16) - last.astype(np.int16)))) if first is not None else None
     print(f"\nDone: {rep['duration']} s, speech starts at {rep['speech_start']} s, loop difference "
           f"{diff if diff is None else round(diff, 1)}, {rep['caption_words_shown']} of {rep['words']} words captioned.")
-    print(f"Compare them in {out}: short_current.mp4 vs short_upgraded.mp4, voice_current.wav vs voice_upgraded.wav")
+    print(f"Compare them in {out}: short_current.mp4 vs short_upgraded.mp4")
     _reveal(str(out))
     return 0
 

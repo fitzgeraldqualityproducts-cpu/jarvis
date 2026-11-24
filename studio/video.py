@@ -203,7 +203,10 @@ def plan(script_row):
 Use only numbers from the line or these checked calculations:
 {calcs or '- (none)'}
 Keep text short (labels under 6 words, headline under 9). Prefer number/equation/compare/scale when the line
-has numbers; use steps for a process; headline otherwise. Writer's visual notes are hints only.{learned}
+has numbers; use steps for a process; headline otherwise. Writer's visual notes are hints only.
+Also give every scene "art": 5-12 words describing a picture of the scene's real-world subject as a place or
+objects seen from a person's point of view (e.g. "a crowded beach at Waikiki seen from the sand"); no text,
+numbers, diagrams, faces or famous people.{learned}
 
 Lines:
 """ + "\n".join(f"{i + 1}. {t}  (note: {st['lines'][i].get('visual', '')})" for i, t in enumerate(lines)) + \
@@ -220,6 +223,10 @@ Lines:
         out.append(s if _valid(s) else _fallback(line))
     if out:
         out[0] = hook_scene(lines[0], out[0])
+    for i, sc in enumerate(out):                   # the picture idea survives a replaced or fixed-up scene
+        art = scenes[i].get("art") if i < len(scenes) and isinstance(scenes[i], dict) else None
+        if art and not sc.get("art"):
+            out[i] = dict(sc, art=str(art)[:160])
     return out
 
 
@@ -287,10 +294,11 @@ def _fmtnum(v):
     return f"{v:,.2f}".rstrip("0").rstrip(".")
 
 
-def draw_scene(scene, pal, handle=""):
-    """The scene as a PIL RGB image (1080x1920). Returns (image, bounding box of what was drawn)."""
+def draw_scene(scene, pal, handle="", bg=None):
+    """The scene as a PIL RGB image (1080x1920). Returns (image, bounding box of what was drawn). bg: an AI
+    picture to draw on (see studio/art.py) instead of the plain background."""
     from PIL import ImageDraw
-    img = background(pal)
+    img = bg.copy() if bg is not None else background(pal)
     d = ImageDraw.Draw(img)
     text, muted, cyan, amber = _rgb(pal["text"]), _rgb(pal["muted"]), _rgb(pal["cyan"]), _rgb(pal["amber"])
     x0, x1, y0, y1 = BOX["x0"], BOX["x1"], BOX["y0"], BOX["y1"]
@@ -422,14 +430,137 @@ def _zoom(frame, z):
     return cv2.warpAffine(frame, m, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
 
+# ---------- the cinematic look (Connor's reference style) ----------
+# A full-screen picture of the subject for every scene (slow push-in), a small counter in the top left (an
+# all-caps label, a big serif number that counts, an all-caps line under it) that stays on screen and moves
+# on with the story, the hook as a serif question at the top of the first scene, and one calm italic serif
+# sentence at a time as the caption. The numbers and words are drawn by Jarvis, never by the image model.
+HUD_X, HUD_Y = BOX["x0"] + 10, BOX["y0"] + 20
+TITLE_TOP = 650                  # the hook question on the first scene (same in studio/remotion/src/Short.tsx)
+LINE_CAPTION = {"y": 0.66, "left": 80, "width": W - 80 - 150, "size": 54, "lineHeight": 1.25}
+SERIF = {False: ["C:/Windows/Fonts/georgia.ttf", "/System/Library/Fonts/Supplemental/Georgia.ttf",
+                 "/Library/Fonts/Georgia.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"],
+         True: ["C:/Windows/Fonts/georgiai.ttf", "/System/Library/Fonts/Supplemental/Georgia Italic.ttf",
+                "/Library/Fonts/Georgia Italic.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf"]}
+
+
+def _serif(size, italic=False):
+    from PIL import ImageFont
+    for n in SERIF[italic]:
+        if Path(n).exists():
+            return ImageFont.truetype(n, size)
+    return _font(size, False)
+
+
+def _split_num(v):
+    """("2,970 t") -> (2970.0, decimals, "t") or None when there's no number to count."""
+    m = re.match(r"^\s*([-+]?\d[\d,]*(?:\.\d+)?)\s*(.*)$", str(v))
+    if not m:
+        return None
+    n = m.group(1).replace(",", "")
+    return float(n), (len(n.split(".")[1]) if "." in n else 0), m.group(2).strip()
+
+
+def huds(scenes):
+    """The counter for every scene: {"label", "value", "sub"} plus "num"/"from"/"dec"/"unit" when the value
+    is a number that can count up. A scene without a number keeps the last counter, like the reference."""
+    out, last = [], None
+    for sc in scenes:
+        t, h = sc.get("type"), None
+        if t == "number":
+            h = {"label": sc.get("label") or "", "value": f"{sc['value']} {sc.get('unit') or ''}".strip()}
+        elif t == "equation":
+            h = {"label": sc.get("left") or "", "value": str(sc["right"]), "sub": sc.get("label") or ""}
+        elif t in ("compare", "scale") and sc.get("items"):
+            top = max(sc["items"], key=lambda i: _num(i["value"]))
+            h = {"label": str(top.get("label") or ""), "value": f"{top['value']} {sc.get('unit') or ''}".strip()}
+        if h:
+            h["label"] = " ".join(str(h["label"]).split()[:6]).upper()
+            h["sub"] = " ".join(str(h.get("sub") or "").split()[:6]).upper()
+            parts = _split_num(h["value"])
+            if parts:
+                prev = _split_num(last["value"]) if last else None
+                h.update(num=parts[0], dec=min(parts[1], 2), unit=parts[2],
+                         **{"from": prev[0] if prev and prev[2] == parts[2] and prev[0] < parts[0] else 0.0})
+            last = h
+        out.append(dict(last) if last else None)
+    if out and out[0]:
+        out[0]["from"] = out[0].get("num", 0.0)          # the first frame already shows the hook's number
+    return out
+
+
+def draw_cinematic(bg, hud, pal, title=""):
+    """A cinematic scene still: the picture, the counter (final value) and, on the hook, the question.
+    Returns (PIL image, bounding box of what was drawn)."""
+    from PIL import ImageDraw
+    img = bg.copy()
+    d = ImageDraw.Draw(img)
+    white, soft = (255, 255, 255), (235, 240, 248)
+    drawn = []
+
+    def put(xy, text, f, fill, shadow=True):
+        if shadow:
+            for dx, dy in ((0, 3), (2, 2), (-2, 2)):
+                d.text((xy[0] + dx, xy[1] + dy), text, font=f, fill=(0, 0, 0))
+        d.text(xy, text, font=f, fill=fill)
+        drawn.append(d.textbbox(xy, text, font=f))
+        return drawn[-1]
+
+    y = HUD_Y
+    if hud:
+        width = BOX["x1"] - HUD_X
+        if hud.get("label"):
+            f, ls, _ = _fit(d, hud["label"], 24, width, 1)
+            y = put((HUD_X, y), ls[0], f, soft)[3] + 10
+        f = _serif(88)
+        while d.textlength(hud["value"], font=f) > width and f.size > 50:
+            f = _serif(f.size - 6)
+        y = put((HUD_X, y), hud["value"], f, white)[3] + 12
+        if hud.get("sub"):
+            f, ls, _ = _fit(d, hud["sub"], 22, width, 1, bold=True)
+            y = put((HUD_X, y), ls[0], f, soft)[3]
+    if title:
+        f = _serif(66)
+        ls = _wrap(d, title, f, BOX["x1"] - BOX["x0"] - 20)[:3]
+        yy = max(y + 40, TITLE_TOP)
+        for ln in ls:
+            x = BOX["x0"] + (BOX["x1"] - BOX["x0"] - d.textlength(ln, font=f)) / 2
+            yy = put((x, yy), ln, f, white)[3] + 12
+    box = [min(b[0] for b in drawn), min(b[1] for b in drawn), max(b[2] for b in drawn),
+           max(b[3] for b in drawn)] if drawn else [BOX["x0"], BOX["y0"], BOX["x0"] + 1, BOX["y0"] + 1]
+    return img, box
+
+
+def _line_caption_props(lines, words, starts):
+    """One italic sentence at a time: the narrated line's own text while it's spoken (every word of it is
+    counted as shown). Also the caption boxes for the safe-area check."""
+    from PIL import Image, ImageDraw
+    d = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    f = _serif(LINE_CAPTION["size"], True)
+    pages, boxes = [], []
+    for k, text in enumerate(lines):
+        s0, s1 = starts[k], starts[k + 1]
+        idx = [i for i, w in enumerate(words) if s0 <= float(w["s"] or 0) < s1 or (k == len(lines) - 1 and float(w["s"] or 0) >= s0)]
+        n = len(_wrap(d, text, f, LINE_CAPTION["width"]))
+        h = int(n * LINE_CAPTION["size"] * LINE_CAPTION["lineHeight"])
+        # the hook is already on screen as the title, so its words aren't repeated as a caption
+        pages.append({"s": s0, "e": s1, "text": "" if k == 0 else text, "words": idx})
+        if k:
+            boxes.append((LINE_CAPTION["left"], int(LINE_CAPTION["y"] * H - h / 2), LINE_CAPTION["width"], h))
+    return pages, boxes
+
+
 ANIMATED = ("number", "equation", "compare", "scale", "steps", "headline")
 
 
-def _manim_clips(scenes, starts, folder, pal, handle, bg):
+def _manim_clips(scenes, starts, folder, pal, handle, bg, bgs=None):
     """{scene index: {"video", "hold", "seconds"}} from Manim, for every scene but the hook (whose first
-    frame must already show its number). Scenes Manim couldn't make keep their still picture."""
+    frame must already show its number). Scenes Manim couldn't make keep their still picture. bgs: the
+    scenes' own AI pictures ({index: path}), else the plain background for all."""
     from studio import engines
-    jobs_ = [{"spec": sc, "out": str(folder / f"manim_{i + 1:02d}.mp4"), "seconds": starts[i + 1] - starts[i]}
+    bgs = bgs or {}
+    jobs_ = [{"spec": sc, "out": str(folder / f"manim_{i + 1:02d}.mp4"), "seconds": starts[i + 1] - starts[i],
+              **({"background": str(bgs[i])} if i in bgs else {})}
              for i, sc in enumerate(scenes) if i > 0 and sc.get("type") in ANIMATED]
     if not jobs_:
         return {}, "no scenes to animate"
@@ -520,12 +651,45 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     scenes = meta["scenes"]
     pal = palette()
     handle = (db.one("SELECT handle FROM channel WHERE id=1") or {"handle": ""})["handle"] or ""
+    look = eng.get("look", "diagram")
+    bgs, bg_paths = {}, {}
+    if eng["images"] == "sdxl" or look == "hud":
+        progress("Painting a picture for every scene (SDXL-Turbo)")
+        try:
+            from studio import art
+            raws = art.raw_pictures(video_id, scenes, lines, look)
+            for k, rp in sorted(raws.items()):
+                bgs[k] = art.prepare(rp, pal, look)
+                bg_paths[k] = folder / f"bg_{k + 1:02d}.png"
+                bgs[k].save(bg_paths[k])
+            if look == "hud" and len(bgs) < len(scenes):
+                raise engines.EngineError(f"only {len(bgs)} of {len(scenes)} pictures came out")
+            used["images"] = f"SDXL-Turbo: {len(bgs)} of {len(scenes)} scenes"
+        except Exception as e:
+            bgs, bg_paths = {}, {}
+            used["images"] = f"drawn backgrounds (the AI pictures weren't used: {str(e)[:200]})"
+    else:
+        used["images"] = "drawn backgrounds"
+    if look == "hud" and not bgs:
+        look = "diagram"
+        used["look"] = "diagram (the cinematic look needs the AI pictures)"
+    else:
+        used["look"] = "cinematic (the reference style)" if look == "hud" else "diagram"
+    hud_list = huds(scenes) if look == "hud" else None
     progress("Drawing the scenes")
     imgs, boxes, stills = [], [], []
     if record:
         db.run("DELETE FROM assets WHERE video_id=? AND origin='generated'", video_id)
+        from studio import art
+        for k, bp in bg_paths.items():
+            db.insert("INSERT INTO assets(video_id, kind, path, origin, source_url, license, attribution, sha256, created) "
+                      "VALUES(?,?,?,?,?,?,?,?,?)", video_id, "art:scene", str(bp), "generated", None, art.LICENCE,
+                      art.prompt(scenes[k], lines[k] if k < len(lines) else "", look)[:300], _sha(bp), time.time())
     for i, sc in enumerate(scenes):
-        img, box = draw_scene(sc, pal, handle)
+        if look == "hud":
+            img, box = draw_cinematic(bgs[i], hud_list[i], pal, title=lines[0] if i == 0 else "")
+        else:
+            img, box = draw_scene(sc, pal, handle, bg=bgs.get(i))
         p = folder / f"scene_{i + 1:02d}.png"
         img.save(p)
         stills.append(p)
@@ -553,13 +717,34 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     padded = folder / "voice_end.wav"                         # a short silent tail so the last scene can settle
     media.run(["-y", "-i", voice_path, "-af", f"apad=pad_dur=0.3,atrim=0:{end + 0.05:.3f},afade=t=out:st={max(0.0, end - 0.08):.3f}:d=0.08",
                "-ar", "48000", str(padded)])
+    if eng["music"] == "acestep":
+        progress("Making the background music (ACE-Step)")
+        try:
+            from studio import music, topics
+            vrow = db.video(video_id)
+            tp = topics.topic(vrow["topic_id"]) if vrow and vrow["topic_id"] else None
+            raw_music, mood = music.make(video_id, end, tp)
+            mixed = folder / "voice_music.wav"
+            music.mix(padded, raw_music, end + 0.05, mixed)
+            padded = mixed
+            used["music"] = f"ACE-Step: {mood}"
+            if record:
+                db.insert("INSERT INTO assets(video_id, kind, path, origin, source_url, license, attribution, sha256, "
+                          "created) VALUES(?,?,?,?,?,?,?,?,?)", video_id, "music", str(raw_music), "generated", None,
+                          music.LICENCE, mood[:300], _sha(raw_music), time.time())
+        except Exception as e:
+            used["music"] = f"none (the music wasn't used: {str(e)[:200]})"
+    else:
+        used["music"] = "none"
     clips = {}
-    if eng["visuals"] == "manim":
+    if look == "hud":
+        used["visuals"] = "full-screen pictures with a slow push-in (the cinematic look doesn't use Manim)"
+    elif eng["visuals"] == "manim":
         progress("Animating the scenes (Manim)")
         try:
             bg = folder / "background.png"
             background(pal).save(bg)
-            clips, used["visuals"] = _manim_clips(scenes, starts, folder, pal, handle, bg)
+            clips, used["visuals"] = _manim_clips(scenes, starts, folder, pal, handle, bg, bg_paths)
             used["visuals"] = "Manim: " + used["visuals"]
             for k, c in clips.items():
                 if record:
@@ -578,14 +763,20 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     if eng["compose"] == "remotion":
         progress("Composing with Remotion")
         try:
-            cap_props, cap_boxes = _caption_props(words, pal)
+            if look == "hud":
+                pages_, cap_boxes = _line_caption_props(lines, words, starts)
+                cap_props = {"pages": pages_, "keywords": [], "caption": dict(LINE_CAPTION, maxLines=3), "look": "hud"}
+            else:
+                cap_props, cap_boxes = _caption_props(words, pal)
             props = {"fps": FPS, "width": W, "height": H, "duration": round(end, 3), "audio": padded.name,
                      "words": [{"w": w["w"], "s": float(w["s"]), "e": float(w["e"])} for w in words],
                      "palette": {k: pal[k] for k in ("cyan", "amber", "text", "background")},
                      "fade": FADE, "punch": PUNCH, "loopBlend": LOOP_BLEND, **cap_props,
                      "scenes": [{"start": starts[k], "end": starts[k + 1], "image": stills[k].name,
                                  **({"video": Path(clips[k]["video"]).name, "videoSeconds": clips[k]["seconds"],
-                                     "hold": Path(clips[k]["hold"]).name} if k in clips else {})}
+                                     "hold": Path(clips[k]["hold"]).name} if k in clips else {}),
+                                 **({"bg": bg_paths[k].name, "hud": hud_list[k], "title": lines[0] if k == 0 else ""}
+                                    if look == "hud" else {})}
                                 for k in range(len(scenes))]}
             with engines.heavy("Remotion render"):
                 engines.remotion_render(props, folder, tmp)
@@ -677,12 +868,21 @@ def metadata(video_id):
     desc = (f"{title}\n\n{first}\n\nSources:\n" + "\n".join(f"- {u}" for u in srcs[:6]) +
             "\n\nEvery number here is worked out from the sources above. Narration is AI-generated (a synthetic voice); "
             "the script was written and fact-checked with AI and checked against the sources.\n\n" + " ".join(tags_hash))
-    up = {"title": title, "description": desc[:4900], "tags": kws, "categoryId": "27", "defaultLanguage": "en",
-          "defaultAudioLanguage": "en-US", "madeForKids": False, "containsSyntheticMedia": False,
-          "synthetic_reason": "No realistic people, places or events are shown: original diagrams and a generic "
-                              "synthetic narrator voice (disclosed in the description).",
-          "sources": srcs}
     meta = json.loads(v["meta"] or "{}")
+    eng_used = (meta.get("render") or {}).get("engines") or {}
+    ai_pictures = str(eng_used.get("images", "")).startswith("SDXL")
+    ai_music = str(eng_used.get("music", "")).startswith("ACE-Step")
+    if ai_pictures or ai_music:                   # said plainly, before the hashtags
+        extra = " ".join(x for x in ("The pictures are AI-generated illustrations, not real footage." if ai_pictures
+                                     else "", "The background music is AI-generated." if ai_music else "") if x)
+        desc = desc.replace("\n\n" + " ".join(tags_hash), " " + extra + "\n\n" + " ".join(tags_hash))
+    up = {"title": title, "description": desc[:4900], "tags": kws, "categoryId": "27", "defaultLanguage": "en",
+          "defaultAudioLanguage": "en-US", "madeForKids": False, "containsSyntheticMedia": ai_pictures,
+          "synthetic_reason": ("AI-generated pictures of real places and things are shown, so YouTube's altered or "
+                               "synthetic content label is switched on." if ai_pictures else
+                               "No realistic people, places or events are shown: original diagrams and a generic "
+                               "synthetic narrator voice (disclosed in the description)."),
+          "sources": srcs}
     meta["upload"] = up
     db.set_video(video_id, title=title, meta=json.dumps(meta))
     (data_dir("videos", str(video_id)) / "upload.json").write_text(json.dumps(up, indent=2))
