@@ -1,9 +1,11 @@
 """Chatterbox narration (runs inside tools/chatterbox). In: {"text", "out", "reference"?, "exaggeration",
-"cfg_weight", "seed"}. Out: {"path", "rate", "seconds", "device", "sentences"}.
+"cfg_weight", "seed", "gap"?, "segments"?}. Out: {"path", "rate", "seconds", "device", "sentences"}.
 
 Reads the script one sentence at a time (Chatterbox is best on short passages), with a short pause
 between sentences, then writes one mono WAV. With "reference" (a few seconds of the channel's Kokoro
-voice) it speaks in that voice, so the channel sounds the same, just more natural."""
+voice) it speaks in that voice, so the channel sounds the same, just more natural. With "segments" ([{text,
+exaggeration, cfg_weight, pause_before}], one per script line) each line gets its own delivery: more feeling
+and a short pause before the payoff, so the big number lands."""
 import json
 import re
 import sys
@@ -41,14 +43,21 @@ try:
     if job.get("reference"):
         model.prepare_conditionals(job["reference"], exaggeration=kw["exaggeration"])
     rate = model.sr
-    gap = np.zeros(int(rate * 0.18), dtype=np.float32)
-    chunks = []
-    for s in sentences(job["text"]):
-        with torch.inference_mode():
-            wav = model.generate(s, **kw)
-        chunks.append(wav.squeeze(0).detach().cpu().numpy().astype(np.float32))
-        chunks.append(gap)
-    audio = np.concatenate(chunks[:-1]) if chunks else np.zeros(1, dtype=np.float32)
+    base_gap = float(job.get("gap", 0.18))
+    segs = job.get("segments") or [{"text": job["text"]}]
+    chunks, n = [], 0
+    for seg in segs:
+        skw = {"exaggeration": float(seg.get("exaggeration", kw["exaggeration"])),
+               "cfg_weight": float(seg.get("cfg_weight", kw["cfg_weight"]))}
+        for j, s in enumerate(sentences(seg["text"])):
+            if chunks:
+                pause = max(base_gap, float(seg.get("pause_before", 0))) if j == 0 else base_gap
+                chunks.append(np.zeros(int(rate * pause), dtype=np.float32))
+            with torch.inference_mode():
+                wav = model.generate(s, **skw)
+            chunks.append(wav.squeeze(0).detach().cpu().numpy().astype(np.float32))
+            n += 1
+    audio = np.concatenate(chunks) if chunks else np.zeros(1, dtype=np.float32)
     import wave                           # 16-bit PCM: the format Jarvis's own WAV reader understands
     pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
     with wave.open(job["out"], "wb") as w:
@@ -57,6 +66,6 @@ try:
         w.setframerate(int(rate))
         w.writeframes(pcm.tobytes())
     json.dump({"path": job["out"], "rate": rate, "seconds": round(len(audio) / rate, 2), "device": device,
-               "sentences": len(chunks) // 2, "took": round(time.time() - t0, 1)}, open(pout, "w"))
+               "sentences": n, "took": round(time.time() - t0, 1)}, open(pout, "w"))
 except Exception as e:
     json.dump({"error": f"{type(e).__name__}: {e}"}, open(pout, "w"))

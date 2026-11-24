@@ -148,8 +148,26 @@ def _niche():
     return d, d.get("plan") or {}
 
 
+DRAFTS = 3                              # first drafts written side by side; the strongest goes on (config studio.drafts)
+BEATS = ("hook", "setup", "math", "rehook", "payoff", "loop")
+STOCK_REHOOKS = ("here's the thing", "here's the weird part", "but wait", "wait for it", "it turns out", "plot twist")
+
+
+def _drafts_wanted(feedback, previous):
+    if feedback or previous:
+        return 1                                # a revision fixes the one draft that was checked
+    try:
+        from studio import config
+        n = int(config.general().get("drafts") or DRAFTS)
+    except Exception:
+        n = DRAFTS
+    return max(1, min(3, n))
+
+
 def write(topic, feedback=None, previous=None):
-    """A draft: {"hooks": [5], "lines": [{"text", "facts": [ids], "visual"}], "calcs": [...], "titles": [...]}"""
+    """A draft: {"hooks": [5], "lines": [{"text", "facts": [ids], "visual", "beat"}], "calcs": [...], "titles": [...]}.
+    A first draft is written three ways at once (each built around a different everyday image); the code drops the
+    ones that break a hard rule and a short judging call picks the strongest of the rest."""
     from studio import claude
     d, plan = _niche()
     facts = _facts(topic)
@@ -201,21 +219,41 @@ Rules:
   facts don't give (like the wavelength of red light), write that line with the value, mark its facts ["needs"]
   and list it in "needs". Jarvis then looks for a real page that states it; if none does, the line is dropped. At
   most two needs, and only when the Short doesn't work without them.
+- Talk to the viewer: say "you" and put the calculation in their world (your kitchen, your phone, your commute)
+  wherever it fits naturally. Never "we" as in "today we'll look at".
+- RE-HOOK: about halfway, after the setup and before the payoff, one short line (under 10 words) that raises the
+  stakes or opens a fresh question, so a viewer who is drifting stays for the answer. Your own words: not a stock
+  phrase like "but here's the thing", "wait for it" or "it turns out". It must be honest (the script delivers it).
+- Give every line a "beat": "hook" (line 1), "setup", "math" (a step of the calculation), "rehook", "payoff" (the
+  line that lands the surprising result; exactly one) or "loop" (the last line). The beats drive the edit: the
+  payoff gets the big on-screen moment and the narrator leans on it.
 - "visual" says what the screen shows for that line (diagram, chart, number, map, simple animation; no footage).
 Also write 5 different hooks (each could replace line 1) and 3 title options (under 60 characters, honest).{learned}{fix}
 
-JSON only: {{"hooks": ["..." x5], "lines": [{{"text": "...", "facts": ["F1"], "visual": "..."}}],
-"calcs": [{{"expr": "...", "result": 0.0, "unit": "...", "says": "what it shows"}}], "titles": ["..." x3],
-"needs": [{{"line": 4, "what": "the wavelength of red light", "value": "700 nm"}}]}} ("needs" is usually empty)"""
+{{shape}}"""
+    one = ('JSON only: {"hooks": ["..." x5], "lines": [{"text": "...", "facts": ["F1"], "visual": "...", "beat": "setup"}],\n'
+           '"calcs": [{"expr": "...", "result": 0.0, "unit": "...", "says": "what it shows"}], "titles": ["..." x3],\n'
+           '"needs": [{"line": 4, "what": "the wavelength of red light", "value": "700 nm"}]} ("needs" is usually empty)')
+    n = _drafts_wanted(feedback, previous)
+    first = not feedback and not previous
     ans = None
-    if not feedback and not previous and _local_draft_turn():
-        ans = _local_draft(prompt, facts)              # the trial: a first draft written on this computer
+    if first and _local_draft_turn():
+        ans = _local_draft(prompt.replace("{shape}", one), facts)   # the trial: a first draft written on this computer
+    if ans is None and n == 1:
+        ans = claude.ask_json(prompt.replace("{shape}", one), timeout=600, web=False, purpose=f"script: {topic['title']}")
     if ans is None:
-        ans = claude.ask_json(prompt, timeout=600, web=False, purpose=f"script: {topic['title']}")
+        many = (f"Write {n} COMPLETE drafts that follow every rule above. Each is built around a DIFFERENT everyday image "
+                "or angle (say which in \"angle\"), so they are real alternatives, not rewordings. Same facts, same "
+                "honesty rules.\n\n"
+                'JSON only: {"drafts": [{"angle": "...", "hooks": ["..." x5], "lines": [{"text": "...", "facts": ["F1"], '
+                '"visual": "...", "beat": "setup"}], "calcs": [{"expr": "...", "result": 0.0, "unit": "...", "says": '
+                f'"..."}}], "titles": ["..." x3], "needs": []}} x{n}]}}')
+        raw = claude.ask_json(prompt.replace("{shape}", many), timeout=900, web=False,
+                              purpose=f"script ({n} drafts): {topic['title']}")
+        ans = pick_draft(raw, topic)
     if not isinstance(ans, dict) or not ans.get("lines"):
         raise ScriptRejected("Claude didn't return a script")
-    ans["lines"] = [ln for ln in ans["lines"] if isinstance(ln, dict) and str(ln.get("text", "")).strip()]
-    ans["hooks"] = [str(h) for h in (ans.get("hooks") or []) if str(h).strip()][:5]
+    ans = _clean(ans)
     ans = fill_needs(ans, topic)
     for _ in range(2):                            # wrong length: fix it here, before a costly fact-check
         n = len(text_of(ans, ans["hooks"][0] if ans["hooks"] else None).split())
@@ -223,6 +261,99 @@ JSON only: {{"hooks": ["..." x5], "lines": [{{"text": "...", "facts": ["F1"], "v
             break
         ans = _fit_length(ans, n) or ans
     return ans
+
+
+JUDGE_WEIGHTS = {"hook": 0.3, "payoff": 0.2, "clarity": 0.2, "momentum": 0.15, "you": 0.05, "original": 0.1}
+
+
+def _clean(d):
+    """A draft with empty lines dropped, at most 5 hooks and a known beat on every line."""
+    d = dict(d)
+    d["lines"] = [dict(ln) for ln in d.get("lines") or [] if isinstance(ln, dict) and str(ln.get("text", "")).strip()]
+    last = len(d["lines"]) - 1
+    for i, ln in enumerate(d["lines"]):
+        b = str(ln.get("beat") or "").strip().lower()
+        ln["beat"] = "hook" if i == 0 else b if b in BEATS and b != "hook" else ("loop" if i == last else "setup")
+    d["hooks"] = [str(h) for h in (d.get("hooks") or []) if str(h).strip()][:5]
+    return d
+
+
+def _screen(d):
+    """Hard problems the code can see before any judging (empty list = worth judging)."""
+    problems = []
+    if len(d.get("lines") or []) < 4:
+        problems.append("too few lines")
+    hooks = [h for h in d.get("hooks") or [] if not hook_checks(h)]
+    if not hooks:
+        problems.append("no hook passes the rules")
+    calcs = check_calcs(d.get("calcs"))
+    if not calcs:
+        problems.append("no calculation")
+    problems += [c["problem"] for c in calcs if not c["ok"]]
+    n = len(text_of(d, hooks[0] if hooks else None).split()) if d.get("lines") else 0
+    if not WORDS_MIN - 20 <= n <= WORDS_MAX + 25:          # a little over or under is fixed later; far off isn't
+        problems.append(f"{n} words")
+    low = " ".join(str(ln["text"]).lower() for ln in d.get("lines") or [])
+    problems += [f"stock phrase \"{p}\"" for p in STOCK_REHOOKS if p in low]
+    return problems
+
+
+def judge_score(scores):
+    have = {k: float(v) for k, v in (scores or {}).items() if k in JUDGE_WEIGHTS and isinstance(v, (int, float))}
+    w = sum(JUDGE_WEIGHTS[k] for k in have)
+    return round(sum(JUDGE_WEIGHTS[k] * v for k, v in have.items()) / w, 2) if w else 0.0
+
+
+def _judge(pool, topic):
+    """{letter: scores} from one short Claude call (no web) that compares the drafts as a viewer would."""
+    from studio import claude
+    letters = "ABCDE"
+    parts = []
+    for k, (_, d) in enumerate(pool):
+        hook = next((h for h in d["hooks"] if not hook_checks(h)), d["lines"][0]["text"])
+        body = "\n".join(f"  [{ln.get('beat')}] {hook if i == 0 else ln['text']}" for i, ln in enumerate(d["lines"]))
+        parts.append(f"Draft {letters[k]} (angle: {str(d.get('angle') or '')[:120]}):\n{body}")
+    ans = claude.ask_json(f"""Judge these drafts of one YouTube Short about "{topic['title']}" as a sharp short-form editor would.
+Facts are checked later, so judge only how well each one would hold a scrolling viewer to the end.
+
+""" + "\n\n".join(parts) + """
+
+Score each 0-10: "hook" (would a scroller stop in the first second?), "payoff" (how surprising and satisfying the
+result is), "clarity" (can you follow the math by ear, once?), "momentum" (a real re-hook halfway, no dead or
+repeated lines), "you" (puts it in the viewer's own world), "original" (not the standard textbook explainer).
+
+JSON only: {"scores": {"A": {"hook": 0, "payoff": 0, "clarity": 0, "momentum": 0, "you": 0, "original": 0}}, "best": "A", "why": "one sentence"}""",
+                          timeout=300, web=False, purpose=f"pick a draft: {topic['title']}")
+    out = {}
+    for k, v in ((ans or {}).get("scores") or {}).items() if isinstance(ans, dict) else []:
+        k = str(k).strip().upper()[:1]
+        if k in letters[:len(pool)] and isinstance(v, dict):
+            out[letters.index(k)] = v
+    return out, (str(ans.get("why") or "")[:300] if isinstance(ans, dict) else "")
+
+
+def pick_draft(raw, topic):
+    """The strongest of the side-by-side drafts (or the only one). Drafts that break a hard rule the code can
+    check are dropped first; a short judging call ranks the rest. Never fails because of the judge."""
+    drafts = raw.get("drafts") if isinstance(raw, dict) and isinstance(raw.get("drafts"), list) else [raw]
+    drafts = [_clean(d) for d in drafts if isinstance(d, dict) and d.get("lines")]
+    if not drafts:
+        return None
+    good = [(i, d) for i, d in enumerate(drafts) if not _screen(d)]
+    pool = good or [(i, d) for i, d in enumerate(drafts)]
+    scores, why = {}, ""
+    if len(pool) > 1:
+        try:
+            scores, why = _judge(pool, topic)
+        except Exception as e:
+            print(f"(couldn't judge the drafts: {str(e)[:120]}; using the first good one)")
+    best = max(range(len(pool)), key=lambda k: (judge_score(scores.get(k)), -k)) if scores else 0
+    chosen = dict(pool[best][1])
+    chosen.pop("angle", None)
+    chosen["picked"] = {"of": len(drafts), "passed_screen": len(good), "angle": str(pool[best][1].get("angle") or "")[:160],
+                        "score": judge_score(scores.get(best)) if scores else None, "why": why,
+                        "dropped": {str(i): _screen(d)[:3] for i, d in enumerate(drafts) if (i, d) not in good}}
+    return chosen
 
 
 MAX_NEEDS = 2
@@ -302,14 +433,14 @@ meaning and the closing line. Change nothing else. Each hook must stay under {HO
 
 {json.dumps(draft)[:6000]}
 
-JSON only, the same shape: {{"hooks": [...], "lines": [{{"text": "...", "facts": [...], "visual": "..."}}],
+JSON only, the same shape (keep each line's "beat"): {{"hooks": [...], "lines": [{{"text": "...", "facts": [...], "visual": "...", "beat": "..."}}],
 "calcs": [...], "titles": [...]}}""", timeout=300, web=False, purpose="script length")
     if not isinstance(ans, dict) or not ans.get("lines"):
         return None
     lines = [ln for ln in ans["lines"] if isinstance(ln, dict) and str(ln.get("text", "")).strip()]
     if not lines:
         return None
-    out = dict(draft, lines=lines)
+    out = _clean(dict(draft, lines=lines))
     hooks = [str(h) for h in (ans.get("hooks") or []) if str(h).strip()][:5]
     if hooks:
         out["hooks"] = hooks
@@ -561,14 +692,15 @@ number specific to this topic never counts as standard. Opinion or transition li
 Rate each hook 0-10 on curiosity, clarity, specificity, honesty (10 = fully delivered by the script, no bait) and
 speed (gets to the point at once).
 Also: "loop" 0-10 (read the LAST line and then the FIRST line: does it flow back into the start as one continuous
-thought, so a viewer would keep watching when it repeats?), "originality" 0-10 (own explanation and wording vs a generic or copied explainer), "originality_fix" (if originality is under 7: one
+thought, so a viewer would keep watching when it repeats?), "rehook" 0-10 (is there an honest line about halfway
+that raises the stakes or opens a new question, so a drifting viewer stays for the payoff?), "originality" 0-10 (own explanation and wording vs a generic or copied explainer), "originality_fix" (if originality is under 7: one
 sentence naming what reads generic and a concrete idea to make it the channel's own), "inauthentic_risk"
 "low/medium/high" (does it read like mass-produced template content?), and "problems": anything else a careful
 editor would fix (confusing step, misleading simplification, unit mistake).
 
 JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|wrong|n/a", "fact": "F1", "note": "..."}}],
 "hooks": {{"0": {{"curiosity": 0, "clarity": 0, "specificity": 0, "honesty": 0, "speed": 0}}}},
-"loop": 0, "originality": 0, "originality_fix": "...", "inauthentic_risk": "low", "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
+"loop": 0, "rehook": 0, "originality": 0, "originality_fix": "...", "inauthentic_risk": "low", "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
     if not isinstance(ans, dict):
         raise ScriptRejected("the fact-check didn't return a result")
     problems = []
@@ -606,6 +738,9 @@ JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|
     loop = ans.get("loop")
     if isinstance(loop, (int, float)) and loop < 5:
         problems.append(f"editor: the ending doesn't lead back into the hook (loop {loop}/10); make the last line set up the first")
+    rehook = ans.get("rehook")
+    if isinstance(rehook, (int, float)) and rehook < 5:
+        problems.append(f"editor: no real re-hook halfway (rehook {rehook}/10); add one short line that raises the stakes")
     orig = ans.get("originality")
     if isinstance(orig, (int, float)) and orig < 6:
         tip = str(ans.get("originality_fix") or "").strip()
@@ -618,7 +753,7 @@ JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|
     problems += [f"editor: {p}" for p in ans.get("problems") or [] if isinstance(p, str) and p.strip()][:5]
     hard = [p for p in problems if not p.startswith("editor: ")]
     return {"ok": not hard, "problems": problems, "hard_problems": hard, "claims": claims, "hook_ratings": ratings,
-            "hook_index": hi, "hook_score": hs, "hook": hook, "body": body, "words": words, "calcs": calcs, "loop": loop,
+            "hook_index": hi, "hook_score": hs, "hook": hook, "body": body, "words": words, "calcs": calcs, "loop": loop, "rehook": rehook,
             "originality": orig, "inauthentic_risk": ans.get("inauthentic_risk"), "similar": [sim, sim_vid]}
 
 
@@ -641,7 +776,8 @@ def draft_step(topic, video_id=None, feedback=None, previous=None, draft=None):
     return db.insert("INSERT INTO scripts(video_id, version, hooks, hook, body, structure, checks, status, created) "
                      "VALUES(?,?,?,?,?,?,?,?,?)", video_id, v + 1, json.dumps(draft["hooks"]), hook, text_of(draft),
                      json.dumps({"lines": draft["lines"], "calcs": draft.get("calcs") or [], "titles": draft.get("titles") or [],
-                                 "by": draft.get("by") or "claude"}),
+                                 "by": draft.get("by") or "claude",
+                                 **({"picked": draft["picked"]} if draft.get("picked") else {})}),
                      "{}", "draft", time.time())
 
 
@@ -661,7 +797,7 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     draft = _draft_of(row)
     rev = review(draft, topic, video_id)
     checks = {k: rev[k] for k in ("ok", "problems", "hard_problems", "claims", "hook_ratings", "hook_index",
-                                  "hook_score", "words", "loop", "originality", "inauthentic_risk", "similar")}
+                                  "hook_score", "words", "loop", "rehook", "originality", "inauthentic_risk", "similar")}
     st = json.loads(row["structure"] or "{}")
     st["calcs"] = rev["calcs"]
     db.run("UPDATE scripts SET hook=?, body=?, structure=?, checks=?, status=? WHERE id=?", rev["hook"], rev["body"],
