@@ -47,7 +47,19 @@ def _no_resources(e):
     return "1450" in t or "insufficient system resources" in t or "paging file is too small" in t
 
 
-def generate(device, small):
+def _old_card():
+    """True on a graphics card older than the RTX 30 series (Turing and before: no bfloat16). There
+    ACE-Step's float16 overflows into NaN, so it has to run in float32, as ACE-Step itself advises."""
+    import torch
+    return torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] < 8
+
+
+def _bad_numbers(e):
+    t = str(e)
+    return "NaN" in t or "Inf latents" in t
+
+
+def generate(device, small, quant=True):
     """One instrumental piece on this device. Returns the path ACE-Step wrote (inside a temp folder that the
     caller copies from) and the folder to clean up."""
     _lean_loading()
@@ -57,7 +69,7 @@ def generate(device, small):
     msg, ok = dit.initialize_service(project_root=os.environ.get("JV_ACESTEP_SRC") or os.getcwd(),
                                      config_path="acestep-v15-turbo", device=device,
                                      offload_to_cpu=small, offload_dit_to_cpu=small,
-                                     quantization="int8_weight_only" if small and device == "cuda" else None)
+                                     quantization="int8_weight_only" if quant and small and device == "cuda" else None)
     if not ok:
         raise RuntimeError(f"ACE-Step didn't start: {msg}"[:300])
     params = GenerationParams(caption=job["caption"], lyrics="[Instrumental]", instrumental=True,
@@ -76,8 +88,18 @@ try:
     import torch
     cuda = torch.cuda.is_available()
     device, note = ("cuda" if cuda else "cpu"), ""
+    if _old_card():
+        os.environ["ACESTEP_DTYPE"] = "float32"   # read by ACE-Step when it loads; must be set before that
     try:
-        path, tmp = generate(device, small=_vram() < 12)
+        try:
+            path, tmp = generate(device, small=_vram() < 12)
+        except Exception as e:
+            if not (cuda and _bad_numbers(e)):
+                raise
+            torch.cuda.empty_cache()             # once more without the 8-bit weights, in full precision
+            os.environ["ACESTEP_DTYPE"] = "float32"
+            note = "made again in full precision after the first try came out silent"
+            path, tmp = generate(device, small=True, quant=False)
     except Exception as e:
         if _no_resources(e):                     # the processor would need the same memory: don't retry
             raise RuntimeError("the computer ran out of memory loading the music model (RAM plus page file); "
