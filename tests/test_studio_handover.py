@@ -218,3 +218,38 @@ def test_windows_node_download_is_checked_and_found(studio_home, monkeypatch, tm
     answers["sums"] = good.encode()
     node = engines._download_node(log=lambda *a: None)
     assert node == tmp_path / "tools" / "node" / "node.exe" and node.read_bytes() == b"exe"
+
+
+def test_light_stages_run_while_the_clipper_is_busy(studio_home, monkeypatch):  # noqa: F811
+    from studio import config, db, health, jobs
+    config.set_values(enabled=True)
+    seen = []
+    for st in db.STATES[:10]:
+        jobs.register(st, lambda v, ctx, st=st: seen.append(st) or db.STATES[db.STATES.index(st) + 1])
+    a = jobs.create(idem_key="a")
+    db.set_video(a, state="rendering")
+    b = jobs.create(idem_key="b")                   # researching
+    monkeypatch.setattr(health, "clipper_busy", lambda: True)
+    assert jobs.tick() == "scripting" and seen == ["researching"]        # b moved on, a (rendering) waited
+    assert db.video(a)["state"] == "rendering"
+    monkeypatch.setattr(health, "clipper_busy", lambda: False)
+    jobs.tick()
+    assert seen[-1] == "rendering"                  # heavy work goes on once the clipper is done
+
+
+def test_claude_cap_is_looked_at_again_soon(studio_home, monkeypatch):  # noqa: F811
+    import time
+    from studio import claude, config
+    config.set_values(claude_calls_per_day=1)
+    monkeypatch.setattr(claude, "used_today", lambda: 1)
+    with pytest.raises(claude.QuotaWait) as e:
+        claude.ask("hi")
+    assert e.value.until <= time.time() + 1800 + 5
+
+
+def test_voice_skips_elevenlabs_without_a_key(monkeypatch):
+    import voice
+    monkeypatch.setattr(voice, "_cfg", lambda: {"voice_engine": "auto"})
+    assert "elevenlabs" not in voice._order()
+    monkeypatch.setattr(voice, "_cfg", lambda: {"voice_engine": "auto", "elevenlabs_api_key": "k"})
+    assert voice._order()[0] == "elevenlabs"

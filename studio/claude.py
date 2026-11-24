@@ -224,7 +224,8 @@ def ask(prompt, timeout=300, web=False, purpose=""):
     guard.allow("claude.ask", purpose or prompt[:120], record=False)
     cap = config.general()["claude_calls_per_day"]
     if used_today() >= cap:
-        raise QuotaWait(f"the studio has used today's {cap} Claude calls", _tomorrow())
+        # look again in 30 minutes (no Claude call is spent on a look), so raising the cap frees it soon
+        raise QuotaWait(f"the studio has used today's {cap} Claude calls", min(_tomorrow(), time.time() + 1800))
     if RUNNER is _claude:
         _shared_budget()
     db.put(f"claude_calls_{_today()}", used_today() + 1)
