@@ -241,6 +241,7 @@ def test_unsupported_line_gets_a_source_lookup_before_it_is_cut(studio_home, mon
                     "VALUES(?,?,?,?,?,?,?,?,?)", 3, 1, '["h"]', "h", "b", json.dumps(st), "{}", "failed", 0)
     row = dict(db.one("SELECT * FROM scripts WHERE id=?", rid))
     draft = {"hooks": ["h"], "lines": lines, "calcs": []}
+    monkeypatch.setattr(script, "lookup_on", lambda: True)
     asked = []
     monkeypatch.setattr(script, "look_up", lambda a, t, most=2: (asked.append(a), {2: "F3"})[1])
     rev = {"hard_problems": ["line 2 is unsupported: no source gives the crater size"]}

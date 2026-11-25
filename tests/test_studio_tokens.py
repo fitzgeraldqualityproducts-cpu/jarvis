@@ -119,3 +119,22 @@ def test_partial_checks_can_be_switched_off(fakes, monkeypatch):  # noqa: F811
     (result, row), topic, vid = _run(fakes, monkeypatch, checker)
     assert result == "passed" and "rechecked" not in json.loads(row["checks"])
     assert len([p for p in checker.prompts if p.startswith("You are a strict fact-checker and editor")]) == 2
+
+
+def test_an_unsupported_line_found_by_a_lookup_is_checked_again_without_a_rewrite(fakes, monkeypatch):  # noqa: F811
+    from studio import claude, db, script, topics
+    checker = Checker()
+    monkeypatch.setattr(claude, "RUNNER", checker)
+    monkeypatch.setattr(script, "lookup_on", lambda: True)
+    asked = []
+    monkeypatch.setattr(script, "look_up", lambda a, t, most=2: (asked.append(sorted(a)), {3: "F2"})[1])
+    fc, tid = fakes
+    topic = topics.topic(tid)
+    vid = db.insert("INSERT INTO videos(title, state, topic_id) VALUES(?,?,?)", "t", "scripting", tid)
+    script.draft_step(topic, vid, draft=_draft())
+    result, row = script.check_step(topic, vid)
+    assert result == "passed" and asked == [[3]]
+    checks = json.loads(row["checks"])
+    assert checks["rechecked"] == [3] and json.loads(row["structure"])["lookup_from"]
+    assert not [p for p in checker.prompts if p.startswith("A fact-checker flagged")]     # no rewrite call
+    assert len([p for p in checker.prompts if p.startswith("You are a strict fact-checker and editor")]) == 1
