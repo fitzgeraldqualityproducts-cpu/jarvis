@@ -160,30 +160,33 @@ def unmatched_numbers(scenes, row):
     return bad
 
 
-def _hit(a, b, pad=8):
-    """Do two boxes (x0, y0, x1, y1) overlap (with a little breathing room)?"""
-    return not (a[2] + pad <= b[0] or b[2] + pad <= a[0] or a[3] + pad <= b[1] or b[3] + pad <= a[1])
+def _hit(a, b, pad=0):
+    """Do two boxes (x0, y0, x1, y1) overlap by more than pad pixels both ways?"""
+    return min(a[2], b[2]) - max(a[0], b[0]) > pad and min(a[3], b[3]) - max(a[1], b[1]) > pad
+
+
+CAPTION_SLACK = 24     # a caption box includes its line spacing: the letters start ~this far inside it
 
 
 def text_overlaps(rep):
-    """[what overlaps] among the cinematic look's text layers: a scene's counter/title, its diagram card and the
-    captions. (Caption boxes come as x, y, w, h.)"""
+    """(blocking, advice) lists of what overlaps among the cinematic look's text layers. A scene's counter against
+    its own diagram card is exact, so it blocks. Caption boxes are the tallest a caption page can be and carry no
+    scene, so a caption that may touch a card or counter is advice only. (Caption boxes come as x, y, w, h.)"""
     if not rep.get("cinematic"):
-        return []
+        return [], []
     caps = [(c[0], c[1], c[0] + c[2], c[1] + c[3]) for c in rep.get("caption_boxes") or []]
-    scene_boxes = rep.get("scene_boxes") or []
-    out = []
+    scene_boxes = rep.get("text_boxes") or rep.get("scene_boxes") or []   # scene_boxes also hold the card
+    block, advice = [], []
     for k, ov in (rep.get("overlay_boxes") or {}).items():
         k = int(k)
-        if k < len(scene_boxes) and _hit(scene_boxes[k], ov, pad=0):
-            out.append(f"scene {k + 1}: the counter overlaps the diagram card")
-        if any(_hit(c, ov) for c in caps):
-            out.append(f"scene {k + 1}: a caption overlaps the diagram card")
-    for k, b in enumerate(scene_boxes[1:], 1):
-        if any(_hit(c, b) for c in caps):
-            out.append(f"scene {k + 1}: a caption overlaps the counter")
-            break
-    return out
+        if k < len(scene_boxes) and _hit(scene_boxes[k], ov):
+            block.append(f"scene {k + 1}: the counter overlaps the diagram card")
+    cards = list((rep.get("overlay_boxes") or {}).values())
+    if any(_hit(c, ov, CAPTION_SLACK) for c in caps for ov in cards):
+        advice.append("a tall caption may touch a diagram card")
+    if any(_hit(c, b, CAPTION_SLACK) for c in caps for b in scene_boxes[1:]):
+        advice.append("a tall caption may touch a counter")
+    return block, advice
 
 
 def soft_pictures(rep):
@@ -285,10 +288,14 @@ def check(video_id):
             lessons.record("video", [f"visual qc: {x}" for x in found][:4],
                            topics.topic(v["topic_id"]) if v.get("topic_id") else None, video_id)
     weak = soft_pictures(rep)
-    if weak is not None:
-        _add(checks, "pictures sharpened to full size", not weak, weak or (rep.get("engines") or {}).get("sharpen", ""))
-    over = text_overlaps(rep)
-    _add(checks, "text layers don't overlap", not over, "; ".join(over[:3]))
+    if weak is not None:            # like "picture keeps changing": blocks only with visual_qc "block", else advice
+        vq = visual_mode()
+        _add(checks, "pictures sharpened to full size", not weak or vq != "block",
+             (weak + (" (advice only)" if vq != "block" else "")) if weak else
+             (rep.get("engines") or {}).get("sharpen", ""))
+    over, maybe = text_overlaps(rep)
+    _add(checks, "text layers don't overlap", not over,
+         "; ".join(over[:3] + [m + " (advice only)" for m in maybe]))
     if info.get("audio_duration") and info.get("video_duration"):
         gap = abs(float(info["audio_duration"]) - float(info["video_duration"]))
         _add(checks, "sound and picture same length", gap <= 0.25, f"{gap:.2f} s apart")

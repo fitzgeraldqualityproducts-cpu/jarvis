@@ -1334,6 +1334,7 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
             used["sfx"] = f"none (the sound effects weren't used: {str(e)[:200]})"
     lively = eng["edit"] == "lively"
     ovs = edit.overlays(scenes, look) if lively else {}
+    text_boxes = [list(b) for b in boxes]                   # the counter/title alone, for the overlap check
     if lively:
         for k, ov in ovs.items():                            # the diagrams count as drawn visuals for the safe area
             b, o = boxes[k], edit.overlay_box(ov)
@@ -1456,6 +1457,7 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
            "trimmed_lead": round(lead - 0.08, 3) if lead > 0.25 else 0.0,
            "scene_boxes": boxes, "words": len(words), "engines": used, "cinematic": look == "hud",
            "overlay_boxes": {str(k): list(edit.overlay_box(ov)) for k, ov in (ovs or {}).items()},
+           "text_boxes": text_boxes,
            "line_starts": [round(float(x), 3) for x in starts], **rep}
     if not record:
         return rep
