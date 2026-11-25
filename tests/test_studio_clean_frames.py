@@ -34,16 +34,20 @@ def test_on_screen_numbers_must_come_from_the_checked_script():
 
 def test_text_layers_that_overlap_are_found():
     from studio import qa
-    rep = {"cinematic": True, "scene_boxes": [(90, 270, 600, 420), (90, 270, 600, 420)],
+    rep = {"cinematic": True, "scene_boxes": [(90, 270, 600, 420), (80, 270, 1000, 1100)],
+           "text_boxes": [(90, 270, 600, 420), (90, 270, 600, 420)],
            "caption_boxes": [(90, 1300, 900, 160)], "overlay_boxes": {"1": [80, 500, 1000, 1100]}}
-    assert qa.text_overlaps(rep) == []
+    assert qa.text_overlaps(rep) == ([], [])            # the card inside scene_boxes isn't a clash with itself
     rep["overlay_boxes"] = {"1": [80, 400, 1000, 1350]}
-    got = qa.text_overlaps(rep)
-    assert any("counter overlaps the diagram" in g for g in got) and any("caption overlaps the diagram" in g for g in got)
-    assert qa.text_overlaps(dict(rep, cinematic=False)) == []       # the classic look draws text into one picture
+    block, advice = qa.text_overlaps(rep)
+    assert block == ["scene 2: the counter overlaps the diagram card"]
+    assert advice == ["a tall caption may touch a diagram card"]      # caption boxes are worst cases: advice
+    rep["overlay_boxes"] = {"1": [80, 500, 1000, 1310]}               # touching by 10 px: line spacing, fine
+    assert qa.text_overlaps(rep) == ([], [])
+    assert qa.text_overlaps(dict(rep, cinematic=False)) == ([], [])  # the classic look draws text into one picture
 
 
-def test_unsharpened_pictures_block_the_short():
+def test_unsharpened_pictures_are_found():
     from studio import qa
     assert qa.soft_pictures({"engines": {"sharpen": "Real-ESRGAN: 7 of 7 pictures"}}) == ""
     assert "only 5 of 7" in qa.soft_pictures({"engines": {"sharpen": "Real-ESRGAN: 5 of 7 pictures (worker died)"}})
