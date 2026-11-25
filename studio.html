@@ -177,7 +177,7 @@ a{color:inherit}
     <div class="panel"><h3 class="sec">Views and subscribers <em>last 14 days</em></h3>
       <div class="chart" id="c-growth"></div><div class="note" id="growth-note" style="display:none"></div></div>
     <div class="panel"><h3 class="sec">Where the minutes go <em id="time-sum"></em></h3>
-      <div class="chart" id="c-time"></div><div class="parts" id="parts"></div><div class="note" id="time-note" style="display:none">This fills in after the first finished Short.</div></div>
+      <div class="chart" id="timings"></div><div class="parts" id="parts"></div><div class="note" id="time-note" style="display:none">This fills in after the first finished Short.</div></div>
   </div>
 
   <div class="grid3">
@@ -354,20 +354,20 @@ function renderCharts(d){
   const showT = !!(tm && tm.stages && tm.stages.length);
   $("time-sum").textContent = showT ? `per Short, last ${tm.shorts} · ${mins(tm.total)}` : "";
   $("time-note").style.display = showT ? "none" : "";
-  $("c-time").style.display = showT && EC ? "" : "none";
+  $("timings").style.display = showT && EC ? "" : "none";
   $("parts").innerHTML = showT && tm.parts.length ? "Slowest parts: " + tm.parts.map(([n, s]) => `${esc(n)} <b>${esc(mins(s))}</b>`).join(" · ") : "";
   if (showT && EC) {
     const st = tm.stages, top = st[0][1];
-    $("c-time").style.height = Math.max(150, st.length * 32 + 20) + "px";
-    chart("c-time", {
+    $("timings").style.height = Math.max(150, st.length * 32 + 20) + "px";
+    chart("timings", {
       tooltip: {trigger: "item", formatter: p => esc(p.name) + ": " + mins(p.value * 60)},
       grid: {left: 16, right: 64, top: 6, bottom: 4, containLabel: true},
       xAxis: {type: "value", show: false}, yAxis: {type: "category", inverse: true, data: st.map(x => x[0]), ...AX, axisLine: {show: false}, axisLabel: {color: COL.text, fontSize: 13}},
       series: [{type: "bar", barWidth: 14, showBackground: true, backgroundStyle: {color: COL.grid, borderRadius: 7}, itemStyle: {borderRadius: 7},
         data: st.map(([n, s], i) => ({value: Math.round(s / 6) / 10, itemStyle: {color: s === top && top > 0 ? COL.warn : [COL.c, "#79cdfd", "#8fb9fc", "#9aa8fb", "#a39afa", COL.v, COL.v][Math.min(i, 6)]}})),
         label: {show: true, position: "right", color: COL.muted, fontSize: 12, formatter: p => mins(p.value * 60)}}]});
-    charts["c-time"] && charts["c-time"].resize();
-  } else unchart("c-time");
+    charts["timings"] && charts["timings"].resize();
+  } else unchart("timings");
 }
 
 function render(d){
