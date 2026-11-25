@@ -34,7 +34,9 @@
   footage     stock footage (Pixabay/Pexels free key, NASA no key): footage connect (asks for a key) | footage (status)
   sample      makes a side-by-side sample with the upgraded tools from a finished Short (--video <id>):
               its voice and video next to the current ones; changes nothing and uploads nothing.
-              --footage: a Short planned before stock footage existed gets footage searches (one Claude call)"""
+              --footage: a Short planned before stock footage existed gets footage searches (one Claude call)
+  --new-looks (video, sample): this run only, with the looks that wait for Connor's OK (storyboard shots and the
+              wave/ruler diagrams, bold captions); the saved settings are not changed"""
 import json
 import os
 import sys
@@ -92,12 +94,24 @@ def _engines(argv):
     return 0
 
 
+def _new_looks(argv):
+    """--new-looks: switches the looks that wait for Connor's OK on for this run only (config untouched)."""
+    if "--new-looks" not in argv:
+        return False
+    from studio import art, video
+    art.shots_on = lambda: True
+    video.type_style = lambda: "bold"
+    print("New looks on for this run only: storyboard shots, wave/ruler diagrams, bold captions.")
+    return True
+
+
 def _sample(argv):
     """The upgraded voice and video for a finished Short, next to the current ones (nothing saved)."""
     import shutil
     import subprocess
     from studio import data_dir, db, engines, narration, qa, script, video
     health.startup()
+    _new_looks(argv)
     if "--video" in argv:
         vid = int(argv[argv.index("--video") + 1])
     else:
@@ -185,6 +199,7 @@ def _script(argv):
 def _video(argv):
     import subprocess
     from studio import db, qa, video
+    _new_looks(argv)
     if "--video" in argv:
         vid = int(argv[argv.index("--video") + 1])
     else:

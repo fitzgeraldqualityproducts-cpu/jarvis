@@ -237,3 +237,13 @@ def test_visual_qc_advises_by_default_and_can_block(studio_home):  # noqa: F811
     assert qa.visual_mode() == "advise"
     config.set_values(visual_qc="block")
     assert qa.visual_mode() == "block"
+
+
+def test_new_looks_flag_is_for_one_run_and_leaves_settings_alone(studio_home, monkeypatch):  # noqa: F811
+    from studio import __main__ as cli, art, config, video
+    monkeypatch.setattr(art, "shots_on", art.shots_on)
+    monkeypatch.setattr(video, "type_style", video.type_style)
+    assert cli._new_looks([]) is False and art.shots_on() is False
+    assert cli._new_looks(["--new-looks"]) is True
+    assert art.shots_on() is True and video.type_style() == "bold"
+    assert "shots" not in config.general() and "type_style" not in config.general()
