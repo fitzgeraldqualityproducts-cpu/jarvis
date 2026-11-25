@@ -213,6 +213,7 @@ def storyboard_on():
 def plan(script_row):
     """One scene per line: [{"type", ...}] (Claude picks the template and fills it from the line)."""
     from studio import claude
+    from studio.jobs import QuotaWait
     st = json.loads(script_row["structure"])
     lines = [ln["text"] for ln in st["lines"]]
     lines[0] = script_row["hook"]
@@ -279,13 +280,17 @@ Lines:
          '"art": "...", "footage": "...", "real": "", "purpose": "...", "shots": [{"art": "...", "camera": "push-in", '
          '"shows": "..."}], "transition": "cut", "sfx": "none"}]}' if story else
          '\n\nJSON array with exactly one object per line, in order, e.g. [{"type": "headline", "text": "..."}]')
-    scenes = []
+    scenes, ans = [], None
     try:
         ans = claude.ask_json(prompt, timeout=300, web=False, purpose="visual plan")
         if isinstance(ans, dict):
             scenes = ans.get("scenes") if isinstance(ans.get("scenes"), list) else []
         else:
             scenes = ans if isinstance(ans, list) else []
+    except QuotaWait:
+        # out of today's Claude calls: wait for the reset rather than render a plain, diagram-free Short
+        # (Short 20 was made from the fallback plan after the daily cap ran out mid-run)
+        raise
     except Exception:
         scenes = []
     out = []
@@ -296,10 +301,7 @@ Lines:
         out[0] = hook_scene(lines[0], out[0])
     hero = None                                    # one fixed look for the main subject: new looks only
     if story and _art.shots_on():
-        try:
-            hero = _hero(ans if isinstance(ans, dict) else {})
-        except NameError:                          # the planner call failed before giving an answer
-            hero = None
+        hero = _hero(ans if isinstance(ans, dict) else {})
     for i, sc in enumerate(out):                   # the picture idea survives a replaced or fixed-up scene
         src = scenes[i] if i < len(scenes) and isinstance(scenes[i], dict) else {}
         art = src.get("art")
@@ -815,8 +817,9 @@ def huds(scenes):
                 prev = _split_num(last["value"]) if last else None
                 h.update(num=parts[0], dec=min(parts[1], 2), unit=parts[2],
                          **{"from": prev[0] if prev and prev[2] == parts[2] and prev[0] < parts[0] else 0.0})
-                if _year_like(h["value"], parts, h["label"]):
-                    h["from"] = parts[0]          # a date counting up from 0 would show years that never happened
+                if _year_like(h["value"], parts, h["label"]) or abs(parts[0]) < 10:
+                    h["from"] = parts[0]          # a date counting up from 0 shows years that never happened, and a
+                    # small number counting up just flickers ("0.0 millimeters" in Short 20)
             last = h
             out.append(dict(h))
             held = 0
