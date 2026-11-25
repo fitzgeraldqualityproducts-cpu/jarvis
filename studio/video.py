@@ -273,8 +273,9 @@ seen whole and from a distance, never a close-up of its surface. And "footage": 
 
 Lines:
 """ + "\n".join(f"{i + 1}. {t}  (note: {st['lines'][i].get('visual', '')})" for i, t in enumerate(lines)) + \
-        ('\n\nJSON object: {"subject": "the main subject", "story": "what the viewer sees from start to finish, in '
-         'two sentences", "scenes": [exactly one object per line, in order, e.g. {"type": "headline", "text": "...", '
+        ('\n\nJSON object: {"subject": "the main subject", "look": "how the main subject looks, 10-20 words, '
+         'fixed for every picture: shape, colour, main parts (e.g. a boxy silver satellite with one long dark '
+         'solar-panel wing)", "story": "what the viewer sees from start to finish, in two sentences", "scenes": [exactly one object per line, in order, e.g. {"type": "headline", "text": "...", '
          '"art": "...", "footage": "...", "real": "", "purpose": "...", "shots": [{"art": "...", "camera": "push-in", '
          '"shows": "..."}], "transition": "cut", "sfx": "none"}]}' if story else
          '\n\nJSON array with exactly one object per line, in order, e.g. [{"type": "headline", "text": "..."}]')
@@ -293,6 +294,12 @@ Lines:
         out.append(s if _valid(s) else _fallback(line))
     if out:
         out[0] = hook_scene(lines[0], out[0])
+    hero = None                                    # one fixed look for the main subject: new looks only
+    if story and _art.shots_on():
+        try:
+            hero = _hero(ans if isinstance(ans, dict) else {})
+        except NameError:                          # the planner call failed before giving an answer
+            hero = None
     for i, sc in enumerate(out):                   # the picture idea survives a replaced or fixed-up scene
         src = scenes[i] if i < len(scenes) and isinstance(scenes[i], dict) else {}
         art = src.get("art")
@@ -302,7 +309,24 @@ Lines:
         if fq and not sc.get("footage"):
             out[i] = sc = dict(sc, footage=fq[:40])
         out[i] = board_fields(out[i], src, lines[i])
+        if hero is not None:
+            out[i] = dict(out[i], look=hero[1] if _shows(out[i], hero[0]) else "")
     return out
+
+
+def _hero(ans):
+    """(main subject words, its fixed look) from the storyboard plan, or None."""
+    subj = " ".join(str(ans.get("subject") or "").split())[:60]
+    look = " ".join(str(ans.get("look") or "").split())[:140]
+    words = {w for w in re.findall(r"[a-z0-9]{4,}", subj.lower())} - {"with", "from", "that", "this", "your"}
+    return (words, look) if words else None
+
+
+def _shows(sc, words):
+    """Does this scene's picture show the main subject (its art or a shot names it)?"""
+    text = " ".join([str(sc.get("art") or "")] + [str(sh.get("art") or "") for sh in sc.get("shots") or []
+                                                   if isinstance(sh, dict)]).lower()
+    return any(w in text for w in words)
 
 
 CAMERAS = ("push-in", "pull-out", "pan-left", "pan-right", "close-up", "tilt-up")
@@ -755,6 +779,21 @@ def _year_like(value, parts, label=""):
     return not unit or unit.lower() in ("ad", "ce", "bc", "bce") or "YEAR" in str(label).upper()
 
 
+def _art_mod():
+    from studio import art
+    return art
+
+
+def no_double_numbers(hud_list, ovs):
+    """The counter list with no counter on a scene whose diagram card already shows the number (Short 19 showed
+    "5,924 s" in the counter and again on the equation card below it). The hook keeps its counter."""
+    out = list(hud_list)
+    for k in (ovs or {}):
+        if 0 < k < len(out):
+            out[k] = None
+    return out
+
+
 def huds(scenes):
     """The counter for every scene: {"label", "value", "sub"} plus "num"/"from"/"dec"/"unit" when the value
     is a number that can count up. A scene without a number keeps the last counter, like the reference."""
@@ -1081,6 +1120,11 @@ def _footage_moves(video_id, scenes, starts, folder, used, record):
     out, why, seen, libs, got = {}, [], {}, [], []
     shade = None
     for k in footage.pick_scenes(scenes, spans):
+        if scenes[k].get("look"):
+            # this scene shows the Short's own main subject (one fixed look): a stock clip of something
+            # similar would show the wrong thing (Short 19: the space station while the line was about Terra)
+            why.append(f"scene {k + 1}: shows the main subject, kept as a picture")
+            continue
         need = spans[k] + FADE + 0.1
         src, info = footage.fetch(scenes[k]["footage"], need, used=set(seen))
         if not src:
@@ -1214,6 +1258,8 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     else:
         used["look"] = "cinematic (the reference style)" if look == "hud" else "diagram"
     hud_list = huds(scenes) if look == "hud" else None
+    if hud_list and eng["edit"] == "lively" and _art_mod().shots_on():
+        hud_list = no_double_numbers(hud_list, edit.overlays(scenes, look))
     progress("Drawing the scenes")
     imgs, boxes, stills = [], [], []
     if record:

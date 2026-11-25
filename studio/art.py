@@ -24,8 +24,19 @@ def subject(scene, line):
     return s or " ".join(str(line).split())[:160]
 
 
+NO_PEOPLE = "empty of people"          # SDXL-Turbo ignores negative prompts, so this is said in the prompt itself
+
+
+def _with_look(art, scene):
+    """The scene's picture words plus the Short's one fixed description of its main subject (scene "look"), so
+    the same satellite or jet looks the same in every picture (Short 19's Terra changed shape every scene)."""
+    lk = " ".join(str(scene.get("look") or "").split())[:140] if isinstance(scene, dict) else ""
+    return f"{art}, {lk}" if lk else art
+
+
 def prompt(scene, line, look="diagram"):
-    return f"{subject(scene, line)}, {STYLE.get(look, STYLE['diagram'])}"
+    tail = f", {NO_PEOPLE}" if isinstance(scene, dict) and scene.get("look") is not None else ""
+    return f"{_with_look(subject(scene, line), scene)}, {STYLE.get(look, STYLE['diagram'])}{tail}"
 
 
 def _key(p, seed):
@@ -94,7 +105,8 @@ def shot_pictures(video_id, scenes, look="diagram"):
     want, have = [], {}
     for i, sc in enumerate(scenes):
         for j, sh in enumerate((sc.get("shots") or [])[1:3] if isinstance(sc, dict) else [], 1):
-            p = f"{' '.join(str(sh.get('art') or '').split())[:160]}, {STYLE.get(look, STYLE['diagram'])}"
+            p = (f"{_with_look(' '.join(str(sh.get('art') or '').split())[:160], sc)}, "
+                 f"{STYLE.get(look, STYLE['diagram'])}" + (f", {NO_PEOPLE}" if sc.get("look") is not None else ""))
             seed = int(video_id) * 100 + i + 5000 * j
             out = folder / f"shot_{i + 1:02d}_{j + 1}_{_key(p, seed)}.png"
             if out.exists():

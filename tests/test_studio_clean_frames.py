@@ -165,3 +165,33 @@ def test_a_chosen_example_value_must_be_labelled_as_the_narrators_pick():
     assert script._draft_problem(ans, facts) != "a fact id that doesn't exist"
     lines[2] = dict(lines[2], facts=["made-up"])
     assert script._draft_problem(ans, facts) == "a fact id that doesn't exist"
+
+
+def test_the_main_subject_keeps_one_look_and_pictures_stay_empty_of_people():
+    from studio import art, video
+    hero = video._hero({"subject": "the Terra satellite", "look": "a boxy silver satellite with one long dark solar wing"})
+    sc = {"art": "Terra satellite above the clouds", "shots": [{"art": "close-up of the satellite"}]}
+    assert video._shows(sc, hero[0]) and not video._shows({"art": "a phone alarm on a desk"}, hero[0])
+    p = art.prompt(dict(sc, look=hero[1]), "line", "hud")
+    assert "one long dark solar wing" in p and p.endswith(art.NO_PEOPLE)
+    assert art.prompt(sc, "line", "hud") == f"Terra satellite above the clouds, {art.STYLE['hud']}"   # old Shorts unchanged
+
+
+def test_no_counter_repeats_the_number_on_its_card():
+    from studio import video
+    huds = [{"value": "1999"}, {"value": "705 km"}, {"value": "5,924 s"}]
+    assert video.no_double_numbers(huds, {2: {"kind": "equation"}, 0: {"kind": "bars"}}) == \
+        [{"value": "1999"}, {"value": "705 km"}, None]
+
+
+def test_a_scene_showing_the_main_subject_gets_no_stock_clip(monkeypatch, tmp_path):
+    from studio import footage, video
+    asked = []
+    monkeypatch.setattr(footage, "ready", lambda: True)
+    monkeypatch.setattr(footage, "pick_scenes", lambda scenes, spans: [1, 2])
+    monkeypatch.setattr(footage, "fetch", lambda q, need, used=(): (asked.append(q), (None, "no clip"))[1])
+    scenes = [{"type": "headline"}, {"footage": "space station", "look": "a boxy silver satellite"},
+              {"footage": "ocean waves", "look": ""}]
+    used = {}
+    video._footage_moves(1, scenes, [0, 2, 4, 6], tmp_path, used, record=False)
+    assert asked == ["ocean waves"]
