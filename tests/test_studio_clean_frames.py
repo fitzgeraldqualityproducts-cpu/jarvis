@@ -150,3 +150,18 @@ def test_bar_units_keep_whole_words():
                        "items": [{"label": "Steep (5°)", "value": 11}, {"label": "Shallow (2°)", "value": 29}]})
     assert [i["text"] for i in ov["items"]] == ["11 × farther than high", "29 × farther than high"]
     assert edit._whole_words("tonnes of rocket fuel burned", 12) == "tonnes of"
+
+
+def test_a_chosen_example_value_must_be_labelled_as_the_narrators_pick():
+    """Short 18 stopped twice on a car length (4.7 m) the writer assumed as if it were a fact."""
+    import inspect
+    from studio import script
+    src = inspect.getsource(script)
+    assert 'mark that line\'s facts ["example"]' in src and "say the car is 4.5 m long" in src
+    facts = [{"claim": "A car's wheels are 1.6 m apart", "url": "https://example.org"}]
+    lines = [{"text": f"Line {i} about turning.", "facts": ["F1"], "beat": "setup"} for i in range(5)]
+    lines[2] = {"text": "Say the car is 4.5 m long.", "facts": ["example"], "beat": "math"}
+    ans = {"hooks": ["a?", "b?", "c?"], "lines": lines, "calcs": []}
+    assert script._draft_problem(ans, facts) != "a fact id that doesn't exist"
+    lines[2] = dict(lines[2], facts=["made-up"])
+    assert script._draft_problem(ans, facts) == "a fact id that doesn't exist"
