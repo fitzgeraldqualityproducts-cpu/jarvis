@@ -284,6 +284,65 @@ def _nasa_files(cand, seconds):
     return [u.replace("http://", "https://", 1) for u in mp4], secs
 
 
+# ---------- real photos of named things (config "real_photos", or --new-looks) ----------
+PHOTO_ORDER = ("~large.jpg", "~orig.jpg", "~medium.jpg")
+
+
+def photos_on():
+    try:
+        return config.general().get("real_photos", False) is True
+    except Exception:
+        return False
+
+
+def nasa_photo_candidates(answer, name, used=()):
+    """NASA image results that are about this named thing (every word of the name in the title, description or
+    keywords), not talks or someone else's material."""
+    out = []
+    words = [w for w in re.findall(r"[a-z0-9]+", str(name).lower()) if len(w) > 1 or w.isdigit()]
+    for it in ((answer or {}).get("collection") or {}).get("items") or []:
+        d = ((it or {}).get("data") or [{}])[0] or {}
+        nid = str(d.get("nasa_id") or "")
+        text = f" {d.get('title', '')} {d.get('description', '')} {' '.join(str(k) for k in d.get('keywords') or [])} "
+        low = text.lower()
+        if not nid or f"nasa_{nid}" in used or d.get("media_type") not in (None, "image") or not it.get("href") \
+                or _NASA_SKIP.search(low) or re.search(r"credit[s]?:\s*(?!nasa)", low):
+            continue
+        flat = re.sub(r"[^a-z0-9]+", "", low)
+        if not words or not all(re.sub(r"[^a-z0-9]", "", w) in flat for w in words):
+            continue
+        out.append({"id": f"nasa_{nid}", "nasa_id": nid, "manifest": it["href"], "title": str(d.get("title") or "")[:120],
+                    "page": f"https://images.nasa.gov/details/{urllib.parse.quote(nid)}", "source": "nasa",
+                    "credit": "Photo: NASA"})
+    return out
+
+
+def photo(name, folder, used=()):
+    """(path, info) of a real NASA photo of this named thing (an aircraft, spacecraft, telescope, planet...),
+    or (None, why). Never raises."""
+    try:
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        ans = _nasa_get(NASA_API + "?" + urllib.parse.urlencode({"q": str(name)[:100], "media_type": "image"}))
+        for c in nasa_photo_candidates(ans, name, used)[:4]:
+            files = [u for u in _nasa_get(c["manifest"]) or [] if isinstance(u, str)]
+            jpg = sorted((u for u in files if any(u.lower().endswith(o) for o in PHOTO_ORDER)),
+                         key=lambda u: next(i for i, o in enumerate(PHOTO_ORDER) if u.lower().endswith(o)))
+            out = folder / f"{c['id']}.jpg"
+            for u in jpg:
+                if out.exists():
+                    break
+                try:
+                    _download(u.replace("http://", "https://", 1), out)
+                except Exception:
+                    continue
+            if out.exists():
+                return out, c
+        return None, f"NASA: no photo of \"{name}\""
+    except Exception as e:
+        return None, f"NASA photo search failed: {str(e)[:100]}"
+
+
 def wide_mode():
     """How a wide clip too small to crop sharply is shown: "crop" (Connor's choice, 2026-11-24: fill the screen,
     a little sharpened) or "framed" (whole, over a blurred copy). Config "footage_wide"."""

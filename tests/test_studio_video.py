@@ -13,7 +13,7 @@ SCENES = [{"type": "headline", "text": "Why do rockets throw parts away?"},
           {"type": "compare", "items": [{"label": "Whole rocket", "value": 2970}, {"label": "First stage", "value": 2290}], "unit": "t"},
           {"type": "equation", "left": "2,290 ÷ 2,970", "right": "0.77", "label": "three quarters"},
           {"type": "nonsense"},
-          {"type": "scale", "items": [{"label": "Stage 1", "value": 2290}, {"label": "Stage 3", "value": 120}], "unit": "t"},
+          {"type": "scale", "items": [{"label": "Stage 1", "value": 2290}, {"label": "Whole rocket", "value": 2970}], "unit": "t"},
           {"type": "steps", "items": ["Burn", "Drop", "Repeat"], "current": 1}]
 
 

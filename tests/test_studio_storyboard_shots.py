@@ -262,3 +262,83 @@ def test_a_ruler_does_not_repeat_its_number_in_the_counter():
     h = video.huds([{"type": "number", "value": "924", "unit": "mph", "label": "speed"},
                     {"type": "measure", "from": "ground", "to": "jet", "value": "55,000", "unit": "ft"}])
     assert h[1] is None or h[1].get("value") != "55,000 ft"
+
+
+# ---------- after Short 16: real photos of named things, cuts on phrase ends ----------
+
+def _nasa_photo_fakes(monkeypatch, tmp_path):
+    from PIL import Image
+    from studio import footage
+    asked = []
+
+    def get(url):
+        asked.append(url)
+        if "search" in url:
+            return {"collection": {"items": [
+                {"href": "https://m/talk.json", "data": [{"nasa_id": "T1", "media_type": "image",
+                                                         "title": "X-59 press conference", "description": ""}]},
+                {"href": "https://m/other.json", "data": [{"nasa_id": "O1", "media_type": "image",
+                                                          "title": "An F-15 chase plane", "description": "Credit: Lockheed"}]},
+                {"href": "https://m/x59.json", "data": [{"nasa_id": "X59", "media_type": "image",
+                                                        "title": "NASA's X-59 quiet supersonic aircraft",
+                                                        "description": "The X-59 on the ramp."}]}]}}
+        return ["https://img/X59~thumb.jpg", "https://img/X59~large.jpg", "https://img/X59~orig.jpg"]
+
+    def download(url, out):
+        assert url.endswith("~large.jpg")
+        Image.new("RGB", (1600, 900), (200, 60, 40)).save(out, "JPEG")
+    monkeypatch.setattr(footage, "NASA_GET", get)
+    monkeypatch.setattr(footage, "DOWNLOAD", download)
+    return asked
+
+
+def test_a_named_thing_gets_a_real_nasa_photo(monkeypatch, tmp_path):
+    from PIL import Image
+    from studio import art, footage
+    _nasa_photo_fakes(monkeypatch, tmp_path)
+    path, info = footage.photo("X-59", tmp_path)
+    assert path and info["nasa_id"] == "X59" and info["credit"] == "Photo: NASA"   # not the talk, not someone else's
+    out = art.framed_photo(path, tmp_path / "f.png")
+    im = Image.open(out)
+    assert im.size == (art.GEN_W, art.GEN_H)
+    assert im.getpixel((art.GEN_W // 2, int(art.GEN_H * 0.36)))[0] > 150             # the whole photo, upper part
+    none, why = footage.photo("Voyager 3", tmp_path)
+    assert none is None and "no photo" in why
+
+
+def test_real_photo_replaces_the_ai_picture_and_is_credited(three, fake_voice, monkeypatch, tmp_path):  # noqa: F811
+    from studio import config, db, engines
+    from test_studio_video import SCENES, _make
+    _nasa_photo_fakes(monkeypatch, tmp_path)
+    seen, got = [], {}
+    monkeypatch.setattr(engines, "RUNNER", _upgraded_runner(seen, got))
+    config.set_values(outputs_dir=str(tmp_path / "D-Jarvis" / "studio"), real_photos=True)
+    engines.use(True, ["images", "look", "compose", "sharpen", "motion"])
+    scenes = [dict(s, art="a white jet in the sky", **({"real": "X-59"} if k == 2 else {})) for k, s in enumerate(SCENES)]
+    vid, states = _make(three, fake_voice, monkeypatch, scenes=scenes)
+    assert states[-1] == "ready", db.video(vid)["error"]
+    meta = json.loads(db.video(vid)["meta"])
+    assert meta["render"]["engines"]["photos"].startswith("NASA photos: 1")
+    ph = db.one("SELECT * FROM assets WHERE video_id=? AND kind='photo:scene'", vid)
+    assert ph and ph["origin"] == "stock" and "NASA" in ph["license"] and "X-59" in ph["attribution"]
+    assert "real NASA photos" in meta["upload"]["description"] and "does not endorse" in meta["upload"]["description"]
+
+
+def test_shot_cuts_land_on_caption_phrases():
+    from studio import video
+    assert video.shot_times(6.0, 3) == [0.0, 2.0, 4.0]
+    assert video.shot_times(6.0, 3, [1.6, 4.5]) == [0.0, 1.6, 4.5]
+    assert video.shot_times(6.0, 3, [0.5]) == [0.0, 2.0, 4.0]            # never a shot under a second
+    assert video.shot_times(6.0, 2, [5.6]) == [0.0, 3.0]                 # too far away to snap
+
+
+def test_captions_never_leave_one_or_two_words_alone():
+    from PIL import Image, ImageDraw
+    from studio import video
+    d = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    f = video._black(video.BOLD_CAPTION["size"])
+    text = "Sound travels slower up there, so the same speed counts as a bigger Mach number."
+    words = [{"w": w, "s": i * 0.3, "e": i * 0.3 + 0.25} for i, w in enumerate(text.split())]
+    groups = video._even_groups(d, f, words, list(range(len(words))))
+    assert all(len(g) >= 3 for g in groups) and sum(map(len, groups)) == len(words)
+    assert words[groups[0][-1]]["w"] == "there,"                        # the break lands after the comma

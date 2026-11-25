@@ -98,10 +98,12 @@ def _new_looks(argv):
     """--new-looks: switches the looks that wait for Connor's OK on for this run only (config untouched)."""
     if "--new-looks" not in argv:
         return False
-    from studio import art, video
+    from studio import art, footage, video
     art.shots_on = lambda: True
     video.type_style = lambda: "bold"
-    print("New looks on for this run only: storyboard shots, wave/ruler diagrams, bold captions.")
+    footage.photos_on = lambda: True
+    print("New looks on for this run only: storyboard shots, wave/ruler diagrams, bold captions, real NASA photos "
+          "of named things.")
     return True
 
 
@@ -225,6 +227,11 @@ def _video(argv):
     print(f"\nTitle: {up['title']}\n\nQuality checks:")
     for c in res["checks"]:
         print(f"  {'PASS' if c['passed'] else 'FAIL'}  {c['name']}  {c['detail']}")
+    guess = (json.loads(db.video(vid)["meta"] or "{}").get("final_review") or {}).get("retention_guess") or {}
+    if guess:
+        print("\nWhere viewers might leave (the editor's guess from the frames, not real viewer data):")
+        for part, why in guess.items():
+            print(f"  {part}: {why}")
     db.set_video(vid, state="ready" if res["ok"] else "validating", stage_done="validating" if res["ok"] else "rendering")
     print("\nReady to publish (Phase 8 will do that)." if res["ok"] else "\nNot ready: it failed the checks above.")
     _reveal(rep["path"])

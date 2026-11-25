@@ -59,6 +59,23 @@ def raw_pictures(video_id, scenes, lines, look="diagram"):
     return have
 
 
+def framed_photo(src, out, W=GEN_W, H=GEN_H):
+    """A real photo for a portrait scene, never cropped into: the whole photo fitted to the width, in the upper
+    part of the frame (above the diagram card and caption), over a dark blurred copy of itself. Returns out."""
+    from PIL import Image, ImageFilter, ImageEnhance
+    im = Image.open(src).convert("RGB")
+    k = max(W / im.width, H / im.height)
+    bg = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))), Image.LANCZOS)
+    bg = bg.crop(((bg.width - W) // 2, (bg.height - H) // 2, (bg.width - W) // 2 + W, (bg.height - H) // 2 + H))
+    bg = ImageEnhance.Brightness(bg.filter(ImageFilter.GaussianBlur(28))).enhance(0.55)
+    f = min(W / im.width, H * 0.5 / im.height)
+    fg = im.resize((max(1, int(im.width * f)), max(1, int(im.height * f))), Image.LANCZOS)
+    y = max(0, int(H * 0.36 - fg.height / 2))
+    bg.paste(fg, ((W - fg.width) // 2, y))
+    bg.save(out)
+    return out
+
+
 def shots_on():
     """Config "shots" (OFF until Connor approves a sample): scenes the storyboard gives 2-3 shots get a new picture
     for each, so what's on screen changes about every 2 seconds instead of one picture per sentence; the planner

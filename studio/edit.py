@@ -155,6 +155,18 @@ def overlay(scene):
         return {"kind": "wave", "span": span, "value": _short(scene.get("value"), 16),
                 "spot": _short(scene.get("spot"), 18) or "peak", "label": _short(scene.get("label"), 40),
                 "geo": wave_geometry(inner, WAVE_PEAKS, span), **OVERLAY}
+    if t == "temperature":
+        v = _num(scene.get("value"))
+        if v is None:
+            return None
+        lo, hi = _num(scene.get("low")), _num(scene.get("high"))
+        lo = lo if lo is not None and lo < v else math.floor(min(v, 0) / 10) * 10 - 10
+        hi = hi if hi is not None and hi > v else math.ceil(max(v, 0) / 10) * 10 + 10
+        unit = _short(scene.get("unit"), 4) or "°C"
+        return {"kind": "thermo", "value": f"{_fmt(v) if v >= 0 else '-' + _fmt(-v)} {unit}".strip(),
+                "frac": round((v - lo) / (hi - lo), 3), "low": f"{_fmt(lo) if lo >= 0 else '-' + _fmt(-lo)}{unit}",
+                "high": f"{_fmt(hi) if hi >= 0 else '-' + _fmt(-hi)}{unit}", "label": _short(scene.get("label"), 44),
+                "cold": v < 0, **OVERLAY}
     if t == "measure":
         value = _short(scene.get("value"), 14)
         a, b = _short(scene.get("from"), 18), _short(scene.get("to"), 18)
