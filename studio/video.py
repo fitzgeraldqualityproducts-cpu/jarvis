@@ -250,7 +250,11 @@ Keep text short (labels under 6 words, headline under 9). Prefer number/equation
 has numbers; use steps for a process; headline otherwise. Writer's visual notes are hints only.
 Also give every scene "art": 5-12 words describing a picture of the scene's real-world subject as a place or
 objects seen from a person's point of view (e.g. "a crowded beach at Waikiki seen from the sand"); no text,
-numbers, diagrams, faces or famous people. And "footage": a 1-3 word stock-video search (e.g. "rocket launch",
+numbers, diagrams, faces or famous people. The picture maker cannot write: never ask for a sign, label, screen,
+gauge, map or anything that only works with writing on it (a line about "a speed-limit sign" gets the road or
+the sky it stands for, and the number comes from the scene type). It also doesn't know specific named machines
+(an experimental jet, a probe): describe one by its plain visible shape (e.g. "a long needle-nosed white jet"),
+seen whole and from a distance, never a close-up of its surface. And "footage": a 1-3 word stock-video search (e.g. "rocket launch",
 "ocean waves", "city traffic") when the line's subject is a real thing a camera could film, else "".{learned}
 
 Lines:
@@ -686,8 +690,6 @@ def huds(scenes):
             h = {"label": sc.get("label") or "", "value": f"{sc['value']} {sc.get('unit') or ''}".strip()}
         elif t == "equation":
             h = {"label": sc.get("left") or "", "value": str(sc["right"]), "sub": sc.get("label") or ""}
-        elif t == "measure":
-            h = {"label": sc.get("label") or "", "value": f"{sc['value']} {sc.get('unit') or ''}".strip()}
         elif t in ("compare", "scale") and sc.get("items"):
             top = max(sc["items"], key=lambda i: _num(i["value"]))
             h = {"label": str(top.get("label") or ""), "value": f"{top['value']} {sc.get('unit') or ''}".strip()}

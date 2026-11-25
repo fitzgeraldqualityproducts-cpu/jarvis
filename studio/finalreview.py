@@ -103,8 +103,10 @@ Title: {up.get('title', '')}
 What is being said at each frame:
 {said}
 
+Captions show the narrator's line a short phrase (1-2 lines) at a time, so a caption that starts or ends
+mid-sentence is normal; judge whether it is readable and matches what is being said.
 Check every frame for:
-- captions: readable, spelled right, not cut off, not covering the thing being explained
+- captions: readable, spelled right, not cut off at the screen edge, not covering the thing being explained
 - the picture fits what is being said (wrong object, wrong number on screen, unrelated scene)
 - broken AI artwork: garbled text or symbols inside the picture, melted hands or faces, obvious glitches
 - anything misleading, or that looks like someone else's logo or brand
