@@ -190,7 +190,20 @@ def lean_failed(error):
     return False
 
 
+def quiet_room():
+    """An empty folder for Claude Code calls that don't need one of their own, so they don't pick up
+    the Jarvis folder's CLAUDE.md (notes for coding sessions), project settings or git status."""
+    import tempfile
+    room = Path(tempfile.gettempdir()) / "jarvis-claude-room"
+    try:
+        room.mkdir(exist_ok=True)
+        return str(room)
+    except OSError:
+        return None
+
+
 def _run_claude(cmd, timeout, cwd=None):
+    cwd = cwd or quiet_room()
     if WINDOWS:
         cmd = list(cmd)
         prompt = cmd.pop(cmd.index("-p") + 1)
@@ -262,6 +275,7 @@ def _stream_claude(cmd, timeout, cwd=None, state=None):
 
 
 def _stream_claude_once(cmd, timeout, cwd=None, state=None):
+    cwd = cwd or quiet_room()
     cmd = list(cmd) + ["--output-format", "stream-json", "--include-partial-messages", "--verbose"]
     prompt = cmd.pop(cmd.index("-p") + 1) if WINDOWS else None
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if WINDOWS else subprocess.DEVNULL,

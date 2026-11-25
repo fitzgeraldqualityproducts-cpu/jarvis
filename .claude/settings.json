@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "ask": [
+      "Edit(**/studio/guard.py)",
+      "Edit(**/studio/publish.py)",
+      "Edit(**/studio/ytauth.py)",
+      "Edit(**/studio/config.py)",
+      "Edit(**/studio/backup.py)",
+      "Edit(**/selfedit.py)",
+      "Edit(**/nightschool.py)",
+      "Edit(**/repair.py)"
+    ]
+  }
+}
