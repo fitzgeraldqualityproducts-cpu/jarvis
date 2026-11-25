@@ -238,6 +238,10 @@ Rules:
   facts don't give (like the wavelength of red light), write that line with the value, mark its facts ["needs"]
   and list it in "needs". Jarvis then looks for a real page that states it; if none does, the line is dropped. At
   most two needs, and only when the Short doesn't work without them.
+- A worked example may use ONE input you choose yourself (a turn's radius, a car's length, a glass of water), but
+  only when the line plainly says it's your pick ("say the car is 4.5 m long", "picture a 10 m circle"), with a
+  realistic round value, and mark that line's facts ["example"]. Never state a chosen value as a fact, never as
+  "typical", and never pick one that happens to equal a result (that reads as a trick).
 - Talk to the viewer: say "you" and put the calculation in their world (your kitchen, your phone, your commute)
   wherever it fits naturally. Never "we" as in "today we'll look at".
 - RE-HOOK: about halfway, after the setup and before the payoff, one short line (under 10 words) that raises the
@@ -503,7 +507,7 @@ def tag_numbers(draft, topic):
         tags = [str(f) for f in ln.get("facts") or []]
         loose = sorted(n for n in nums if n not in known)
         beat = str(ln.get("beat") or "")
-        if loose and "general" not in tags and "needs" not in tags and i > 1 and beat not in PRUNE_KEEP_BEATS:
+        if loose and not {"general", "needs", "example"} & set(tags) and i > 1 and beat not in PRUNE_KEEP_BEATS:
             ln = dict(ln, facts=tags + ["needs"])
             needs.append({"line": i, "what": " ".join(str(ln.get("text", "")).split())[:200], "value": loose[0]})
             rep["looked_up"].append(i)
@@ -650,7 +654,7 @@ def _local_draft(prompt, facts):
 def _draft_problem(ans, facts):
     if not isinstance(ans, dict) or not isinstance(ans.get("lines"), list) or len(ans["lines"]) < 4:
         return "no script"
-    ids = {f"F{i + 1}" for i in range(len(facts))} | {"general", "needs"}
+    ids = {f"F{i + 1}" for i in range(len(facts))} | {"general", "needs", "example"}
     hooks = [str(h) for h in ans.get("hooks") or [] if str(h).strip()]
     if len(hooks) < 3:
         return "too few hooks"
@@ -826,7 +830,9 @@ For EVERY script line that states a fact or number, give a verdict: "supported" 
 arithmetic from sourced numbers), "unsupported" (no source backs it) or "wrong" (a source contradicts it; give the
 correct statement and the URL). A line that only states standard textbook science (a named law or formula, or a
 well-known physical constant, stated correctly in its usual form) gets "standard" without needing a source; any
-number specific to this topic never counts as standard. Leave opinion and transition lines out (no entry).
+number specific to this topic never counts as standard. A value the line plainly presents as the narrator's own
+chosen example ("say the car is 4.5 m long", "picture a 10 m circle") is "standard" when it is realistic and only
+used to work the example; stated as a fact, as "typical", or equal to a result it is "unsupported". Leave opinion and transition lines out (no entry).
 Check the EXPLANATION too, not just the numbers: a line whose numbers are sourced but whose reasoning or
 relationship is wrong (for example calling the gap between two hot spots the distance from a hot spot to a cold
 spot, mixing up a wavelength and half of it, or a cause that isn't the real cause) is "wrong", with the correct
@@ -994,7 +1000,8 @@ For each of {ask} that states a fact or number, give a verdict: "supported" (a s
 arithmetic from sourced numbers), "unsupported" (no source backs it) or "wrong" (a source contradicts it; give the
 correct statement and the URL). A line that only states standard textbook science (a named law or formula, or a
 well-known physical constant, stated correctly in its usual form) gets "standard"; any number specific to this topic
-never counts as standard. Leave opinion and transition lines out. For "supported" or "wrong" give "quote" (the
+never counts as standard. A value the line plainly presents as the narrator's own chosen example ("say the car is
+4.5 m long") is "standard" when realistic and only used to work the example; stated as a fact it is "unsupported". Leave opinion and transition lines out. For "supported" or "wrong" give "quote" (the
 source's own words, at most 25 words, copied exactly), "confidence" 0.0-1.0 and "source_date" (YYYY-MM-DD or "").
 Give "note" only for "unsupported", "wrong" and "standard". "problems": anything a careful editor would fix in
 those lines (confusing step, misleading simplification, unit mistake).
@@ -1425,7 +1432,9 @@ def _fix_lines(draft, topic, problems):
 only what the facts below support (use the checker's correction), or delete it if the script reads fine without it.
 When the flagged part is a comparison no fact backs ("slower than a snail", "as wide as your palm"), remove just
 the comparison and keep the line's sourced number, said in a unit a viewer can picture; never swap in another
-unbacked comparison. Never add a new claim, caveat or framing line. Every other line stays exactly as it is, word for word.
+unbacked comparison. When the flagged part is a number no fact gives that the example needs as an input (a car's
+length, a turn's radius), say it plainly as your own pick ("say the car is 4.5 m long") with a realistic round
+value that isn't equal to any result; any other unbacked number is removed, or the line is deleted. Never add a new claim, caveat or framing line. Every other line stays exactly as it is, word for word.
 
 Facts:
 {fact_list}
