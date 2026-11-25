@@ -59,6 +59,63 @@ def raw_pictures(video_id, scenes, lines, look="diagram"):
     return have
 
 
+def shots_on():
+    """Config "shots" (OFF until Connor approves a sample): scenes the storyboard gives 2-3 shots get a new picture
+    for each, so what's on screen changes about every 2 seconds instead of one picture per sentence; the planner
+    may also use the wave and ruler diagrams, and each cut gets the storyboard's own sound and transition."""
+    try:
+        from studio import config
+        return config.general().get("shots", False) is True
+    except Exception:
+        return False
+
+
+def shot_pictures(video_id, scenes, look="diagram"):
+    """{(scene, shot): raw picture} for every scene's 2nd and 3rd storyboard shot, made in one SDXL-Turbo job. The
+    first shot is the scene's own picture (raw_pictures). Never raises: a shot that didn't come out is skipped."""
+    folder = engines.outputs_dir("videos", str(video_id), "art")
+    want, have = [], {}
+    for i, sc in enumerate(scenes):
+        for j, sh in enumerate((sc.get("shots") or [])[1:3] if isinstance(sc, dict) else [], 1):
+            p = f"{' '.join(str(sh.get('art') or '').split())[:160]}, {STYLE.get(look, STYLE['diagram'])}"
+            seed = int(video_id) * 100 + i + 5000 * j
+            out = folder / f"shot_{i + 1:02d}_{j + 1}_{_key(p, seed)}.png"
+            if out.exists():
+                have[(i, j)] = out
+            else:
+                want.append(((i, j), {"prompt": p, "out": str(out), "seed": seed}))
+    if want:
+        try:
+            with engines.heavy("more AI pictures for the shots (SDXL-Turbo)"):
+                engines.run("sdxl", "sdxl_worker", {"images": [w for _, w in want], "width": GEN_W, "height": GEN_H,
+                                                    "steps": 4})
+        except Exception:
+            pass
+        for key, w in want:
+            if Path(w["out"]).exists():
+                have[key] = Path(w["out"])
+    return have
+
+
+def fit_shots(scenes, lines, shots):
+    """Drops the shots OpenCLIP says don't show their line (under FIT_MIN: the scene's own picture is used longer
+    instead). Returns (kept shots, {"scores", "dropped"}). Kept as they are when OpenCLIP can't run."""
+    if not shots or not fit_on():
+        return shots, {}
+    keys = sorted(shots)
+    texts = [f"{' '.join(str(lines[i] if i < len(lines) else '').split())[:200]}. "
+             f"{scenes[i]['shots'][j].get('shows') or scenes[i]['shots'][j].get('art')}"[:300] for i, j in keys]
+    try:
+        sims = clip_scores([shots[k] for k in keys], texts)
+    except Exception:
+        return shots, {}
+    lo = _cfg_num("picture_fit_min", FIT_MIN)
+    score = {k: float(sims[n][n]) for n, k in enumerate(keys)}
+    kept = {k: v for k, v in shots.items() if score[k] >= lo}
+    return kept, {"scores": {f"{i + 1}.{j + 1}": round(v, 3) for (i, j), v in score.items()},
+                  "dropped": [f"{i + 1}.{j + 1}" for (i, j) in keys if score[(i, j)] < lo]}
+
+
 # ---------- does each picture fit its line? (OpenCLIP, see workers/clip_worker.py) ----------
 
 FIT_MIN = 0.22          # a picture scoring under this (OpenCLIP cosine with its line) gets more takes

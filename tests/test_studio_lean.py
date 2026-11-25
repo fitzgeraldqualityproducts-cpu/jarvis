@@ -162,7 +162,8 @@ def test_visuals_are_planned_while_narrating(monkeypatch):
     with pytest.raises(Exception):
         pipeline.generating_audio(db.video(vid), None)
     assert order == ["plan-start", "narrated", "plan-end"]            # both ran at the same time
-    assert json.loads(db.video(vid)["meta"])["scenes"] == scenes      # kept for render(), even after a retry
+    saved = json.loads(db.video(vid)["meta"])["scenes"]               # kept for render(), even after a retry
+    assert [{k: sc[k] for k in want} for sc, want in zip(saved, scenes)] == scenes   # (plus storyboard defaults)
     calls = len(order)
     monkeypatch.setattr(video, "plan", lambda row: pytest.fail("planned twice"))
     with pytest.raises(Exception):

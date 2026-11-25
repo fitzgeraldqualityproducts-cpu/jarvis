@@ -123,6 +123,23 @@ another stayed up after its scene; the review frame caught the counter mid-count
 | A carried counter stays up for one scene only; long labels wrap; review frames are taken 80% into each line (after the counter lands) | none | Built and tested |
 | Script page written as UTF-8 (Windows crashed on "λ") | none | Built |
 
+## Upgrade brief (2026-11-25): story first, visuals that show what is said, bold text, better QC
+
+Built on #82-#96; reusable for any topic (nothing is written for one Short).
+
+| Change | Switch | State |
+|---|---|---|
+| Story first: the planner writes the story (subject, beats) before the scenes, then a storyboard per scene: purpose, 1-3 shots with camera moves, transition, sound | `storyboard` (on since #93) | Built and tested |
+| Honesty rule: AI pictures never fake an experiment result or measurement; demonstrations are diagrams | none (prompt) | Built |
+| The fact-check also checks the explanation (e.g. hot spots are half a wavelength apart, not hot-to-cold); every line must earn its place | none (prompt) | Built |
+| A new shot every 1.5-2 s: scenes with longer lines get 2-3 pictures, each with its own camera move from the storyboard; shots OpenCLIP says don't fit are dropped | `shots` (OFF) | Built and tested with fakes |
+| New reusable diagrams: a standing wave with its peaks (hot spots) and the gap or wavelength labelled; a ruler between two things with the distance | `shots` (OFF) | Built and tested; rendered stills checked |
+| The storyboard's sound (whoosh, pop, tick, rise, none) and transition (cut, fade, zoom) on each cut | `shots` (OFF) | Built and tested |
+| Bold type system: heavy sans-serif hook, counter and captions; 1-2 short caption lines timed to the voice, numbers and key words in the accent colour, the payoff line bigger; all inside the phone-safe area | `type_style` = `serif` (bold is OFF) | Built and tested; rendered stills checked |
+| QA: the picture must not stand still for over 3.5 s and no two scenes may reuse a picture | `visual_qc` = `advise` | Built and tested |
+| Learning: likes, comments and shares (counts only, comments never read) join the performance index at 10% and the weekly report | none | Built and tested |
+| Windows: still pictures now find Arial on Windows (on Windows they could fall back to a tiny default font) | none | Built |
+
 ## Phases 6-7: validate and activate
 
 Each change goes live on the PC by update. New styles and tools stay off until a sample is approved.

@@ -2,7 +2,8 @@
 
 fetch()     for each video the studio published: public counts from the Data API (videos.list, 1 unit
             per 50 videos) and, once YouTube has them (they lag 1-3 days), watch time, average view
-            percentage, shares and subscribers from the YouTube Analytics API, plus how many people were
+            percentage, likes, shares and subscribers from the YouTube Analytics API (comment COUNTS come from
+            the Data API; comments themselves are never read), plus how many people were
             still watching at ~10% of the Short (the hook). Missing numbers are recorded as missing,
             never guessed or filled with zeros.
 channel()   the channel's own totals (subscribers, views), once a day, for the progress report.
@@ -27,7 +28,9 @@ EVERY_HOURS = 6
 MEASURE_AFTER_DAYS = 3        # a video's index is computed once it's been public this long
 MIN_PER_PILLAR = 3            # measured videos a pillar needs before it gets a nudge
 MAX_NUDGE = 6.0               # points (topic scores are 0-100)
-WEIGHTS = {"views": 0.5, "avg_view_pct": 0.3, "subs_per_1k": 0.2}
+# engagement (likes + comments + 2 x shares per 1,000 views; counts only, comments are never read) joined the
+# index on 2026-11-25 with a small weight, so views and watch time still lead
+WEIGHTS = {"views": 0.45, "avg_view_pct": 0.3, "subs_per_1k": 0.15, "engaged_per_1k": 0.10}
 
 
 def _date(t):
@@ -192,7 +195,13 @@ def _features(v):
     if views is None:
         return None
     subs = (a.get("subscribersGained") or 0) - (a.get("subscribersLost") or 0) if "subscribersGained" in a else None
+    likes = a.get("likes", d.get("likeCount"))
+    comments = d.get("commentCount")
+    shares = a.get("shares")
+    parts = [x for x in (likes, comments, None if shares is None else 2 * shares) if x is not None]
     return {"views": float(views), "avg_view_pct": a.get("averageViewPercentage"),
+            "likes": likes, "comments": comments, "shares": shares,
+            "engaged_per_1k": (1000.0 * sum(parts) / views) if parts and views else None,
             "subs_per_1k": (1000.0 * subs / views) if subs is not None and views else None,
             "hook_hold": a.get("hook_hold"), "avg_view_seconds": a.get("averageViewDuration")}
 
@@ -247,7 +256,8 @@ def learn(now=None):
         if r["index"] is None or not r.get("topic_id"):
             continue
         t = topics.topic(r["topic_id"]) or {}
-        perf = {k: r.get(k) for k in ("index", "views", "avg_view_pct", "subs_per_1k", "hook_hold")}
+        perf = {k: r.get(k) for k in ("index", "views", "avg_view_pct", "subs_per_1k", "hook_hold", "likes",
+                                      "comments", "shares", "engaged_per_1k")}
         perf.update(youtube_id=yid, measured=time.time())
         db.run("UPDATE topics SET performance=? WHERE id=?", json.dumps(perf), r["topic_id"])
         s = db.one("SELECT hook FROM scripts WHERE video_id=? AND status='passed' ORDER BY version DESC LIMIT 1",
@@ -319,8 +329,8 @@ def report(now=None, save=True):
              f"- Channel views: {_fmt(tot.get('viewCount'))}",
              f"- Shorts published this week: {len(week)} (all time: {sum(1 for v in vids if v.get('privacy') == 'public')})", ""]
     if vids:
-        lines += ["## Shorts", "", "| Short | Views | Avg viewed | Still watching at 10% | Subs gained | Index |",
-                  "|---|---|---|---|---|---|"]
+        lines += ["## Shorts", "", "| Short | Views | Avg viewed | Still watching at 10% | Likes | Comments | Shares "
+                  "| Subs gained | Index |", "|---|---|---|---|---|---|---|---|---|"]
         for v in reversed(vids[-20:]):
             a = (latest(v["youtube_id"], "analytics") or {}).get("metrics") or {}
             d = (latest(v["youtube_id"], "data_api") or {}).get("metrics") or {}
@@ -328,6 +338,8 @@ def report(now=None, save=True):
             lines.append(f"| {v['title']} ({v.get('privacy')}) | {_fmt(a.get('views', d.get('viewCount')))} | "
                          f"{_fmt(a.get('averageViewPercentage'), pct=True)} | "
                          f"{_fmt(None if a.get('hook_hold') is None else 100 * a['hook_hold'], pct=True)} | "
+                         f"{_fmt(a.get('likes', d.get('likeCount')))} | {_fmt(d.get('commentCount'))} | "
+                         f"{_fmt(a.get('shares'))} | "
                          f"{_fmt(a.get('subscribersGained'))} | {_fmt(i, dec=0) if i is not None else 'after 3 days'} |")
         lines.append("")
     ins = db.get("studio_insights", {}) or {}
