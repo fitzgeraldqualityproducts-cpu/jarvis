@@ -272,10 +272,15 @@ def _publish_mode(argv):
 
 
 def _drive(argv):
-    from studio import drive
+    from studio import db, drive
     health.startup()
     sub = argv[1] if len(argv) > 1 else "status"
     try:
+        if sub == "connect" and drive.connected() and "--again" not in argv:
+            acct = db.get("drive_account", "")
+            print(f"Google Drive is already connected{' (' + acct + ')' if acct else ''}. "
+                  "Running a backup now instead (add --again to sign in with a different account).")
+            sub = "backup"
         if sub == "connect":
             print("Pick the Google account whose Drive should keep the backups, then press Allow.\n"
                   "Jarvis only gets permission for files it creates itself; it can't see anything else in your Drive.")
@@ -288,10 +293,10 @@ def _drive(argv):
             print("Backing up finished Shorts to Google Drive...")
             res = drive.back_up(limit=1000, say=print)
             if res["problem"] == "full":
-                print("Stopped: your Google Drive is nearly full. Nothing on the Mac was removed.")
+                print("Stopped: your Google Drive is nearly full. Nothing on this computer was removed.")
             freed = drive.free_local(urgent="--now" in argv, say=print)
             print(f"\nCopied {res['copied']} file(s), {res['bytes'] / (1 << 20):.1f} MB. "
-                  f"Cleared {freed / (1 << 20):.1f} MB from the Mac.")
+                  f"Cleared {freed / (1 << 20):.1f} MB from this computer.")
         elif sub == "restore":
             n = drive.restore(int(argv[2]))
             print(f"Restored {n} file(s).")

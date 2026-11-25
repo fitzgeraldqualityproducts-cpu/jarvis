@@ -346,7 +346,7 @@ def back_up(limit=None, say=lambda m: None):
         if not _room(size, info):
             res["problem"] = "full"
             health.notify("drive_full", "Your Google Drive is almost full, so I've stopped backing up YouTube Shorts "
-                                        "there. Nothing on your Mac was removed.", "warn")
+                                        "there. Nothing on your computer was removed.", "warn")
             break
         if vid is None:
             reports = reports or folder("reports", "Reports", root)
@@ -476,7 +476,7 @@ def say():
         return "Google Drive backup isn't set up yet. Double-click Connect Google Drive in the Jarvis folder."
     acct = f" ({s['account']})" if s["account"] else ""
     out = (f"{s['shorts']} Short{'s' if s['shorts'] != 1 else ''} backed up to Google Drive{acct}, "
-           f"{s['bytes'] / (1 << 20):.0f} MB in all; {s['freed_bytes'] / (1 << 20):.0f} MB cleared from the Mac.")
+           f"{s['bytes'] / (1 << 20):.0f} MB in all; {s['freed_bytes'] / (1 << 20):.0f} MB cleared from this computer.")
     if s["waiting"]:
         out += f" {s['waiting']} file{'s' if s['waiting'] != 1 else ''} still to copy."
     return out
