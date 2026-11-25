@@ -186,6 +186,14 @@ def _valid(s):
     return False
 
 
+def storyboard_on():
+    """Config "storyboard" (on): the visuals are planned as one story with a main subject running through."""
+    try:
+        return config.general().get("storyboard", True) is not False
+    except Exception:
+        return True
+
+
 def plan(script_row):
     """One scene per line: [{"type", ...}] (Claude picks the template and fills it from the line)."""
     from studio import claude
@@ -198,7 +206,16 @@ def plan(script_row):
     from studio import lessons
     learned = lessons.advice("video")
     learned = ("\n" + learned) if learned else ""
-    prompt = f"""Plan the on-screen visual for each narrated line of a science Short. One scene per line, chosen from:
+    story = ""
+    if storyboard_on():
+        story = """
+Plan it as ONE story, not line by line. First pick the Short's through-line: one real, filmable main subject
+(e.g. "the Moon", "a falling raindrop") that every scene's "art" keeps showing, and decide how each scene moves
+the story on from the one before (closer, further, before/after, inside/outside, a different angle on the
+same subject). A scene's picture must show what its own line is about, using the main subject wherever the line
+allows. Never a loose mood picture (a sunset for a line about the Moon's temperature)."""
+    prompt = f"""Plan the on-screen visual for each narrated line of a science Short.{story}
+One scene per line, chosen from:
 {tmpl}
 Use only numbers from the line or these checked calculations:
 {calcs or '- (none)'}
@@ -211,11 +228,16 @@ numbers, diagrams, faces or famous people. And "footage": a 1-3 word stock-video
 
 Lines:
 """ + "\n".join(f"{i + 1}. {t}  (note: {st['lines'][i].get('visual', '')})" for i, t in enumerate(lines)) + \
-        '\n\nJSON array with exactly one object per line, in order, e.g. [{"type": "headline", "text": "..."}]'
+        ('\n\nJSON object: {"subject": "the main subject", "scenes": [exactly one object per line, in order, e.g. '
+         '{"type": "headline", "text": "...", "art": "...", "footage": "..."}]}' if story else
+         '\n\nJSON array with exactly one object per line, in order, e.g. [{"type": "headline", "text": "..."}]')
     scenes = []
     try:
         ans = claude.ask_json(prompt, timeout=300, web=False, purpose="visual plan")
-        scenes = ans if isinstance(ans, list) else []
+        if isinstance(ans, dict):
+            scenes = ans.get("scenes") if isinstance(ans.get("scenes"), list) else []
+        else:
+            scenes = ans if isinstance(ans, list) else []
     except Exception:
         scenes = []
     out = []
@@ -643,6 +665,34 @@ def _depth_moves(raws, enh, starts, folder, pal, used):
     return out
 
 
+def _footage_fits(scenes, got, folder):
+    """Keeps the footage clips whose middle frame OpenCLIP says shows what the scene is about (its search and its
+    planned picture). Returns (kept, dropped scene numbers). Not checked (kept) when OpenCLIP can't run."""
+    from studio import art
+    if not got or not art.fit_on():
+        return got, []
+    import cv2
+    frames = []
+    for k, p, _ in got:
+        cap = cv2.VideoCapture(str(p))
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, n // 2))
+        ok, fr = cap.read()
+        cap.release()
+        f = folder / f"footage_{k + 1:02d}_mid.png"
+        if not ok or not cv2.imwrite(str(f), fr):
+            return got, []
+        frames.append(f)
+    texts = [f"{scenes[k].get('footage')}. {art.subject(scenes[k], '')}"[:300] for k, _, _ in got]
+    try:
+        sims = art.clip_scores(frames, texts)
+    except Exception:
+        return got, []
+    floor = art._cfg_num("footage_fit_floor", art.FIT_FLOOR)
+    keep = [g for i, g in enumerate(got) if float(sims[i][i]) >= floor]
+    return keep, [g[0] + 1 for i, g in enumerate(got) if float(sims[i][i]) < floor]
+
+
 def _footage_moves(video_id, scenes, starts, folder, used, record):
     """{scene: {"video", "kind"}}: real stock clips (Pexels, Pixabay or NASA) for the scenes the planner gave a
     footage search."""
@@ -651,7 +701,7 @@ def _footage_moves(video_id, scenes, starts, folder, used, record):
         used["footage"] = "none (no footage library: run Connect Stock Footage)"
         return {}
     spans = [starts[k + 1] - starts[k] for k in range(len(scenes))]
-    out, why, seen, libs = {}, [], {}, []
+    out, why, seen, libs, got = {}, [], {}, [], []
     shade = None
     for k in footage.pick_scenes(scenes, spans):
         need = spans[k] + FADE + 0.1
@@ -669,6 +719,11 @@ def _footage_moves(video_id, scenes, starts, folder, used, record):
             why.append(str(e)[:120])
             continue
         seen[info["id"]] = start + need
+        got.append((k, p, info))
+    got, dropped = _footage_fits(scenes, got, folder)
+    if dropped:
+        why.append(f"{len(dropped)} clip{'s' if len(dropped) != 1 else ''} didn't show the line, kept the AI picture")
+    for k, p, info in got:
         out[k] = {"video": p.name, "kind": "footage"}
         site = info.get("source") or "pexels"
         libs.append(footage.NAMES[site])
@@ -730,6 +785,14 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
         try:
             from studio import art
             raws = art.raw_pictures(video_id, scenes, lines, look)
+            if raws and art.fit_on():
+                progress("Checking every picture fits its line (OpenCLIP)")
+                try:
+                    raws, fitrep = art.fit(video_id, scenes, lines, raws, look)
+                    used["fit"] = (f"OpenCLIP: lowest {min(fitrep['scores'].values()):.2f}, "
+                                   f"retaken {fitrep['retaken'] or 'none'}, plain {fitrep['plain'] or 'none'}")
+                except Exception as e:
+                    used["fit"] = f"not checked ({str(e)[:160]})"
             sharpen, depth = eng["sharpen"] == "esrgan", eng["motion"] == "depth" and look == "hud"
             if raws and (sharpen or depth):
                 progress("Sharpening the pictures and finding their depth")

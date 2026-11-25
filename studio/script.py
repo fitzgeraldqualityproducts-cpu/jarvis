@@ -25,7 +25,10 @@ HOOK_GRAB_WORDS = 6
 CLICKBAIT = ("you won't believe", "you wont believe", "shocking", "insane", "mind-blowing", "mind blowing",
              "nobody is talking about", "they don't want you to know", "100% true", "in this video", "hey guys",
              "make sure to subscribe", "wait for it", "gone wrong")
-HOOK_WEIGHTS = {"curiosity": 0.3, "clarity": 0.2, "specificity": 0.2, "honesty": 0.2, "speed": 0.1}
+HOOK_WEIGHTS = {"curiosity": 0.3, "clarity": 0.2, "specificity": 0.2, "honesty": 0.2, "speed": 0.1,
+                "proven": 0.2}            # "proven": vs this channel's best-holding openings (only once there are some)
+ANSWERED_MIN = 4                        # the payoff must answer the hook's question at least this well (0-10)
+PROVEN_WEAK = 5                         # a chosen hook rated under this against the best openings gets an editor note
 CALC_TOLERANCE = 0.03                   # a stated result may be rounded by up to 3%
 MAX_REVISIONS = 2                       # a draft and up to two rewrites with the reviewer's notes
 SIMILAR_SCRIPT = 0.6                    # word overlap with an earlier script that counts as a remake
@@ -203,6 +206,12 @@ Rules:
   step with real numbers, the payoff, and a LOOP ending: the last line must lead straight back into the first line,
   so when the Short repeats it plays as one continuous thought (for example the last line sets up the hook's
   question again, or ends mid-thought that the hook completes). No outro, no "like and subscribe".
+- ONE QUESTION: the whole Short answers one clear question that the hook raises (asked out loud or plainly
+  implied). Every line moves toward the answer, and the payoff answers it in plain words, so a viewer can say the
+  answer back after one watch. Nothing that belongs to a different question.
+- PLAIN COMPARISONS: every surprising number gets a comparison to something familiar the moment it appears
+  ("127 C, hotter than boiling water", "as heavy as 3 cars"). The comparison must follow from the facts or be
+  everyday knowledge (water boils at 100 C), never a new number about this topic.
 - Every factual line lists the fact ids it relies on. Every number you work out must appear in "calcs"
   as a plain arithmetic expression (e.g. "384400/3474") with its result and unit, using only the facts' numbers.
 - No made-up caveats or framing: never add a hedge, caveat or "honest uncertainty" line that claims anything the
@@ -257,6 +266,10 @@ Also write 5 different hooks (each could replace line 1) and 3 title options (un
     if not isinstance(ans, dict) or not ans.get("lines"):
         raise ScriptRejected("Claude didn't return a script")
     ans = _clean(ans)
+    if number_check_on():
+        ans, rep = tag_numbers(ans, topic)
+        if rep["tagged"] or rep["looked_up"]:
+            ans["number_check"] = rep
     ans = fill_needs(ans, topic)
     for _ in range(2):                            # wrong length: fix it here, before a costly fact-check
         n = len(text_of(ans, ans["hooks"][0] if ans["hooks"] else None).split())
@@ -399,6 +412,98 @@ def pick_draft(raw, topic):
 MAX_NEEDS = 2
 
 
+def number_check_on():
+    try:
+        from studio import config
+        return config.general().get("number_check", True) is not False
+    except Exception:
+        return True
+
+
+def look_up(asked, topic, most=MAX_NEEDS):
+    """{key: {"what", "value"}} -> {key: "F<n>"}: one web search looks for a reputable page that states each value;
+    Jarvis downloads that page itself and keeps it only if the page's own text has the value's numbers. A kept page
+    becomes one more source of the topic. Values without a number of 2+ digits can't be verified and are skipped."""
+    from studio import topics
+    found = {}
+    todo = {k: v for k, v in list(asked.items())[:most] if v.get("what") and topics._nums(v.get("value"))}
+    if not todo:
+        return found
+    from studio import claude
+    ans = claude.ask_json(
+        "Use web search. For each value below, find ONE reputable page (a university, government or science "
+        "agency, standards body, encyclopedia or textbook publisher) whose own text states that value. Only "
+        "pages you opened; if none states it, leave it out. Don't round or adjust the value.\n\n"
+        + "\n".join(f"{k}. {v['what']}: {v['value']}" for k, v in todo.items())
+        + '\n\nJSON object keyed by the number: {"4": {"url": "https://...", "quote": "the page\'s own sentence", '
+        '"source": "publisher"}}', timeout=300, web=True, purpose=f"look up values: {topic['title']}")
+    for k, v in todo.items():
+        hit = ans.get(str(k)) if isinstance(ans, dict) else None
+        url = str((hit or {}).get("url") or "").strip() if isinstance(hit, dict) else ""
+        if not url.startswith(("http://", "https://")):
+            continue
+        text = topics.page_text(url)               # the value only counts if it's on the downloaded page
+        if not text or not topics._nums(v["value"]) <= topics._nums(text):
+            continue
+        status = topics.check_url(url)
+        if not topics._reachable(status):
+            continue
+        claim = f"{v['what']}: {v['value']}"
+        row = {"topic_id": topic["id"], "claim": claim[:400], "url": url[:500], "title": str(hit.get("source") or "")[:200],
+               "domain": topics.domain(url), "tier": topics.tier(url), "http_status": status, "verdict": "reachable"}
+        row["id"] = db.insert("INSERT INTO sources(topic_id, claim, url, title, domain, tier, http_status, verdict, retrieved) "
+                              "VALUES(?,?,?,?,?,?,?,?,?)", row["topic_id"], row["claim"], row["url"], row["title"],
+                              row["domain"], row["tier"], row["http_status"], "reachable", time.time())
+        topic.setdefault("sources", []).append(row)      # same order as topics.topic() reloads them (by id)
+        found[k] = f"F{len(_facts(topic))}"
+    return found
+
+
+SMALL = 12                          # whole numbers up to this are ordinary words ("two steps"), not claims
+
+
+def _known_numbers(draft, facts):
+    known = set().union(*[_numbers(f.get("claim", "")) for f in facts]) if facts else set()
+    for c in draft.get("calcs") or []:
+        if isinstance(c, dict):
+            known |= _numbers(c.get("expr", "")) | _numbers(c.get("result", ""))
+            try:
+                v = float(c.get("result"))
+                known |= {f"{v:g}", str(round(v)), f"{v:.1f}", f"{v:.2f}"}
+            except (TypeError, ValueError):
+                pass
+    return known
+
+
+def tag_numbers(draft, topic):
+    """The free number check, before any fact-check call. A line that says a number but lists no fact gets the
+    fact whose own words have that number. A number found in no fact and no calculation, on a line not marked as
+    textbook science, is turned into a "needs" lookup (fill_needs then finds a page that states it, or drops the
+    line), so it never reaches the fact-check unsourced. Returns (draft, report)."""
+    facts = _facts(topic)
+    known = _known_numbers(draft, facts)
+    rep = {"tagged": [], "looked_up": []}
+    needs = list(draft.get("needs") or [])
+    lines = []
+    for i, ln in enumerate(draft.get("lines") or [], 1):
+        nums = {n for n in _numbers(ln.get("text", "")) if not (n.isdigit() and int(n) <= SMALL)}
+        tags = [str(f) for f in ln.get("facts") or []]
+        if nums and not [t for t in tags if t not in ("none", "")]:
+            hits = [f"F{k + 1}" for k, f in enumerate(facts) if nums & _numbers(f.get("claim", ""))]
+            if hits:
+                ln = dict(ln, facts=hits[:2])
+                rep["tagged"].append(i)
+        tags = [str(f) for f in ln.get("facts") or []]
+        loose = sorted(n for n in nums if n not in known)
+        beat = str(ln.get("beat") or "")
+        if loose and "general" not in tags and "needs" not in tags and i > 1 and beat not in PRUNE_KEEP_BEATS:
+            ln = dict(ln, facts=tags + ["needs"])
+            needs.append({"line": i, "what": " ".join(str(ln.get("text", "")).split())[:200], "value": loose[0]})
+            rep["looked_up"].append(i)
+        lines.append(ln)
+    return dict(draft, lines=lines, needs=needs), rep
+
+
 def fill_needs(draft, topic):
     """Lines the writer marked "needs" use a value the topic's sources don't give. One web search looks for a
     reputable page that states each one; Jarvis then downloads that page itself and keeps the value only if the
@@ -414,36 +519,7 @@ def fill_needs(draft, topic):
     draft.pop("needs", None)
     if not marked:
         return draft
-    found = {}
-    todo = {k: v for k, v in list(asked.items())[:MAX_NEEDS] if v["what"] and topics._nums(v["value"])}
-    if todo:
-        from studio import claude
-        ans = claude.ask_json(
-            "Use web search. For each value below, find ONE reputable page (a university, government or science "
-            "agency, standards body, encyclopedia or textbook publisher) whose own text states that value. Only "
-            "pages you opened; if none states it, leave it out. Don't round or adjust the value.\n\n"
-            + "\n".join(f"{k}. {v['what']}: {v['value']}" for k, v in todo.items())
-            + '\n\nJSON object keyed by the number: {"4": {"url": "https://...", "quote": "the page\'s own sentence", '
-            '"source": "publisher"}}', timeout=300, web=True, purpose=f"look up values: {topic['title']}")
-        for k, v in todo.items():
-            hit = ans.get(str(k)) if isinstance(ans, dict) else None
-            url = str((hit or {}).get("url") or "").strip() if isinstance(hit, dict) else ""
-            if not url.startswith(("http://", "https://")):
-                continue
-            text = topics.page_text(url)               # the value only counts if it's on the downloaded page
-            if not text or not topics._nums(v["value"]) <= topics._nums(text):
-                continue
-            status = topics.check_url(url)
-            if not topics._reachable(status):
-                continue
-            claim = f"{v['what']}: {v['value']}"
-            row = {"topic_id": topic["id"], "claim": claim[:400], "url": url[:500], "title": str(hit.get("source") or "")[:200],
-                   "domain": topics.domain(url), "tier": topics.tier(url), "http_status": status, "verdict": "reachable"}
-            row["id"] = db.insert("INSERT INTO sources(topic_id, claim, url, title, domain, tier, http_status, verdict, retrieved) "
-                                  "VALUES(?,?,?,?,?,?,?,?,?)", row["topic_id"], row["claim"], row["url"], row["title"],
-                                  row["domain"], row["tier"], row["http_status"], "reachable", time.time())
-            topic.setdefault("sources", []).append(row)      # same order as topics.topic() reloads them (by id)
-            found[k] = f"F{len(_facts(topic))}"
+    found = look_up(asked, topic, MAX_NEEDS)
     lines, dropped = [], []
     for i, ln in enumerate(draft["lines"], 1):
         if i in marked:
@@ -717,6 +793,15 @@ def review(draft, topic, video_id=None, recheck=None):
         ans = _recheck(draft, topic, fact_list, lines, recheck)
         if ans is not None:
             return _judged(draft, ans, video_id, rechecked=sorted(recheck["changed"]))
+    from studio import packaging
+    best = packaging.best_openings()
+    proven_txt = proven_key = ""
+    if best:
+        proven_txt = ("\nThese openings kept the most real viewers past the first seconds on this channel:\n"
+                      + "\n".join(f"- \"{b['hook']}\" ({100 * b['hold']:.0f}% still watching at 10%)" for b in best)
+                      + "\nAlso rate each hook \"proven\" 0-10: would it hold a viewer as well as those openings? "
+                        "(the same pull, not the same words or topic)")
+        proven_key = ', "proven": 0'
     ans = claude.ask_json(f"""You are a strict fact-checker and editor for a science Shorts channel. Each source below comes with
 text Jarvis just read from that page. Use it, and open the page or search the web whenever that text doesn't
 clearly settle a claim, or a source has none. Do not trust the writer.
@@ -736,10 +821,13 @@ correct statement and the URL). A line that only states standard textbook scienc
 well-known physical constant, stated correctly in its usual form) gets "standard" without needing a source; any
 number specific to this topic never counts as standard. Leave opinion and transition lines out (no entry).
 Rate each hook 0-10 on curiosity, clarity, specificity, honesty (10 = fully delivered by the script, no bait) and
-speed (gets to the point at once).
+speed (gets to the point at once).{proven_txt}
 Also: "loop" 0-10 (read the LAST line and then the FIRST line: does it flow back into the start as one continuous
 thought, so a viewer would keep watching when it repeats?), "rehook" 0-10 (is there an honest line about halfway
-that raises the stakes or opens a new question, so a drifting viewer stays for the payoff?), "originality" 0-10 (own explanation and wording vs a generic or copied explainer), "originality_fix" (if originality is under 7: one
+that raises the stakes or opens a new question, so a drifting viewer stays for the payoff?), "question" (the one
+question the hook raises, in your words), "answered" 0-10 (does the payoff answer exactly that question plainly,
+with nothing left hanging?), "bare_numbers" (the surprising numbers said with no plain comparison a viewer can
+picture, e.g. ["127 C"]; [] if none), "originality" 0-10 (own explanation and wording vs a generic or copied explainer), "originality_fix" (if originality is under 7: one
 sentence naming what reads generic and a concrete idea to make it the channel's own), "inauthentic_risk"
 "low/medium/high" (does it read like mass-produced template content?), and "problems": anything else a careful
 editor would fix (confusing step, misleading simplification, unit mistake).
@@ -752,8 +840,8 @@ published or updated date if it shows one (YYYY-MM-DD), else "". Give "note" onl
 
 JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|wrong", "fact": "F1",
 "quote": "...", "confidence": 0.9, "source_date": ""}}, {{"line": 2, "verdict": "unsupported", "note": "..."}}],
-"hooks": {{"0": {{"curiosity": 0, "clarity": 0, "specificity": 0, "honesty": 0, "speed": 0}}}},
-"loop": 0, "rehook": 0, "originality": 0, "originality_fix": "...", "inauthentic_risk": "low", "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
+"hooks": {{"0": {{"curiosity": 0, "clarity": 0, "specificity": 0, "honesty": 0, "speed": 0{proven_key}}}}},
+"loop": 0, "rehook": 0, "question": "...", "answered": 0, "bare_numbers": [], "originality": 0, "originality_fix": "...", "inauthentic_risk": "low", "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
     if not isinstance(ans, dict):
         raise ScriptRejected("the fact-check didn't return a result")
     return _judged(draft, ans, video_id)
@@ -787,6 +875,10 @@ def _judged(draft, ans, video_id, rechecked=None):
         if fits:                                  # a slightly lower-rated hook that keeps it in length
             hs, hi = max(fits)
     hook = draft["hooks"][hi] if hi is not None else (draft["lines"][0]["text"] if draft["lines"] else "")
+    proven = (ratings.get(hi) or {}).get("proven") if hi is not None else None
+    if isinstance(proven, (int, float)) and proven < PROVEN_WEAK:
+        problems.append(f"editor: the hook is weaker than the openings that held viewers best here (proven "
+                        f"{proven}/10); open with the same kind of pull")
     body = text_of(draft, hook)
     words = len(body.split())
     if not WORDS_MIN <= words <= WORDS_MAX:
@@ -799,6 +891,16 @@ def _judged(draft, ans, video_id, rechecked=None):
     rehook = ans.get("rehook")
     if isinstance(rehook, (int, float)) and rehook < 5:
         problems.append(f"editor: no real re-hook halfway (rehook {rehook}/10); add one short line that raises the stakes")
+    answered = ans.get("answered")
+    q = " ".join(str(ans.get("question") or "").split())[:200]
+    if isinstance(answered, (int, float)) and answered < ANSWERED_MIN:
+        problems.append(f"one question: the payoff doesn't answer the hook's question ({q or 'unclear question'}; "
+                        f"answered {answered}/10); make the payoff answer it plainly and cut what belongs elsewhere")
+    elif isinstance(answered, (int, float)) and answered < 6:
+        problems.append(f"editor: the answer to \"{q}\" could be plainer (answered {answered}/10)")
+    bare = [str(b)[:40] for b in ans.get("bare_numbers") or [] if str(b).strip()][:4]
+    if bare:
+        problems.append("editor: give these numbers a plain comparison a viewer can picture: " + ", ".join(bare))
     orig = ans.get("originality")
     if isinstance(orig, (int, float)) and orig < 6:
         tip = str(ans.get("originality_fix") or "").strip()
@@ -813,6 +915,7 @@ def _judged(draft, ans, video_id, rechecked=None):
     return {"ok": not hard, "problems": problems, "hard_problems": hard, "claims": claims, "hook_ratings": ratings,
             "hook_index": hi, "hook_score": hs, "hook": hook, "body": body, "words": words, "calcs": calcs, "loop": loop, "rehook": rehook,
             "originality": orig, "inauthentic_risk": ans.get("inauthentic_risk"), "similar": [sim, sim_vid],
+            "question": q or None, "answered": answered,
             **({"rechecked": rechecked} if rechecked else {})}
 
 
@@ -897,6 +1000,7 @@ JSON only: {{"claims": [{{"line": 3, "verdict": "supported", "fact": "F1", "quot
     editor = [p[len("editor: "):] for p in prior.get("problems") or [] if p.startswith("editor: ")]
     return {"claims": new, "hooks": {str(k): v for k, v in (prior.get("hook_ratings") or {}).items()},
             "loop": prior.get("loop"), "rehook": prior.get("rehook"), "originality": prior.get("originality"),
+            "question": prior.get("question"), "answered": prior.get("answered"),
             "inauthentic_risk": prior.get("inauthentic_risk"),
             "problems": (editor + [p for p in ans.get("problems") or [] if isinstance(p, str)])[:5]}
 
@@ -928,7 +1032,8 @@ def draft_step(topic, video_id=None, feedback=None, previous=None, draft=None):
                      json.dumps({"lines": draft["lines"], "calcs": draft.get("calcs") or [], "titles": draft.get("titles") or [],
                                  "by": draft.get("by") or "claude",
                                  **({"picked": draft["picked"]} if draft.get("picked") else {}),
-                                 **({"recheck": draft["recheck"]} if draft.get("recheck") else {})}),
+                                 **({"recheck": draft["recheck"]} if draft.get("recheck") else {}),
+                                 **({"number_check": draft["number_check"]} if draft.get("number_check") else {})}),
                      "{}", "draft", time.time())
 
 
@@ -958,6 +1063,53 @@ def _draft_of(row):
             "titles": st.get("titles") or []}
 
 
+def lookup_on():
+    try:
+        from studio import config
+        return config.general().get("lookup_before_cut", True) is not False
+    except Exception:
+        return True
+
+
+def _look_up_flagged(topic, video_id, row, draft, st, rev, checks):
+    """Before cutting one or two unsupported lines: one search for a page that states each line's number. Lines it
+    sources get that page as their fact and are checked again (only those lines). Returns the new draft row's id,
+    or None when there was nothing to look up or nothing was found (then the usual cut or rewrite follows)."""
+    hard = rev.get("hard_problems") or []
+    if not hard or not lookup_on() or st.get("lookup_from"):
+        return None
+    flagged = {}
+    for h in hard:
+        m = LINE_PROBLEM.match(h)
+        if not m or m.group(2) != "unsupported":
+            return None
+        flagged[int(m.group(1))] = h
+    if len(flagged) > PRUNE_MAX:
+        return None
+    asked = {}
+    for n in flagged:
+        if 1 <= n <= len(draft["lines"]):
+            text = " ".join(str(draft["lines"][n - 1].get("text", "")).split())
+            nums = [x for x in _numbers(text) if not (x.isdigit() and int(x) <= SMALL)]
+            if nums:
+                asked[n] = {"what": text[:200], "value": nums[0]}
+    found = look_up(asked, topic, PRUNE_MAX) if asked else {}
+    if not found:
+        return None
+    lines = [dict(ln, facts=[f for f in ln.get("facts") or [] if str(f) not in ("needs", "none")] + [found[i]])
+             if i in found else ln for i, ln in enumerate(draft["lines"], 1)]
+    new = dict(draft, lines=lines)
+    st2 = {"lines": lines, "calcs": st.get("calcs") or [], "titles": st.get("titles") or [], "by": st.get("by") or "claude",
+           "lookup_from": row["id"], "looked_up": {str(i): f for i, f in found.items()}}
+    plan = recheck_plan(draft, new, {i: i for i in range(1, len(lines) + 1)}, checks) if partial_recheck_on() else None
+    if plan:
+        st2["recheck"] = {"from": row["id"], "changed": sorted(plan["changed"]),
+                          "kept": {str(k): v for k, v in plan["kept"].items()}}
+    return db.insert("INSERT INTO scripts(video_id, version, hooks, hook, body, structure, checks, status, created) "
+                     "VALUES(?,?,?,?,?,?,?,?,?)", video_id, row["version"] + 1, row["hooks"], row["hook"], row["body"],
+                     json.dumps(st2), "{}", "draft", time.time())
+
+
 def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     """Fact-checks the newest draft. Returns ("passed", row) or ("revise", row); raises ScriptRejected
     when the last allowed revision still fails."""
@@ -969,10 +1121,20 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     st = json.loads(row["structure"] or "{}")
     rev = review(draft, topic, video_id, recheck=_saved_recheck(st, video_id))
     checks = {k: rev[k] for k in ("ok", "problems", "hard_problems", "claims", "hook_ratings", "hook_index",
-                                  "hook_score", "words", "loop", "rehook", "originality", "inauthentic_risk", "similar")
+                                  "hook_score", "words", "loop", "rehook", "originality", "inauthentic_risk", "similar",
+                                  "question", "answered")
               if k in rev}
     if rev.get("rechecked"):
         checks["rechecked"] = rev["rechecked"]
+    if rev["ok"]:
+        back = explain_back(topic, draft, rev["hook"], video_id, max_revisions)
+        if back:
+            checks["explain_back"] = back
+            if back.get("unclear"):
+                rev["ok"] = False
+                rev["hard_problems"] = list(rev.get("hard_problems") or []) + [back["problem"]]
+                rev["problems"] = list(rev.get("problems") or []) + [back["problem"]]
+                checks.update(ok=False, hard_problems=rev["hard_problems"], problems=rev["problems"])
     st["calcs"] = rev["calcs"]
     db.run("UPDATE scripts SET hook=?, body=?, structure=?, checks=?, status=? WHERE id=?", rev["hook"], rev["body"],
            json.dumps(st), json.dumps(checks), "passed" if rev["ok"] else "failed", row["id"])
@@ -985,6 +1147,10 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
         return "passed", row
     from studio import lessons
     lessons.record("script", rev["hard_problems"], topic, video_id)
+    tries_now = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status='failed'", video_id)["n"]
+    if tries_now < max_revisions or tries_now <= max_revisions and _prune(draft, rev):
+        if _look_up_flagged(topic, video_id, row, draft, st, rev, checks):
+            return check_step(topic, video_id, max_revisions)
     pruned = _prune(draft, rev)
     if pruned:                                    # one or two extra lines were the only problem: cut them, no new call
         draft2, gone, mapping = pruned
@@ -1007,7 +1173,7 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
                                             "pruned": [n for n, _ in gone]})
         return "passed", prow
     tries = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status='failed'", video_id)["n"]
-    again = _repeated(video_id, row["id"], rev["hard_problems"])
+    again = None if st.get("lookup_from") else _repeated(video_id, row["id"], rev["hard_problems"])
     if again:                                     # the same kind of problem twice in a row: move on to the next idea
         _trial_outcome(topic, video_id, False)
         topics.set_status(topic["id"], script_status="failed")
@@ -1021,6 +1187,81 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
         guard.audit("script.failed", True, {"topic": topic["id"], "video": video_id, "problems": rev["hard_problems"][:5]})
         raise ScriptRejected("the script still failed the fact-check: " + "; ".join(rev["hard_problems"][:4]))
     return "revise", row
+
+
+# ---------- explain it back: does a first-time viewer get the point? (local brain, free) ----------
+
+EXPLAIN_MIN_MATCH = 2              # the local model's 1-5 "same point" rating at or under this sends it back once
+EXPLAIN_SYSTEM = ("You are a curious 14-year-old who just watched a 45-second science Short once. You only know what "
+                  "the narrator said. Answer in JSON.")
+
+
+def explain_on():
+    try:
+        from studio import config
+        return config.general().get("explain_back", True) is not False
+    except Exception:
+        return True
+
+
+def explain_back(topic, draft, hook, video_id=None, max_revisions=MAX_REVISIONS):
+    """The local model retells the Short in one sentence and rates (1-5) how well that matches the point the
+    Short was meant to make. A clear miss (EXPLAIN_MIN_MATCH or lower) sends the script back once, with what the
+    viewer took away, so the rewrite makes the point plainer. It also reads it as a confused newcomer: lines it
+    really couldn't follow (a skipped step, an unexplained word) send it back the same way. Never more than once per Short, never on the last
+    allowed try (so it can't cost a Short), and skipped when the local brain isn't ready. None when skipped."""
+    if not explain_on():
+        return None
+    local = _local()
+    if not local or not local.ready("studio_json")[0]:
+        return None
+    lines = [hook] + [ln["text"] for ln in draft["lines"][1:]] if draft.get("lines") else [hook]
+    topic = dict(topic or {})
+    point = f"{topic.get('title') or ''}. {topic.get('angle') or ''}".strip(". ")
+    ans = local.chat_json([{"role": "system", "content": EXPLAIN_SYSTEM},
+                           {"role": "user", "content":
+                            "The narration, line by line:\n"
+                            + "\n".join(f"{i}. {x}" for i, x in enumerate(lines, 1)) + "\n\n"
+                            f"The point it was meant to make: {point}\n\n"
+                            "You are new to this topic. Point out only lines you really could not follow: a word "
+                            "you didn't know that wasn't explained, a step that was skipped, or a line that doesn't "
+                            "connect to the one before. Most good scripts have none.\n"
+                            'Reply as {"takeaway": "the one thing you learned, in one sentence", '
+                            '"match": 1-5 (5 = exactly the intended point, 1 = something else), '
+                            '"confusing": [{"line": 3, "why": "what you didn\'t get"}]}'}],
+                          max_tokens=300, timeout=60, first_timeout=30, temperature=0.2)
+    if not ans:
+        return None
+    try:
+        match = int(float(ans.get("match")))
+    except (TypeError, ValueError):
+        return None
+    confusing = []
+    for c in ans.get("confusing") or []:
+        try:
+            n, why = int(c.get("line")), " ".join(str(c.get("why") or "").split())[:160]
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if 1 <= n <= len(lines) and len(why) >= 8:
+            confusing.append({"line": n, "why": why})
+    out = {"takeaway": str(ans.get("takeaway") or "")[:240], "match": match, "confusing": confusing[:3]}
+    tries = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status='failed'", video_id)["n"]
+    asked = any("explain_back" in (json.loads(r["checks"] or "{}"))
+                and (json.loads(r["checks"] or "{}")["explain_back"] or {}).get("unclear")
+                for r in db.q("SELECT checks FROM scripts WHERE video_id IS ?", video_id))
+    missed = match <= EXPLAIN_MIN_MATCH and out["takeaway"]
+    if (missed or out["confusing"]) and not asked and tries < max_revisions:
+        out["unclear"] = True
+        said = []
+        if missed:
+            said.append(f"would come away with \"{out['takeaway']}\" instead of the intended point ({point[:160]})")
+        if out["confusing"]:
+            said.append("couldn't follow " + "; ".join(f"line {c['line']} (\"{lines[c['line'] - 1][:80]}\": {c['why']})"
+                                                       for c in out["confusing"]))
+        out["problem"] = ("clarity: a first-time viewer " + " and ".join(said)
+                          + ". Keep every checked fact, but add the missing step or plain word, and tie each line to the "
+                            "main point.")
+    return out
 
 
 PRUNE_MAX = 2                      # at most this many flagged lines are simply cut

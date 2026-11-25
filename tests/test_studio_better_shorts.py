@@ -215,9 +215,9 @@ def _fake_pexels(monkeypatch, tmp_path):
     def search(query, key):
         calls.append(query)
         return {"videos": [
-            {"id": 11, "duration": 2, "url": "https://www.pexels.com/video/11/", "user": {"name": "Too Short"},
+            {"id": 11, "duration": 2, "url": "https://www.pexels.com/video/rocket-launch-11/", "user": {"name": "Too Short"},
              "video_files": [{"link": "https://v/11.mp4", "file_type": "video/mp4", "width": 1080, "height": 1920}]},
-            {"id": 12, "duration": 30, "url": "https://www.pexels.com/video/12/", "user": {"name": "Ana Lens"},
+            {"id": 12, "duration": 30, "url": "https://www.pexels.com/video/rocket-launch-at-dawn-12/", "user": {"name": "Ana Lens"},
              "video_files": [{"link": "https://v/12-4k.mp4", "file_type": "video/mp4", "width": 2160, "height": 3840},
                              {"link": "https://v/12-hd.mp4", "file_type": "video/mp4", "width": 1080, "height": 1920},
                              {"link": "https://v/12-sd.mp4", "file_type": "video/mp4", "width": 540, "height": 960},

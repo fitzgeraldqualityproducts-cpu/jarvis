@@ -38,6 +38,13 @@ def clipper_home(tmp_path, monkeypatch):
     monkeypatch.setattr(trends, "EMBED", lambda text: None)    # no meaning model while testing
     from studio import finalreview
     monkeypatch.setattr(finalreview, "mode", lambda: "off")   # no extra Claude call in other tests' Shorts
+    from studio import art
+
+    def no_clip(images, texts):
+        raise RuntimeError("no OpenCLIP in tests")
+    monkeypatch.setattr(art, "CLIP_SCORE", no_clip)          # pictures aren't scored unless a test fakes it
+    from studio import obsidian
+    monkeypatch.setattr(obsidian, "vault", lambda: None)     # never writes into a real Obsidian vault
     yield tmp_path
     db.reset_connections()
 
