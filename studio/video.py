@@ -38,7 +38,15 @@ TEMPLATES = {
     "compare": "2-4 horizontal bars: {items: [{label, value}], unit}",
     "scale": "2-3 circles sized by area: {items: [{label, value}], unit}",
     "steps": "a short numbered list, one item lit: {items: [2-4 short strings], current}",
+    "wave": "a standing wave with its peaks marked: {label, spot, span, value}  spot = what a peak is "
+            "(e.g. 'hot spot'), span 'gap' (between two neighbouring peaks = half a wavelength) or 'wavelength' "
+            "(a full wave = two gaps), value = that distance with its unit, e.g. '6.1 cm' (or '' if unknown)",
+    "measure": "a ruler between two things with the distance: {from, to, value, unit, label}  e.g. from 'hot "
+               "spot', to 'next hot spot', value '6.1', unit 'cm'",
 }
+
+
+NEW_TEMPLATES = ("wave", "measure")      # offered to the planner only with config "shots" on (see art.shots_on)
 
 
 def _rgb(h):
@@ -181,6 +189,10 @@ def _valid(s):
             return 2 <= len(items) <= 4 and all(float(str(i["value"]).replace(",", "")) > 0 for i in items)
         if t == "steps":
             return 2 <= len(s["items"]) <= 4
+        if t == "wave":
+            return str(s.get("span") or "gap") in ("gap", "wavelength")
+        if t == "measure":
+            return bool(str(s["value"]).strip()) and bool(str(s.get("from") or "").strip())
     except (KeyError, TypeError, ValueError):
         return False
     return False
@@ -202,7 +214,9 @@ def plan(script_row):
     lines[0] = script_row["hook"]
     calcs = "\n".join(f"- {c.get('expr')} = {c.get('actual') or c.get('result')} {c.get('unit', '')}: {c.get('says', '')}"
                       for c in st.get("calcs") or [])
-    tmpl = "\n".join(f"- {k}: {v}" for k, v in TEMPLATES.items())
+    from studio import art as _art
+    tmpl = "\n".join(f"- {k}: {v}" for k, v in TEMPLATES.items()
+                     if k not in NEW_TEMPLATES or _art.shots_on())    # the new diagrams wait for Connor's OK
     from studio import lessons
     learned = lessons.advice("video")
     learned = ("\n" + learned) if learned else ""
@@ -214,7 +228,20 @@ Plan it as ONE story, not line by line. First pick the Short's through-line: one
 the story on from the one before (closer, further, before/after, inside/outside, a different angle on the
 same subject). A scene's picture must show what its own line is about, using the main subject wherever the line
 allows. Never a loose mood picture (a sunset for a line about the Moon's temperature)."""
-    prompt = f"""Plan the on-screen visual for each narrated line of a science Short.{story}
+    board = ""
+    if storyboard_on():
+        board = """
+For every scene also give the storyboard: "purpose" (what this moment does for the story, under 10 words, e.g.
+"hook: show the puzzle", "explain: why waves add up", "payoff: reveal the answer"), "shots": 1-3 shots that
+change what the viewer sees about every 1.5-2 seconds of narration (a line of under 6 words gets 1 shot, 6-11
+words 2, longer 3), each {"art": 5-12 words for the picture, "camera": one of push-in, pull-out, pan-left,
+pan-right, close-up, tilt-up, "shows": what it shows, under 8 words}. Shots in one scene are the same moment from
+a new angle or closer, never a different subject. "transition" into the scene: cut, fade or zoom. "sfx": whoosh,
+pop, tick, rise or none (only where it marks something: a reveal, a number landing, a new idea).
+Honesty: AI pictures show places and objects. Never a staged "experiment result", a measurement reading, a
+chart or a lab photo, as if it were recorded evidence. A demonstration or measurement is drawn as a diagram
+(the scene "type"), never faked as a photo."""
+    prompt = f"""Plan the on-screen visual for each narrated line of a science Short.{story}{board}
 One scene per line, chosen from:
 {tmpl}
 Use only numbers from the line or these checked calculations:
@@ -228,8 +255,10 @@ numbers, diagrams, faces or famous people. And "footage": a 1-3 word stock-video
 
 Lines:
 """ + "\n".join(f"{i + 1}. {t}  (note: {st['lines'][i].get('visual', '')})" for i, t in enumerate(lines)) + \
-        ('\n\nJSON object: {"subject": "the main subject", "scenes": [exactly one object per line, in order, e.g. '
-         '{"type": "headline", "text": "...", "art": "...", "footage": "..."}]}' if story else
+        ('\n\nJSON object: {"subject": "the main subject", "story": "what the viewer sees from start to finish, in '
+         'two sentences", "scenes": [exactly one object per line, in order, e.g. {"type": "headline", "text": "...", '
+         '"art": "...", "footage": "...", "purpose": "...", "shots": [{"art": "...", "camera": "push-in", '
+         '"shows": "..."}], "transition": "cut", "sfx": "none"}]}' if story else
          '\n\nJSON array with exactly one object per line, in order, e.g. [{"type": "headline", "text": "..."}]')
     scenes = []
     try:
@@ -253,8 +282,49 @@ Lines:
             out[i] = sc = dict(sc, art=str(art)[:160])
         fq = " ".join(re.sub(r"[^A-Za-z0-9 '-]", " ", str(src.get("footage") or "")).split()[:4])
         if fq and not sc.get("footage"):
-            out[i] = dict(sc, footage=fq[:40])
+            out[i] = sc = dict(sc, footage=fq[:40])
+        out[i] = board_fields(out[i], src, lines[i])
     return out
+
+
+CAMERAS = ("push-in", "pull-out", "pan-left", "pan-right", "close-up", "tilt-up")
+TRANSITIONS = ("cut", "fade", "zoom")
+SFX = ("whoosh", "pop", "tick", "rise", "none")
+WORDS_PER_SHOT = 5.5           # about 2 seconds of narration at the channel's pace
+
+
+def shots_for(line):
+    n = len(str(line).split())
+    return max(1, min(3, int(math.ceil(n / WORDS_PER_SHOT)) if n >= 6 else 1))
+
+
+def board_fields(sc, src, line):
+    """The storyboard fields of one scene, checked: purpose, 1-3 shots (art, camera, shows), transition, sfx.
+    Missing or odd values get a safe default, so an older plan still renders exactly as before."""
+    src = src if isinstance(src, dict) else {}
+    sc = dict(sc)
+    sc["purpose"] = " ".join(str(src.get("purpose") or sc.get("purpose") or "").split())[:80]
+    shots = []
+    for sh in (src.get("shots") or sc.get("shots") or [])[:3]:
+        if isinstance(sh, dict) and str(sh.get("art") or "").strip():
+            cam = str(sh.get("camera") or "").lower()
+            shots.append({"art": " ".join(str(sh["art"]).split())[:160],
+                          "camera": cam if cam in CAMERAS else CAMERAS[len(shots) % 2],
+                          "shows": " ".join(str(sh.get("shows") or "").split())[:60]})
+    want = shots_for(line)
+    if shots:
+        shots = shots[:max(1, want)]
+        if sc.get("art"):
+            shots[0]["art"] = sc["art"]                   # the scene's own picture opens it
+    if shots:
+        sc["shots"] = shots
+    else:
+        sc.pop("shots", None)
+    tr = str(src.get("transition") or sc.get("transition") or "").lower()
+    sc["transition"] = tr if tr in TRANSITIONS else "cut"
+    fx = str(src.get("sfx") or sc.get("sfx") or "").lower()
+    sc["sfx"] = fx if fx in SFX else "whoosh"          # the usual whoosh on the cut, as before storyboards
+    return sc
 
 
 def hook_scene(hook, planned=None):
@@ -416,6 +486,40 @@ def draw_scene(scene, pal, handle="", bg=None):
                 drawn.append(d.textbbox((x0 + 130, yy + 10 + j * 64), ln, font=fs))
             drawn.append((x0, yy, x0 + 90, yy + 90))
             yy += 200
+    elif t == "wave":
+        from studio import edit
+        span = "wavelength" if str(scene.get("span") or "").lower().startswith("wave") else "gap"
+        geo = edit.wave_geometry(width, edit.WAVE_PEAKS, span)
+        mid, amp = y0 + 420, 150
+        for sign, col in ((1, cyan), (-1, _rgb(pal["muted"]))):      # the two extremes of the standing wave
+            pts = [(x0 + x, mid - sign * amp * math.sin(math.pi * x / (width / edit.WAVE_PEAKS)))
+                   for x in range(0, width + 1, 6)]
+            d.line(pts, fill=col, width=7)
+        for x in geo["peaks"]:
+            d.ellipse([x0 + x - 22, mid - amp - 22, x0 + x + 22, mid - amp + 22], fill=amber)
+        ya = mid + amp + 70
+        d.line([(x0 + geo["a"], ya), (x0 + geo["b"], ya)], fill=amber, width=6)
+        for x in (geo["a"], geo["b"]):
+            d.line([(x0 + x, ya - 24), (x0 + x, ya + 24)], fill=amber, width=6)
+        drawn.append((x0, mid - amp - 22, x1, ya + 24))
+        if scene.get("value"):
+            put((0, ya + 40), str(scene["value"])[:16], _font(72), amber)
+        if scene.get("label"):
+            put((0, y0 + 80), str(scene["label"])[:40], _font(56, False), text)
+    elif t == "measure":
+        ya = y0 + 470
+        d.line([(x0 + 40, ya), (x1 - 40, ya)], fill=amber, width=8)
+        for x in (x0 + 40, x1 - 40):
+            d.line([(x, ya - 40), (x, ya + 40)], fill=amber, width=8)
+        drawn.append((x0 + 40, ya - 40, x1 - 40, ya + 40))
+        f = _font(46, False)
+        d.text((x0 + 40, ya + 60), str(scene.get("from") or "")[:18], font=f, fill=muted)
+        drawn.append(d.textbbox((x0 + 40, ya + 60), str(scene.get("from") or "")[:18], font=f))
+        to = str(scene.get("to") or "")[:18]
+        d.text((x1 - 40 - d.textlength(to, font=f), ya + 60), to, font=f, fill=muted)
+        put((0, ya - 200), f"{scene['value']} {scene.get('unit') or ''}".strip()[:20], _font(120), amber)
+        if scene.get("label"):
+            put((0, y0 + 80), str(scene["label"])[:40], _font(56, False), text)
     else:
         f, lines, _ = _fit(d, str(scene.get("text") or ""), 96, width, 5)
         yy = y0 + max(80, (y1 - y0 - len(lines) * (f.size + 20)) / 2 - 40)
@@ -471,6 +575,87 @@ SERIF = {False: ["C:/Windows/Fonts/georgia.ttf", "/System/Library/Fonts/Suppleme
                 "/Library/Fonts/Georgia Italic.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf"]}
 
 
+# the bold type system (config "type_style": "bold"; "serif" is the reference look and stays the default until
+# Connor approves a sample): a heavy sans-serif for the hook, counter, captions and labels, 1-2 short lines of
+# caption at a time with key words and numbers in the accent colour, the payoff line as a bigger reveal
+BLACK = ["C:/Windows/Fonts/ariblk.ttf", "/System/Library/Fonts/Supplemental/Arial Black.ttf",
+         "/Library/Fonts/Arial Black.ttf", "C:/Windows/Fonts/arialbd.ttf",
+         "/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
+BOLD_CAPTION = {"y": 0.66, "left": 80, "width": W - 80 - 150, "size": 66, "lineHeight": 1.15}
+BOLD_WORDS = 6           # at most this many words on screen at once (1-2 lines)
+
+
+def type_style():
+    try:
+        return "bold" if str(config.general().get("type_style", "serif")).lower() == "bold" else "serif"
+    except Exception:
+        return "serif"
+
+
+def _black(size):
+    from PIL import ImageFont
+    for n in BLACK:
+        if Path(n).exists():
+            return ImageFont.truetype(n, size)
+    return _font(size, True)
+
+
+def _even_groups(d, f, words, idx):
+    """idx split into the fewest near-equal groups of at most BOLD_WORDS that fit two caption lines, each break
+    moved by a word where that lands it right after punctuation (so a phrase stays together)."""
+    if not idx:
+        return []
+    for n in range(max(1, math.ceil(len(idx) / BOLD_WORDS)), len(idx) + 1):
+        cuts, prev = [], 0
+        for c in range(1, n):
+            b = round(c * len(idx) / n)
+            for cand in (b, b - 1, b + 1):
+                if prev < cand < len(idx) and re.search(r"[.,;:!?]$", words[idx[cand - 1]]["w"]):
+                    b = cand
+                    break
+            b = max(prev + 1, min(b, len(idx) - (n - c)))
+            cuts.append(b)
+            prev = b
+        bounds = [0] + cuts + [len(idx)]
+        groups = [idx[a:b] for a, b in zip(bounds, bounds[1:]) if b > a]
+        if all(len(g) <= BOLD_WORDS + 1 and
+               len(_wrap(d, " ".join(words[j]["w"] for j in g), f, BOLD_CAPTION["width"])) <= 2 for g in groups):
+            return groups
+    return [[i] for i in idx]
+
+
+def _bold_caption_props(lines, words, starts, beats=None):
+    """Short bold caption pages: each line's words in groups of at most BOLD_WORDS that fit two lines, timed to
+    the voice, breaking after punctuation where it can. "hi" marks numbers and key words (accent colour);
+    "reveal" marks the payoff line. Returns (pages, caption boxes for the safe-area check)."""
+    from PIL import Image, ImageDraw
+    from clipper import captions
+    d = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    f = _black(BOLD_CAPTION["size"])
+    keys = captions.pick_keywords(words, [], every=5)
+    beats = beats or []
+    pages, boxes = [], []
+    for k in range(len(lines)):
+        s0, s1 = starts[k], starts[k + 1]
+        idx = [i for i, w in enumerate(words) if s0 <= float(w["s"] or 0) < s1 or
+               (k == len(lines) - 1 and float(w["s"] or 0) >= s0)]
+        if k == 0:                       # the hook is already on screen as the title: shown, but not as a caption
+            pages.append({"s": s0, "e": s1, "text": "", "words": idx})
+            continue
+        groups = _even_groups(d, f, words, idx)
+        for g_n, g in enumerate(groups):
+            a = s0 if g_n == 0 else float(words[g[0]]["s"])
+            b = float(words[groups[g_n + 1][0]]["s"]) if g_n + 1 < len(groups) else s1
+            text = " ".join(words[j]["w"] for j in g)
+            pages.append({"s": round(a, 3), "e": round(b, 3), "words": g, "text": text,
+                          "hi": [n for n, j in enumerate(g) if j in keys or re.search(r"\d", words[j]["w"])],
+                          **({"reveal": True} if k < len(beats) and beats[k] == "payoff" else {})})
+            n = len(_wrap(d, text, f, BOLD_CAPTION["width"]))
+            h = int(n * BOLD_CAPTION["size"] * BOLD_CAPTION["lineHeight"] * (1.12 if pages[-1].get("reveal") else 1))
+            boxes.append((BOLD_CAPTION["left"], int(BOLD_CAPTION["y"] * H - h / 2), BOLD_CAPTION["width"], h))
+    return pages, boxes
+
+
 def _serif(size, italic=False):
     from PIL import ImageFont
     for n in SERIF[italic]:
@@ -501,6 +686,8 @@ def huds(scenes):
             h = {"label": sc.get("label") or "", "value": f"{sc['value']} {sc.get('unit') or ''}".strip()}
         elif t == "equation":
             h = {"label": sc.get("left") or "", "value": str(sc["right"]), "sub": sc.get("label") or ""}
+        elif t == "measure":
+            h = {"label": sc.get("label") or "", "value": f"{sc['value']} {sc.get('unit') or ''}".strip()}
         elif t in ("compare", "scale") and sc.get("items"):
             top = max(sc["items"], key=lambda i: _num(i["value"]))
             h = {"label": str(top.get("label") or ""), "value": f"{top['value']} {sc.get('unit') or ''}".strip()}
@@ -525,7 +712,7 @@ def huds(scenes):
     return out
 
 
-def draw_cinematic(bg, hud, pal, title=""):
+def draw_cinematic(bg, hud, pal, title="", bold=False):
     """A cinematic scene still: the picture, the counter (final value) and, on the hook, the question.
     Returns (PIL image, bounding box of what was drawn)."""
     from PIL import ImageDraw
@@ -548,15 +735,16 @@ def draw_cinematic(bg, hud, pal, title=""):
         if hud.get("label"):
             f, ls, _ = _fit(d, hud["label"], 24, width, 1)
             y = put((HUD_X, y), ls[0], f, soft)[3] + 10
-        f = _serif(88)
+        big = _black if bold else _serif
+        f = big(84 if bold else 88)
         while d.textlength(hud["value"], font=f) > width and f.size > 50:
-            f = _serif(f.size - 6)
+            f = big(f.size - 6)
         y = put((HUD_X, y), hud["value"], f, white)[3] + 12
         if hud.get("sub"):
             f, ls, _ = _fit(d, hud["sub"], 22, width, 1, bold=True)
             y = put((HUD_X, y), ls[0], f, soft)[3]
     if title:
-        f = _serif(66)
+        f = _black(68) if bold else _serif(66)
         ls = _wrap(d, title, f, BOX["x1"] - BOX["x0"] - 20)[:3]
         yy = max(y + 40, TITLE_TOP)
         for ln in ls:
@@ -657,30 +845,67 @@ def _caption_props(words, pal):
 MOVE_WORKERS = 3          # camera moves drawn at once (the processor has 8 threads; the card encodes up to 5 streams)
 
 
-def _depth_moves(raws, enh, starts, folder, pal, used):
-    """{scene: {"video", "kind"}}: a camera move through each picture that has a depth map (studio/motion.py)."""
+SHOT_CUT = 0.12          # a new shot fades in over this many seconds
+
+
+def shot_times(span, n):
+    """Where each of n shots starts inside a scene of span seconds (equal parts; the first at 0)."""
+    return [round(span * j / n, 3) for j in range(n)]
+
+
+def _depth_moves(raws, enh, starts, folder, pal, used, scenes=None, shot_raws=None, shot_enh=None):
+    """{scene: {"video", "kind", "shots"?}}: a camera move through each picture that has a depth map
+    (studio/motion.py). A scene with extra storyboard shots gets a move per shot, each over its part of the scene,
+    with the storyboard's camera; "shots" lists [{"at", "video"}] for the 2nd and 3rd."""
     from concurrent.futures import ThreadPoolExecutor
     from studio import art, motion
+    scenes, shot_raws, shot_enh = scenes or [], shot_raws or {}, shot_enh or {}
     out, errs = {}, []
     todo = [(k, rp) for k, rp in sorted(raws.items()) if enh.get(k, {}).get("depth") and k + 1 < len(starts)]
-
-    def one(k, rp):
-        _shaded, img, shade = art.prepare(rp, pal, "hud", hd=enh[k].get("hd"), parts=True)
-        seconds = starts[k + 1] - starts[k] + FADE + 0.1
-        return motion.depth_clip(img, motion.load_depth(enh[k]["depth"]), seconds, k,
-                                 folder / f"move_{k + 1:02d}.mp4", FPS, shade)
-    # each scene's move is its own clip, so drawing a few at once gives the very same clips, sooner
-    with ThreadPoolExecutor(max_workers=max(1, MOVE_WORKERS)) as pool:
-        jobs_ = {k: pool.submit(one, k, rp) for k, rp in todo}
+    plan = {}                                   # scene -> [(shot, raw, enh, camera, seconds, at)]
     for k, rp in todo:
-        try:
+        sc = scenes[k] if k < len(scenes) and isinstance(scenes[k], dict) else {}
+        shots = sc.get("shots") or []
+        extra = [j for j in range(1, len(shots)) if (k, j) in shot_raws and shot_enh.get((k, j), {}).get("depth")]
+        span = starts[k + 1] - starts[k]
+        n = 1 + len(extra)
+        at = shot_times(span, n)
+        cams = [shots[0].get("camera") if shots else None] + [shots[j].get("camera") for j in extra]
+        parts = [(0, rp, enh[k], cams[0])] + [(j, shot_raws[(k, j)], shot_enh[(k, j)], cams[m + 1])
+                                              for m, j in enumerate(extra)]
+        plan[k] = [(j, r, e, cam, (at[m + 1] if m + 1 < n else span) - at[m] + (FADE + 0.1 if m + 1 == n else SHOT_CUT),
+                    at[m]) for m, (j, r, e, cam) in enumerate(parts)]
+
+    def one(k, j, rp, e, cam, seconds):
+        _shaded, img, shade = art.prepare(rp, pal, "hud", hd=e.get("hd"), parts=True)
+        name = f"move_{k + 1:02d}.mp4" if j == 0 else f"move_{k + 1:02d}_{j + 1}.mp4"
+        return motion.depth_clip(img, motion.load_depth(e["depth"]), seconds, k + j, folder / name, FPS, shade,
+                                 camera=cam if (j or len(plan[k]) > 1) else None)
+    # each move is its own clip, so drawing a few at once gives the very same clips, sooner
+    with ThreadPoolExecutor(max_workers=max(1, MOVE_WORKERS)) as pool:
+        jobs_ = {(k, j): pool.submit(one, k, j, r, e, cam, secs) for k, parts in plan.items()
+                 for j, r, e, cam, secs, _at in parts}
+    n_shots = 0
+    for k, parts in plan.items():
+        clips = []
+        for j, r, e, cam, secs, at in parts:
             try:
-                p = jobs_[k].result()
-            except Exception:
-                p = one(k, rp)                     # once more on its own (e.g. after a graphics-card encode failure)
-            out[k] = {"video": p.name, "kind": motion.move_for(k)[0]}
-        except Exception as e:
-            errs.append(str(e)[:160])
+                try:
+                    p = jobs_[(k, j)].result()
+                except Exception:
+                    p = one(k, j, r, e, cam, secs)     # once more on its own (e.g. after a graphics-card encode failure)
+                clips.append((j, p, at, cam))
+            except Exception as ex:
+                errs.append(str(ex)[:160])
+        if not clips or clips[0][0] != 0:
+            continue
+        cam0 = clips[0][3] if len(parts) > 1 else None
+        out[k] = {"video": clips[0][1].name, "kind": motion.move_for(k, cam0)[0]}
+        if len(clips) > 1:
+            out[k]["shots"] = [{"at": at, "video": p.name} for _j, p, at, _c in clips[1:]]
+            n_shots += len(clips) - 1
+    if n_shots:
+        used["shot_moves"] = f"{n_shots} extra shots with their own camera move"
     used["motion"] = (f"depth camera moves: {len(out)} of {len(raws)} scenes" if out else "flat push-in") + \
         (f" ({errs[0]})" if errs else "")
     return out
@@ -806,6 +1031,7 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     handle = (db.one("SELECT handle FROM channel WHERE id=1") or {"handle": ""})["handle"] or ""
     look = eng.get("look", "diagram")
     bgs, bg_paths, raws, enh = {}, {}, {}, {}
+    shot_raws, shot_enh = {}, {}                             # (scene, shot) -> extra storyboard shots
     if eng["images"] == "sdxl" or look == "hud":
         progress("Painting a picture for every scene (SDXL-Turbo)")
         try:
@@ -821,6 +1047,15 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                 except Exception as e:
                     used["fit"] = f"not checked ({str(e)[:160]})"
             sharpen, depth = eng["sharpen"] == "esrgan", eng["motion"] == "depth" and look == "hud"
+            if raws and depth and art.shots_on() and any(isinstance(sc, dict) and len(sc.get("shots") or []) > 1
+                                                         for sc in scenes):
+                progress("Painting the extra shots the storyboard asks for")
+                shot_raws = art.shot_pictures(video_id, scenes, look)
+                shot_raws, shot_fit = art.fit_shots(scenes, lines, shot_raws)
+                if shot_raws:
+                    shot_enh = art.enhance(shot_raws, sharpen=sharpen, depth=True)
+                used["shots"] = (f"{len(shot_raws)} extra shots" + (f", dropped {shot_fit['dropped']}"
+                                                                    if shot_fit.get("dropped") else ""))
             if raws and (sharpen or depth):
                 progress("Sharpening the pictures and finding their depth")
                 enh = art.enhance(raws, sharpen=sharpen, depth=depth)
@@ -856,7 +1091,8 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                       art.prompt(scenes[k], lines[k] if k < len(lines) else "", look)[:300], _sha(bp), time.time())
     for i, sc in enumerate(scenes):
         if look == "hud":
-            img, box = draw_cinematic(bgs[i], hud_list[i], pal, title=lines[0] if i == 0 else "")
+            img, box = draw_cinematic(bgs[i], hud_list[i], pal, title=lines[0] if i == 0 else "",
+                                      bold=type_style() == "bold")
         else:
             img, box = draw_scene(sc, pal, handle, bg=bgs.get(i))
         p = folder / f"scene_{i + 1:02d}.png"
@@ -914,8 +1150,8 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     try:
         if look == "hud" and eng["compose"] == "remotion" and eng["motion"] == "depth":
             with timings.step("camera moves (depth)"):
-                moves.update({k: v for k, v in _depth_moves(raws, enh, starts, folder, pal, used).items()
-                              if k not in moves})
+                moves.update({k: v for k, v in _depth_moves(raws, enh, starts, folder, pal, used, scenes, shot_raws,
+                                                            shot_enh).items() if k not in moves})
     finally:
         if worker:
             worker.join()
@@ -939,6 +1175,10 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
         used["music"] = "none"
     beats = edit.beats_of(st["lines"], len(scenes))
     cue_list = edit.cues(starts, beats, hud_list, words)
+    from studio import art as _art
+    board_on = _art.shots_on()
+    if board_on:
+        cue_list = edit.board_cues(cue_list, scenes)       # the storyboard's own sound and transition per cut
     if eng["sfx"] == "synth":
         try:
             from studio import sound
@@ -989,8 +1229,14 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
         progress("Composing with Remotion")
         try:
             if look == "hud":
-                pages_, cap_boxes = _line_caption_props(lines, words, starts)
-                cap_props = {"pages": pages_, "keywords": [], "caption": dict(LINE_CAPTION, maxLines=3), "look": "hud"}
+                if type_style() == "bold":
+                    pages_, cap_boxes = _bold_caption_props(lines, words, starts, beats)
+                    cap_props = {"pages": pages_, "keywords": [], "caption": dict(BOLD_CAPTION, maxLines=2),
+                                 "look": "hud", "type": "bold"}
+                    used["type"] = "bold sans-serif captions (1-2 lines, key words highlighted)"
+                else:
+                    pages_, cap_boxes = _line_caption_props(lines, words, starts)
+                    cap_props = {"pages": pages_, "keywords": [], "caption": dict(LINE_CAPTION, maxLines=3), "look": "hud"}
             else:
                 cap_props, cap_boxes = _caption_props(words, pal)
             props = {"fps": FPS, "width": W, "height": H, "duration": round(end, 3), "audio": padded.name,
@@ -1003,7 +1249,10 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                                  **({"bg": bg_paths[k].name, "hud": hud_list[k], "title": lines[0] if k == 0 else ""}
                                     if look == "hud" else {}),
                                  **({"motion": moves[k]["video"]} if k in moves else {}),
-                                 **({"overlay": ovs[k]} if k in ovs else {})}
+                                 **({"shots": moves[k]["shots"]} if moves.get(k, {}).get("shots") else {}),
+                                 **({"overlay": ovs[k]} if k in ovs else {}),
+                                 **({"transition": scenes[k]["transition"]}
+                                    if scenes[k].get("transition") in ("fade", "zoom") and board_on else {})}
                                 for k in range(len(scenes))],
                      **({"fx": cue_list} if lively else {})}
             with engines.heavy("Remotion render"):

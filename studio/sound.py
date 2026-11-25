@@ -105,7 +105,17 @@ def track(cues, seconds, levels=None):
         if kind in ("cut", "jump"):
             if kind == "jump":
                 continue                                    # the jump zoom is silent: the voice carries it
-            _put(buf, w, t - len(w) / RATE * 0.55, lv["whoosh"])   # the whoosh peaks just as the cut lands
+            fx = c.get("sfx") or "whoosh"                  # the storyboard can pick the cut's sound
+            if fx == "none":
+                continue
+            if fx == "pop":
+                _put(buf, pp, t, lv["pop"])
+            elif fx == "tick":
+                _put(buf, tk, t, lv["tick"])
+            elif fx == "rise":
+                _put(buf, rs, t - len(rs) / RATE, lv["riser"] * 0.7)
+            else:
+                _put(buf, w, t - len(w) / RATE * 0.55, lv["whoosh"])   # the whoosh peaks just as the cut lands
         elif kind == "count":
             # the counter eases out (fast, then slow), so the ticks start quick and spread out, and stop
             # well before the number lands (at most about 1.4 s of them)

@@ -11,7 +11,9 @@ cues(...)      [{"t", "kind", "scene"}]: kinds
                            still for more than about 3 seconds
 overlays(...)  {scene index: overlay} animated diagrams over the picture in the cinematic look: growing bars for
                a comparison, a log scale for sizes far apart, a calculation that builds term by term, numbered
-               steps that light up in turn. Placed between the counter and the caption, inside the safe area.
+               steps that light up in turn, a standing wave with its peaks (hot spots) marked and the gap between
+               them labelled, a ruler that grows between two things. Placed between the counter and the caption,
+               inside the safe area. Reusable for any topic: Claude fills them from the line, nothing is per-topic.
 """
 import math
 import re
@@ -70,6 +72,22 @@ def cues(starts, beats, huds=None, words=None):
     return sorted(out, key=lambda c: c["t"])
 
 
+def board_cues(cue_list, scenes):
+    """The storyboard's sound and transition for each cut: a cut cue gets "sfx" (whoosh, pop, tick, rise or
+    none) and "transition" (cut, fade or zoom) from its scene. Scenes without them keep the usual whoosh."""
+    out = []
+    for c in cue_list:
+        c = dict(c)
+        sc = scenes[c["scene"]] if c.get("kind") == "cut" and 0 <= c.get("scene", -1) < len(scenes) else None
+        if isinstance(sc, dict):
+            if sc.get("sfx") and sc["sfx"] != "whoosh":
+                c["sfx"] = sc["sfx"]
+            if sc.get("transition") in ("fade", "zoom"):
+                c["transition"] = sc["transition"]
+        out.append(c)
+    return out
+
+
 def _items(scene):
     items = []
     for it in (scene.get("items") or [])[:4]:
@@ -80,8 +98,27 @@ def _items(scene):
     return items
 
 
+WAVE_PEAKS = 4            # a standing wave shows this many peaks (antinodes) across the panel
+
+
+def _short(v, n):
+    return " ".join(str(v or "").split())[:n]
+
+
+def wave_geometry(w, peaks=WAVE_PEAKS, span="gap"):
+    """Where a standing wave's peaks sit across a panel w px wide, and the two the span arrow joins:
+    {"peaks": [x...], "nodes": [x...], "a": x, "b": x}. Neighbouring peaks are half a wavelength apart, so
+    "gap" joins peaks 1 and 2 and "wavelength" joins peaks 1 and 3 (a full wave is two gaps)."""
+    step = w / peaks
+    xs = [round((i + 0.5) * step, 1) for i in range(peaks)]
+    nodes = [round(i * step, 1) for i in range(peaks + 1)]
+    j = 2 if span == "wavelength" and peaks >= 3 else 1
+    return {"peaks": xs, "nodes": nodes, "a": xs[0], "b": xs[j]}
+
+
 def overlay(scene):
-    """One scene's animated diagram (or None): {"kind": "bars"|"steps"|"equation", ...} with positions in px."""
+    """One scene's animated diagram (or None): {"kind": "bars"|"steps"|"equation"|"wave"|"measure", ...}
+    with positions in px."""
     t = scene.get("type")
     unit = " ".join(str(scene.get("unit") or "").split())[:12]
     if t in ("compare", "scale"):
@@ -112,6 +149,19 @@ def overlay(scene):
         if len(items) < 2:
             return None
         return {"kind": "steps", "items": items, **OVERLAY}
+    if t == "wave":
+        span = "wavelength" if str(scene.get("span") or "").lower().startswith("wave") else "gap"
+        inner = OVERLAY["w"] - 68
+        return {"kind": "wave", "span": span, "value": _short(scene.get("value"), 16),
+                "spot": _short(scene.get("spot"), 18) or "peak", "label": _short(scene.get("label"), 40),
+                "geo": wave_geometry(inner, WAVE_PEAKS, span), **OVERLAY}
+    if t == "measure":
+        value = _short(scene.get("value"), 14)
+        a, b = _short(scene.get("from"), 18), _short(scene.get("to"), 18)
+        if not value or not a:
+            return None
+        return {"kind": "measure", "from": a, "to": b, "value": f"{value} {_short(scene.get('unit'), 10)}".strip(),
+                "label": _short(scene.get("label"), 40), **OVERLAY}
     return None
 
 

@@ -209,6 +209,10 @@ Rules:
 - ONE QUESTION: the whole Short answers one clear question that the hook raises (asked out loud or plainly
   implied). Every line moves toward the answer, and the payoff answers it in plain words, so a viewer can say the
   answer back after one watch. Nothing that belongs to a different question.
+- EVERY LINE EARNS ITS PLACE: each line adds one new thing (a fact, a step, a twist); never restate a line, never
+  spend two lines on simple arithmetic. Explain the mechanism in plain words, building step by step, so a viewer
+  with no background follows it. Write for the screen: each line names something a viewer could SEE (an object, a
+  place, a drawn diagram), so the visuals can show exactly what is said.
 - PLAIN COMPARISONS: every surprising number gets a comparison to something familiar the moment it appears
   ("127 C, hotter than boiling water", "as heavy as 3 cars"). The comparison must follow from the facts or be
   everyday knowledge (water boils at 100 C), never a new number about this topic.
@@ -820,6 +824,11 @@ arithmetic from sourced numbers), "unsupported" (no source backs it) or "wrong" 
 correct statement and the URL). A line that only states standard textbook science (a named law or formula, or a
 well-known physical constant, stated correctly in its usual form) gets "standard" without needing a source; any
 number specific to this topic never counts as standard. Leave opinion and transition lines out (no entry).
+Check the EXPLANATION too, not just the numbers: a line whose numbers are sourced but whose reasoning or
+relationship is wrong (for example calling the gap between two hot spots the distance from a hot spot to a cold
+spot, mixing up a wavelength and half of it, or a cause that isn't the real cause) is "wrong", with the correct
+statement. Any calculation in the narration must follow from the line before it. When a claim is uncertain or
+debated, the line must say so plainly; a guess stated as a fact is "unsupported".
 Rate each hook 0-10 on curiosity, clarity, specificity, honesty (10 = fully delivered by the script, no bait) and
 speed (gets to the point at once).{proven_txt}
 Also: "loop" 0-10 (read the LAST line and then the FIRST line: does it flow back into the start as one continuous

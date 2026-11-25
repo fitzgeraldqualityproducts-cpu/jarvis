@@ -36,8 +36,13 @@ def load_depth(path, W=1080, H=1920):
     return np.clip((a - lo) / max(1e-4, hi - lo), 0, 1).astype(np.float32)
 
 
-def move_for(index):
-    return MOVES[index % len(MOVES)]
+# the storyboard's camera words, as moves (a pull-out would show the picture's edges, so it pushes in gently)
+BY_CAMERA = {"push-in": MOVES[0], "close-up": ("close in", 0.2, 0, 0), "pan-right": MOVES[1], "tilt-up": MOVES[2],
+             "pan-left": MOVES[3], "pull-out": ("ease in", 0.06, 0, 0)}
+
+
+def move_for(index, camera=None):
+    return BY_CAMERA.get(str(camera or "").lower()) or MOVES[index % len(MOVES)]
 
 
 def frame_maps(depth, k, move, W=1080, H=1920, grid=None):
@@ -55,7 +60,7 @@ def frame_maps(depth, k, move, W=1080, H=1920, grid=None):
     return mx.astype(np.float32), my.astype(np.float32)
 
 
-def depth_clip(img, depth, seconds, index, out, fps=30, shade=None):
+def depth_clip(img, depth, seconds, index, out, fps=30, shade=None, camera=None):
     """Writes the scene's camera move to out (MP4, no sound). img: PIL RGB W x H (unshaded); depth: load_depth();
     shade: the cinematic look's (H, W, 1) shade, put on after the move so it stays behind the counter and caption.
     Returns out."""
@@ -65,7 +70,7 @@ def depth_clip(img, depth, seconds, index, out, fps=30, shade=None):
     a = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
     H, W = a.shape[:2]
     grid = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
-    move = move_for(index)
+    move = move_for(index, camera)
     n = max(1, int(math.ceil(seconds * fps)))
     keep = None if shade is None else (1.0 - shade)
     enc = media.h264_args(17)                 # the graphics card's encoder when it works, else the processor

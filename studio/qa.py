@@ -5,7 +5,10 @@ Technical: 1080x1920, H.264 + AAC, 30 fps, 15-60 s, audio length matches, loudne
            peak below -0.5 dBTP, no blank stretches.
 Content:   passed fact-checked script, 2+ supported sources, every caption word shown, captions and
            visuals inside the safe area, every asset original or licensed with a checksum, title and
-           description rules (sources + AI-narration note), not a remake of an earlier video."""
+           description rules (sources + AI-narration note), not a remake of an earlier video.
+Visual:    the picture never stands still for long, and no two scenes reuse the same picture. Config
+           "visual_qc": "advise" (default: found problems are shown in QA and become lessons, never stop a Short)
+           or "block" (they fail QA). "final-cut review" (studio/finalreview.py) runs last."""
 import json
 import os
 import time
@@ -35,6 +38,68 @@ def blank_stretches(path, every=1.0):
             bad.append(round(f / fps, 1))
     cap.release()
     return bad
+
+
+STATIC_DIFF = 1.0        # frames half a second apart that differ less than this (0-255 average) count as still
+STATIC_MAX = 3.5         # the picture may stand still for at most this long
+SAME_PICTURE = 6.0       # two scenes' pictures closer than this (0-255 average, small and grey) are the same one
+
+
+def _small(fr):
+    import cv2
+    g = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY) if fr.ndim == 3 else fr
+    return cv2.resize(g, (54, 96), interpolation=cv2.INTER_AREA).astype(np.float32)
+
+
+def still_stretches(path, every=0.5):
+    """[(start s, seconds)] where the picture hardly changes for longer than STATIC_MAX."""
+    import cv2
+    cap = cv2.VideoCapture(str(path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    step, prev, run0, out = max(1, int(round(fps * every))), None, None, []
+    for f in range(0, n, step):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+        ok, fr = cap.read()
+        if not ok:
+            continue
+        cur, t = _small(fr), f / fps
+        if prev is not None and float(np.mean(np.abs(cur - prev))) < STATIC_DIFF:
+            run0 = t - every if run0 is None else run0
+        else:
+            if run0 is not None and t - every - run0 > STATIC_MAX:
+                out.append((round(run0, 1), round(t - every - run0, 1)))
+            run0 = None
+        prev = cur
+    if run0 is not None and prev is not None and (n - 1) / fps - run0 > STATIC_MAX:
+        out.append((round(run0, 1), round((n - 1) / fps - run0, 1)))
+    cap.release()
+    return out
+
+
+def repeated_pictures(paths):
+    """[(scene a, scene b)] (1-based) whose pictures are (nearly) the same image."""
+    import cv2
+    smalls = []
+    for p in paths:
+        im = cv2.imread(str(p)) if p and os.path.isfile(str(p)) else None
+        smalls.append(None if im is None else _small(im))
+    out = []
+    for i in range(len(smalls)):
+        for j in range(i + 1, len(smalls)):
+            if smalls[i] is not None and smalls[j] is not None and \
+                    float(np.mean(np.abs(smalls[i] - smalls[j]))) < SAME_PICTURE:
+                out.append((i + 1, j + 1))
+    return out
+
+
+def visual_mode():
+    try:
+        from studio import config
+        m = str(config.general().get("visual_qc", "advise")).lower()
+    except Exception:
+        m = "advise"
+    return m if m in ("advise", "block", "off") else "advise"
 
 
 def edge_frames(path):
@@ -89,6 +154,21 @@ def check(video_id):
         tail = rep.get("tail_seconds")
         _add(checks, "seamless loop", diff <= 14.0 and (tail is None or tail <= 0.6),
              f"last frame differs from the first by {diff:.1f}; {tail} s after the last word")
+    vm = visual_mode()
+    if vm != "off":
+        still = still_stretches(path)
+        pics = [a["path"] for a in db.q("SELECT path FROM assets WHERE video_id=? AND kind='art:scene' ORDER BY id",
+                                         video_id)]
+        same = repeated_pictures(pics)
+        found = ([f"picture stands still for {s} s at {t} s" for t, s in still[:3]] +
+                 [f"scenes {a} and {b} use the same picture" for a, b in same[:3]])
+        _add(checks, "picture keeps changing", vm == "advise" or not found,
+             ("; ".join(found) + (" (advice only)" if vm == "advise" else "")) if found else
+             f"no still stretch over {STATIC_MAX:.1f} s, {len(pics)} different pictures")
+        if found and vm == "advise":
+            from studio import lessons, topics
+            lessons.record("video", [f"visual qc: {x}" for x in found][:4],
+                           topics.topic(v["topic_id"]) if v.get("topic_id") else None, video_id)
     _add(checks, "file size", os.path.getsize(path) < 256 * 1024 * 1024, f"{os.path.getsize(path) / 1e6:.1f} MB")
     row = script.latest(video_id, "passed")
     _add(checks, "fact-checked script", bool(row), "" if row else "no passed script")

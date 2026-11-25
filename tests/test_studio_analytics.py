@@ -180,3 +180,18 @@ def test_background_chore_is_cheap_to_skip_and_reports_weekly(stats, monkeypatch
     assert health.peek_news() == []
     from studio import data_dir
     assert list(data_dir("reports").glob("week-*.md"))
+
+
+def test_likes_comments_and_shares_count_a_little(stats):
+    from studio import analytics
+    for n in (1, 2):
+        _published(stats, n, "A", 1000, 80.0, 5)
+    _published(stats, 3, "A", 1000, 80.0, 5)
+    stats.videos["yt3"]["analytics"].update(likes=60, shares=20)          # same views, far more engagement
+    analytics.fetch()
+    idx = analytics.index_all()
+    assert idx["yt3"]["engaged_per_1k"] > idx["yt1"]["engaged_per_1k"] > 0
+    assert 50 < idx["yt3"]["index"] <= 50 + 50 * analytics.WEIGHTS["engaged_per_1k"] * 2 + 0.1   # a small nudge only
+    assert abs(sum(analytics.WEIGHTS.values()) - 1.0) < 1e-9
+    text = analytics.report(save=False)
+    assert "| Likes | Comments | Shares |" in text
