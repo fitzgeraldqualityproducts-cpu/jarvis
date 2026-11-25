@@ -101,3 +101,23 @@ def test_final_review_scores_the_visual_hook_and_guesses_where_viewers_leave(fak
     fr = json.loads(db.video(vid)["meta"])["final_review"]
     assert fr["visual_hook"] == 6.0 and set(fr["retention_guess"]) == {"hook", "payoff"}
     assert "visual hook 6.0/10" in finalreview.detail(fr)
+
+
+def test_an_unbacked_comparison_is_removed_not_reworded(studio_home, monkeypatch):  # noqa: F811
+    """Short 17 stopped twice on "slower than a snail": the fix step now drops such a comparison and keeps the
+    sourced number in a unit a viewer can picture."""
+    from studio import claude, script
+    seen = []
+
+    def runner(prompt, timeout, web):
+        seen.append(prompt)
+        return json.dumps({"lines": [{"line": 2, "text": "That's about 7 millimetres an hour.", "delete": False}]})
+    monkeypatch.setattr(claude, "RUNNER", runner)
+    monkeypatch.setattr(script, "WORDS_MIN", 1)
+    topic = {"title": "Coriolis in a sink", "sources": [{"claim": "the push is about 2 micrometres a second",
+                                                         "url": "https://example.org", "verdict": "reachable"}]}
+    draft = {"lines": [{"text": "The push is about 2 micrometres a second."},
+                       {"text": "That's slower than a snail."}], "hooks": []}
+    fixed = script._fix_lines(draft, topic, ["line 2 is unsupported: no source says this is slower than a snail"])
+    assert "remove just\nthe comparison" in seen[0] and "never swap in another" in seen[0]
+    assert fixed["lines"][1]["text"] == "That's about 7 millimetres an hour."
