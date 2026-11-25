@@ -488,10 +488,13 @@ def _split_num(v):
     return float(n), (len(n.split(".")[1]) if "." in n else 0), m.group(2).strip()
 
 
+CARRY_SCENES = 1          # a counter stays up over this many following scenes that have no number of their own
+
+
 def huds(scenes):
     """The counter for every scene: {"label", "value", "sub"} plus "num"/"from"/"dec"/"unit" when the value
     is a number that can count up. A scene without a number keeps the last counter, like the reference."""
-    out, last = [], None
+    out, last, held = [], None, 0
     for sc in scenes:
         t, h = sc.get("type"), None
         if t == "number":
@@ -511,9 +514,12 @@ def huds(scenes):
                          **{"from": prev[0] if prev and prev[2] == parts[2] and prev[0] < parts[0] else 0.0})
             last = h
             out.append(dict(h))
+            held = 0
             continue
-        # a scene without a number keeps the last counter, standing still: it never counts again
-        out.append(dict(last, **({"from": last["num"]} if "num" in last else {}), carried=True) if last else None)
+        # a scene without a number keeps the last counter for one scene, standing still; after that it's stale
+        held += 1
+        out.append(dict(last, **({"from": last["num"]} if "num" in last else {}), carried=True)
+                   if last and held <= CARRY_SCENES else None)
     if out and out[0]:
         out[0]["from"] = out[0].get("num", 0.0)          # the first frame already shows the hook's number
     return out
@@ -648,18 +654,30 @@ def _caption_props(words, pal):
             "caption": {"y": CAPTION_Y, "left": left, "width": width, "size": size, "maxLines": lines}}, boxes
 
 
+MOVE_WORKERS = 3          # camera moves drawn at once (the processor has 8 threads; the card encodes up to 5 streams)
+
+
 def _depth_moves(raws, enh, starts, folder, pal, used):
     """{scene: {"video", "kind"}}: a camera move through each picture that has a depth map (studio/motion.py)."""
+    from concurrent.futures import ThreadPoolExecutor
     from studio import art, motion
     out, errs = {}, []
-    for k, rp in sorted(raws.items()):
-        dp = enh.get(k, {}).get("depth")
-        if not dp or k + 1 >= len(starts):
-            continue
+    todo = [(k, rp) for k, rp in sorted(raws.items()) if enh.get(k, {}).get("depth") and k + 1 < len(starts)]
+
+    def one(k, rp):
+        _shaded, img, shade = art.prepare(rp, pal, "hud", hd=enh[k].get("hd"), parts=True)
+        seconds = starts[k + 1] - starts[k] + FADE + 0.1
+        return motion.depth_clip(img, motion.load_depth(enh[k]["depth"]), seconds, k,
+                                 folder / f"move_{k + 1:02d}.mp4", FPS, shade)
+    # each scene's move is its own clip, so drawing a few at once gives the very same clips, sooner
+    with ThreadPoolExecutor(max_workers=max(1, MOVE_WORKERS)) as pool:
+        jobs_ = {k: pool.submit(one, k, rp) for k, rp in todo}
+    for k, rp in todo:
         try:
-            _shaded, img, shade = art.prepare(rp, pal, "hud", hd=enh[k].get("hd"), parts=True)
-            seconds = starts[k + 1] - starts[k] + FADE + 0.1
-            p = motion.depth_clip(img, motion.load_depth(dp), seconds, k, folder / f"move_{k + 1:02d}.mp4", FPS, shade)
+            try:
+                p = jobs_[k].result()
+            except Exception:
+                p = one(k, rp)                     # once more on its own (e.g. after a graphics-card encode failure)
             out[k] = {"video": p.name, "kind": motion.move_for(k)[0]}
         except Exception as e:
             errs.append(str(e)[:160])
@@ -868,13 +886,45 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     padded = folder / "voice_end.wav"                         # a short silent tail so the last scene can settle
     media.run(["-y", "-i", voice_path, "-af", f"apad=pad_dur=0.3,atrim=0:{end + 0.05:.3f},afade=t=out:st={max(0.0, end - 0.08):.3f}:d=0.08",
                "-ar", "48000", str(padded)])
+    # The music (graphics card) is made while the camera moves are drawn (processor), so neither waits for the
+    # other. Footage comes first: its picture check needs the graphics card too.
+    import threading
+    from studio import timings
+    box, vid_timed = {}, timings.current()
+
+    def make_music():
+        try:
+            with timings.video(vid_timed):
+                from studio import music, topics
+                vrow = db.video(video_id)
+                tp = topics.topic(vrow["topic_id"]) if vrow and vrow["topic_id"] else None
+                box["music"] = music.make(video_id, end, tp)
+        except Exception as e:
+            box["error"] = e
+        finally:
+            db.close_thread()                      # this helper thread's own database connection
+    moves = {}                                               # scene -> {"video", "kind"} for the cinematic look
+    if look == "hud" and eng["compose"] == "remotion" and eng["footage"] == "pexels":
+        moves.update(_footage_moves(video_id, scenes, starts, folder, used, record))
+    worker = None
     if eng["music"] == "acestep":
         progress("Making the background music (ACE-Step)")
+        worker = threading.Thread(target=make_music, daemon=True)
+        worker.start()
+    try:
+        if look == "hud" and eng["compose"] == "remotion" and eng["motion"] == "depth":
+            with timings.step("camera moves (depth)"):
+                moves.update({k: v for k, v in _depth_moves(raws, enh, starts, folder, pal, used).items()
+                              if k not in moves})
+    finally:
+        if worker:
+            worker.join()
+    if worker:
         try:
-            from studio import music, topics
-            vrow = db.video(video_id)
-            tp = topics.topic(vrow["topic_id"]) if vrow and vrow["topic_id"] else None
-            raw_music, mood = music.make(video_id, end, tp)
+            if "error" in box:
+                raise box["error"]
+            from studio import music
+            raw_music, mood = box["music"]
             mixed = folder / "voice_music.wav"
             music.mix(padded, raw_music, end + 0.05, mixed)
             padded = mixed
@@ -902,13 +952,6 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                 used["sfx"] = "none (no cues)"
         except Exception as e:
             used["sfx"] = f"none (the sound effects weren't used: {str(e)[:200]})"
-    moves = {}                                               # scene -> {"video", "kind"} for the cinematic look
-    if look == "hud" and eng["compose"] == "remotion":
-        if eng["footage"] == "pexels":
-            moves.update(_footage_moves(video_id, scenes, starts, folder, used, record))
-        if eng["motion"] == "depth":
-            moves.update({k: v for k, v in _depth_moves(raws, enh, starts, folder, pal, used).items()
-                          if k not in moves})
     lively = eng["edit"] == "lively"
     ovs = edit.overlays(scenes, look) if lively else {}
     if lively:

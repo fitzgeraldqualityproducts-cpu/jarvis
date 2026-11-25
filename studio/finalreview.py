@@ -8,9 +8,9 @@ picture) checks them against what the narrator says at each point:
   no broken AI artwork (garbled text or symbols inside a picture, melted hands or faces, obvious glitches)
   nothing misleading, nothing that looks like someone else's logo or brand
   the first frame makes sense on its own (it's what people see before they decide to stay)
-Each problem is "minor" or "major". Config "final_review": "advise" (default: problems are saved with the Short,
-shown in QA and turned into lessons, but never stop it), "block" (a major problem fails QA, so the Short isn't
-uploaded) or "off". It runs only after every other QA check passed, once per render."""
+Each problem is "minor" or "major". Config "final_review": "block" (default since 2026-11-25, Connor's choice: a
+major problem fails QA, so the Short isn't uploaded and Connor is told), "advise" (problems are saved with the
+Short, shown in QA and turned into lessons, but never stop it) or "off". It runs only after every other QA check passed, once per render."""
 import json
 import os
 
@@ -22,21 +22,21 @@ TILE_W, TILE_H = 324, 576          # 0.3 of 1080 x 1920: captions still readable
 
 
 def _config_mode():
-    m = str(config.general().get("final_review", "advise")).lower()
-    return m if m in MODES else "advise"
+    m = str(config.general().get("final_review", "block")).lower()
+    return m if m in MODES else "block"
 
 
 mode = _config_mode          # tests swap this (it's "off" in tests unless a test turns it on)
 
 
 def moments(rep, duration):
-    """[(seconds, line index or None)]: the first frame, then the middle of each line (at most MAX_FRAMES)."""
+    """[(seconds, line index or None)]: the first frame, then 80% into each line (at most MAX_FRAMES)."""
     starts = [float(x) for x in rep.get("line_starts") or []]
     out = [(0.0, None)]
     for k in range(len(starts) - 1):
         a, b = starts[k], starts[k + 1]
         if b - a > 0.3:
-            out.append((round(a + 0.6 * (b - a), 2), k))
+            out.append((round(a + 0.8 * (b - a), 2), k))   # after the counter has landed (it counts over 70%)
     if len(out) == 1:                                  # no line times: evenly through the video
         out += [(round(duration * f, 2), None) for f in (0.2, 0.4, 0.6, 0.8)]
     if len(out) > MAX_FRAMES:

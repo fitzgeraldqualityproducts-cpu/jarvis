@@ -121,9 +121,11 @@ def _sample(argv):
         print(f"    {v['engine']}: {v['seconds']} s" + (f"  ({v['fallback']})" if v.get("fallback") else ""))
     print("2/2 Video with every upgrade: AI pictures, background music, the cinematic look, whisperX timing "
           "and Remotion...")
-    rep = video.render(vid, progress=lambda s: print("    " + s), engines_override=engines.UPGRADED,
-                       out_name="sample/short_upgraded.mp4", record=False, voice_path=v["path"],
-                       footage_terms="--footage" in argv)
+    from studio import timings
+    with timings.video(vid):
+        rep = video.render(vid, progress=lambda s: print("    " + s), engines_override=engines.UPGRADED,
+                           out_name="sample/short_upgraded.mp4", record=False, voice_path=v["path"],
+                           footage_terms="--footage" in argv)
     for k, why in rep["engines"].items():
         print(f"    {k}: {why}")
     old = db.one("SELECT path FROM voiceovers WHERE video_id=? ORDER BY id DESC LIMIT 1", vid)
@@ -166,7 +168,7 @@ def _script(argv):
         return 1
     folder = data_dir("videos", str(vid))
     page = folder / "script.md"
-    page.write_text(script.report(vid))
+    page.write_text(script.report(vid), encoding="utf-8")
     db.set_video(vid, state="generating_audio", stage_done="fact_checking")
     print("\n" + page.read_text())
     if "--no-voice" not in argv:
@@ -195,7 +197,9 @@ def _video(argv):
         vid = r["id"]
     print(f"\nMaking video {vid}: {db.video(vid)['title']}")
     t0 = time.time()
-    rep = video.render(vid, progress=lambda s: print("  " + s))
+    from studio import timings
+    with timings.video(vid):                     # a Short made by hand is timed too (python -m studio timings <id>)
+        rep = video.render(vid, progress=lambda s: print("  " + s))
     print(f"  Rendered {rep['duration']} s in {time.time() - t0:.0f} s ({rep['timing']['method']}, "
           f"{rep['timing']['matched']:.0%} of words matched)")
     up = video.metadata(vid)

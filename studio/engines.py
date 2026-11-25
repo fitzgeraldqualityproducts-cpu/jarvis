@@ -488,7 +488,7 @@ def remotion_render(props, public_dir, out, timeout=None):
     pf = Path(public_dir) / "remotion_props.json"
     pf.write_text(json.dumps(props))
     cmd = [*_node_cmd("npx"), "remotion", "render", "src/index.ts", "Short", str(out), f"--props={pf}",
-           f"--public-dir={public_dir}", "--concurrency=2", "--codec=h264", "--audio-codec=aac",
+           f"--public-dir={public_dir}", f"--concurrency={remotion_concurrency()}", "--codec=h264", "--audio-codec=aac",
            "--log=error", "--overwrite"]
     if os.environ.get("JARVIS_REMOTION_BROWSER"):                 # a browser already on this computer
         cmd.append(f"--browser-executable={os.environ['JARVIS_REMOTION_BROWSER']}")
@@ -535,6 +535,26 @@ def _remotion_both(cmd, entry, out, env, timeout):
 # falls back to the old way for that render.
 
 _REMOTION_LOCK = threading.Lock()
+
+
+def remotion_concurrency():
+    """Frames Remotion draws at once. Each one is the very same frame however many run together, so this only
+    changes speed: half the processor's threads (4 on the PC's i7-7700K), at most 6, and 2 on a computer with
+    under 12 GB of memory (each one is a browser tab). Config "remotion_concurrency" sets it by hand."""
+    try:
+        from studio import config
+        n = int(config.general().get("remotion_concurrency") or 0)
+        if n > 0:
+            return max(1, min(8, n))
+    except Exception:
+        pass
+    try:
+        import psutil
+        if psutil.virtual_memory().total < 12 * 1024 ** 3:
+            return 2
+    except Exception:
+        return 2
+    return max(2, min(6, (os.cpu_count() or 4) // 2))
 _BUNDLE_BAD = set()
 
 

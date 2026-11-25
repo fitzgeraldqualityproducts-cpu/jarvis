@@ -108,6 +108,21 @@ thinking), then the fact-check (about 2,000-3,000 each).
 | 3. Look up before cutting | When the fact-check flags one or two lines as unsupported, one search looks for a reputable page that states each line's number (Jarvis downloads it and checks the number is really on it). Lines it sources get that page and only those lines are checked again. Nothing found: the usual cut or rewrite. Once per draft, never for a "wrong" line, and never when it could cost the Short a try | `lookup_before_cut` (on) | Built and tested with fakes |
 | 6. Visual upgrades sample | The PC test Short of the story work is made with every #82 upgrade (sharpen, depth motion, lively edit, sound effects, footage). Connor's typed OK in the PC thread switches them on | n/a | Waiting for the sample |
 
+## After the first new test Short (video 15, 2026-11-25)
+
+Final-cut review 4/10 found: line cutting left "So the real question is simple:" hanging; the review's
+storytelling notes never stopped anything; the read-back was skipped on the cut path; a label was cut off and
+another stayed up after its scene; the review frame caught the counter mid-count.
+
+| Fix | Switch | State |
+|---|---|---|
+| A line is never cut when the line before it leads into it (ends with ":" or a dash), when it would remove the payoff, or when the Short would end mid-thought | none | Built and tested |
+| The newcomer read-back also runs after lines are cut | `explain_back` | Built and tested |
+| One "polish" rewrite (Connor's choice) when a script passes the facts but the loop or re-hook is under 5/10, the payoff only half answers the question (under 6/10), numbers have no comparison, or an editor note says something is wrong, misleading, confusing or hanging. Never twice, never on the last try | `polish_rewrite` (on) | Built and tested |
+| Final-cut review blocks by default (Connor's choice): a major problem stops the Short before upload and Connor is told | `final_review` = `block` | Built and tested |
+| A carried counter stays up for one scene only; long labels wrap; review frames are taken 80% into each line (after the counter lands) | none | Built and tested |
+| Script page written as UTF-8 (Windows crashed on "λ") | none | Built |
+
 ## Phases 6-7: validate and activate
 
 Each change goes live on the PC by update. New styles and tools stay off until a sample is approved.

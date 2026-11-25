@@ -123,6 +123,12 @@ def validating(v, ctx):
         from studio import lessons
         lessons.record("video", [f"qa: {c['name']} ({c['detail']})" for c in r["failed"]],
                        topics.topic(v["topic_id"]) if v.get("topic_id") else None, v["id"])
+        if any(c["name"] == "final-cut review" for c in r["failed"]):
+            from studio import health
+            fr = next(c for c in r["failed"] if c["name"] == "final-cut review")
+            health.notify(f"final_review_blocked_{v['id']}", f"A Short ({db.video(v['id']).get('title') or v['id']}) was stopped "
+                          f"before upload: the final-cut review found major problems ({str(fr['detail'])[:200]}).",
+                          level="warn")
         raise jobs.Permanent("failed QA: " + "; ".join(f"{c['name']} ({c['detail']})" for c in r["failed"][:5]))
     if v.get("topic_id"):
         topics.set_status(v["topic_id"], publish_status="ready")

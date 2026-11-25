@@ -88,6 +88,9 @@ def test_counter_counts_up_and_carries_on():
     assert h[1]["value"] == h[0]["value"] and h[1]["from"] == h[1]["num"] and h[1]["carried"]  # carried, standing still
     assert h[2]["num"] == 2290 and h[2]["from"] == 0.0                                       # smaller: counts from 0
     assert h[3]["value"] == "0.77" and h[3]["dec"] == 2
+    h = video.huds([{"type": "number", "value": "5", "unit": "m", "label": "x"}, {"type": "headline"},
+                    {"type": "headline"}])
+    assert h[1]["carried"] and h[2] is None                                                  # stale after one scene
 
 
 def test_cinematic_remotion_props(fakes, fake_voice, monkeypatch, tmp_path):  # noqa: F811
