@@ -215,7 +215,10 @@ Rules:
   place, a drawn diagram), so the visuals can show exactly what is said.
 - PLAIN COMPARISONS: every surprising number gets a comparison to something familiar the moment it appears
   ("127 C, hotter than boiling water", "as heavy as 3 cars"). The comparison must follow from the facts or be
-  everyday knowledge (water boils at 100 C), never a new number about this topic.
+  everyday knowledge (water boils at 100 C), never a new number about this topic. Never compare to an animal's or
+  object's speed, size or weight unless a fact states it (a fact-checker rejects "slower than a snail" when no
+  source says how fast a snail is); instead put the number in a unit a viewer can picture, worked out in "calcs"
+  ("2 micrometres a second is about 7 millimetres an hour").
 - Every factual line lists the fact ids it relies on. Every number you work out must appear in "calcs"
   as a plain arithmetic expression (e.g. "384400/3474") with its result and unit, using only the facts' numbers.
 - No made-up caveats or framing: never add a hedge, caveat or "honest uncertainty" line that claims anything the
@@ -909,7 +912,8 @@ def _judged(draft, ans, video_id, rechecked=None):
         problems.append(f"editor: the answer to \"{q}\" could be plainer (answered {answered}/10)")
     bare = [str(b)[:40] for b in ans.get("bare_numbers") or [] if str(b).strip()][:4]
     if bare:
-        problems.append("editor: give these numbers a plain comparison a viewer can picture: " + ", ".join(bare))
+        problems.append("editor: give these numbers a plain comparison a viewer can picture (from the facts' own "
+                        "numbers or a unit they can picture, never an unsourced object or animal): " + ", ".join(bare))
     orig = ans.get("originality")
     if isinstance(orig, (int, float)) and orig < 6:
         tip = str(ans.get("originality_fix") or "").strip()
@@ -1419,7 +1423,9 @@ def _fix_lines(draft, topic, problems):
     lines = "\n".join(f"L{i + 1}. {ln['text']}" for i, ln in enumerate(draft["lines"]))
     ans = claude.ask_json(f"""A fact-checker flagged some lines of this Short script. Fix ONLY those lines: reword each so it says
 only what the facts below support (use the checker's correction), or delete it if the script reads fine without it.
-Never add a new claim, caveat or framing line. Every other line stays exactly as it is, word for word.
+When the flagged part is a comparison no fact backs ("slower than a snail", "as wide as your palm"), remove just
+the comparison and keep the line's sourced number, said in a unit a viewer can picture; never swap in another
+unbacked comparison. Never add a new claim, caveat or framing line. Every other line stays exactly as it is, word for word.
 
 Facts:
 {fact_list}
