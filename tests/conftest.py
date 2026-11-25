@@ -46,6 +46,7 @@ def clipper_home(tmp_path, monkeypatch):
     from studio import script
     monkeypatch.setattr(script, "number_check_on", lambda: False)   # other tests' fake Claude answers stay as they are
     monkeypatch.setattr(script, "lookup_on", lambda: False)         # (test_studio_make_sense switches these back on)
+    monkeypatch.setattr(script, "polish_on", lambda: False)
     from studio import obsidian
     monkeypatch.setattr(obsidian, "vault", lambda: None)     # never writes into a real Obsidian vault
     yield tmp_path

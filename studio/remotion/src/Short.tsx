@@ -105,7 +105,8 @@ const HudBox: React.FC<{hud: Hud; span: number; fps: number}> = ({hud, span, fps
     value = k >= 1 ? hud.value : `${fmt(x, hud.dec || 0)}${hud.unit ? ' ' + hud.unit : ''}`;
   }
   return (
-    <div style={{position: 'absolute', left: 90, top: 270, color: 'white', textShadow: SHADOW}}>
+    <div style={{position: 'absolute', left: 90, top: 270, maxWidth: 900, color: 'white', textShadow: SHADOW,
+      overflowWrap: 'break-word'}}>
       {hud.label ? <div style={{fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: 700, fontSize: 24,
         letterSpacing: '0.12em', opacity: 0.92}}>{hud.label}</div> : null}
       <div style={{fontFamily: SERIF, fontSize: 88, lineHeight: 1.05, marginTop: 8}}>{value}</div>

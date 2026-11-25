@@ -270,3 +270,38 @@ def test_stops_report_counts_passes_and_reasons(studio_home):  # noqa: F811
     s = stops.summary(0)
     assert (s["shorts"], s["passed"], s["first_try"], s["cut_lines"], s["stopped"]) == (3, 2, 1, 1, 1)
     assert s["stop_reasons"]["originality"] == 1 and "Passed: 2 of 3" in stops.text(0)
+
+
+def test_cutting_never_leaves_a_line_hanging(studio_home):  # noqa: F811
+    from studio import script
+    lines = [{"text": f"Line {i} with some words in it for length and more words to count here.", "beat": b}
+             for i, b in enumerate(["hook", "setup", "setup", "math", "setup", "setup", "payoff", "loop"], 1)]
+    rev = {"hard_problems": ["line 6 is unsupported: x"], "hook": lines[0]["text"]}
+    draft = {"hooks": [lines[0]["text"]], "lines": [dict(l) for l in lines]}
+    lines5 = [dict(l) for l in lines]
+    lines5[4]["text"] = "So the real question is simple:"
+    assert script._prune(dict(draft, lines=lines5), rev) is None                 # line 5 leads into the cut line
+    lines8 = [dict(l) for l in lines]
+    lines8[7]["text"] = "And that brings us back to:"
+    assert script._prune(dict(draft, lines=lines8), rev) is None                 # it would end mid-thought
+
+
+def test_clear_storytelling_problems_get_one_polish_rewrite(studio_home, monkeypatch):  # noqa: F811
+    from studio import db, script
+    monkeypatch.setattr(script, "polish_on", lambda: True)
+    rev = {"problems": ["editor: no real re-hook halfway (rehook 4/10); add one short line",
+                        "editor: line 9 'So the real question is simple:' hangs with no payoff",
+                        "editor: line 6 is a bit long",
+                        "editor: give these numbers a plain comparison a viewer can picture: 2.45 billion"]}
+    got = script.polish_problems(rev, 20)
+    assert len(got) == 3 and all(p.startswith("polish: ") for p in got) and not any("a bit long" in p for p in got)
+    assert script.polish_problems({"problems": ["editor: line 6 is a bit long", "editor: rehook (rehook 7/10)"]}, 20) == []
+    db.insert("INSERT INTO scripts(video_id, version, hooks, hook, body, structure, checks, status, created) "
+              "VALUES(?,?,?,?,?,?,?,?,?)", 20, 1, "[]", "h", "b", "{}", json.dumps({"polish": True}), "failed", 0)
+    assert script.polish_problems(rev, 20) == []                                  # only once per Short
+    assert script.polish_problems(rev, 21, max_revisions=0) == []                 # never on the last try
+
+
+def test_a_major_final_review_problem_blocks_by_default(studio_home, monkeypatch):  # noqa: F811
+    from studio import finalreview
+    assert finalreview._config_mode() == "block"

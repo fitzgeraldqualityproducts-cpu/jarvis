@@ -19,16 +19,17 @@ def _with_review(monkeypatch, answer, seen):
     return runner
 
 
-def test_moments_are_the_first_frame_and_the_middle_of_each_line():
+def test_moments_are_the_first_frame_and_late_in_each_line():
     from studio import finalreview
-    assert finalreview.moments({"line_starts": [0.2, 3.2, 5.2, 9.0]}, 9.5) == [(0.0, None), (2.0, 0), (4.4, 1), (7.48, 2)]
+    assert finalreview.moments({"line_starts": [0.2, 3.2, 5.2, 9.0]}, 9.5) == [(0.0, None), (2.6, 0), (4.8, 1), (8.24, 2)]
     many = finalreview.moments({"line_starts": [float(i) for i in range(20)]}, 20)
     assert len(many) == finalreview.MAX_FRAMES and many[0] == (0.0, None)
 
 
 def test_advise_mode_saves_problems_without_stopping_the_short(fakes, fake_voice, monkeypatch):  # noqa: F811
-    from studio import claude, db, lessons
+    from studio import claude, config, db, lessons
     from test_studio_video import _make
+    config.set_values(final_review="advise")               # (block is the default since 2026-11-25)
     seen = []
     answer = {"score": 7, "first_frame": 8, "problems": [{"frame": 3, "issue": "caption covers the diagram",
                                                           "severity": "major"}]}

@@ -1127,6 +1127,13 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     if rev.get("rechecked"):
         checks["rechecked"] = rev["rechecked"]
     if rev["ok"]:
+        polish = polish_problems(rev, video_id, max_revisions)
+        if polish:
+            checks["polish"] = True
+            rev["ok"] = False
+            rev["hard_problems"] = list(rev.get("hard_problems") or []) + polish
+            checks.update(ok=False, hard_problems=rev["hard_problems"])
+    if rev["ok"]:
         back = explain_back(topic, draft, rev["hook"], video_id, max_revisions)
         if back:
             checks["explain_back"] = back
@@ -1162,6 +1169,17 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
         checks2 = dict(checks, ok=True, hard_problems=[], claims=claims, words=len(body.split()),
                        problems=[p for p in rev["problems"] if p.startswith("editor: ")]
                        + [f"cut line {n} (it was the only problem: {why[:120]})" for n, why in gone])
+        back = explain_back(topic, draft2, rev["hook"], video_id, max_revisions)   # does it still make sense?
+        if back:
+            checks2["explain_back"] = back
+        if back and back.get("unclear"):
+            checks2.update(ok=False, hard_problems=[back["problem"]], problems=checks2["problems"] + [back["problem"]])
+            db.insert("INSERT INTO scripts(video_id, version, hooks, hook, body, structure, checks, status, created) "
+                      "VALUES(?,?,?,?,?,?,?,?,?)", video_id, row["version"] + 1, json.dumps(draft2["hooks"]),
+                      rev["hook"], body, json.dumps(st2), json.dumps(checks2), "failed", time.time())
+            lessons.record("script", [back["problem"]], topic, video_id)
+            return "revise", dict(db.one("SELECT * FROM scripts WHERE video_id IS ? ORDER BY version DESC LIMIT 1",
+                                         video_id))
         rid = db.insert("INSERT INTO scripts(video_id, version, hooks, hook, body, structure, checks, status, created) "
                         "VALUES(?,?,?,?,?,?,?,?,?)", video_id, row["version"] + 1, json.dumps(draft2["hooks"]),
                         rev["hook"], body, json.dumps(st2), json.dumps(checks2), "passed", time.time())
@@ -1194,6 +1212,42 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
 EXPLAIN_MIN_MATCH = 2              # the local model's 1-5 "same point" rating at or under this sends it back once
 EXPLAIN_SYSTEM = ("You are a curious 14-year-old who just watched a 45-second science Short once. You only know what "
                   "the narrator said. Answer in JSON.")
+
+
+POLISH_WORDS = re.compile(r"\b(wrong|incorrect|misleading|confus\w*|hang\w*|dangl\w*|unclear|doesn'?t follow|"
+                          r"never answer\w*|unanswered|no payoff|skips?|missing step)\b", re.I)
+
+
+def polish_on():
+    try:
+        from studio import config
+        return config.general().get("polish_rewrite", True) is not False
+    except Exception:
+        return True
+
+
+def polish_problems(rev, video_id=None, max_revisions=MAX_REVISIONS):
+    """Connor's choice (2026-11-25): a script that passed the facts but has a clear storytelling problem gets ONE
+    rewrite. Clear means: a weak loop or re-hook (under 5/10), the payoff not quite answering the hook's question
+    (under 6/10), surprising numbers with no comparison, or an editor note that says something is wrong, misleading,
+    confusing or left hanging. Never twice for a Short, never on the last allowed try. Returns the problems ("polish: ...")
+    or []."""
+    if not polish_on():
+        return []
+    notes = [p[len("editor: "):] for p in rev.get("problems") or [] if str(p).startswith("editor: ")]
+    clear = []
+    for n in notes:
+        if (re.search(r"\((loop|rehook) [0-4](\.\d)?/10\)", n) or re.search(r"\(answered [0-5](\.\d)?/10\)", n)
+                or n.startswith("give these numbers a plain comparison") or POLISH_WORDS.search(n)):
+            clear.append("polish: " + n)
+    if not clear:
+        return []
+    tries = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status='failed'", video_id)["n"]
+    done = any(json.loads(r["checks"] or "{}").get("polish") for r in db.q("SELECT checks FROM scripts WHERE video_id IS ?",
+                                                                           video_id))
+    if done or tries >= max_revisions:
+        return []
+    return clear[:5]
 
 
 def explain_on():
@@ -1301,6 +1355,14 @@ def _prune(draft, rev):
             first = re.sub(r"[^a-z']", "", (str(lines[nxt - 1].get("text") or "").split() or [""])[0].lower())
             if first in REFERS_BACK:
                 return None
+        prev = max((i for i in keep if i < k), default=None)   # nor may the line before lead into it ("...is simple:")
+        if prev and str(lines[prev - 1].get("text") or "").rstrip().endswith((":", "—", "-", "...", "…")):
+            return None
+    if any(str(ln.get("beat")) == "payoff" for ln in lines) and not any(
+            str(lines[i - 1].get("beat")) == "payoff" for i in keep):
+        return None
+    if str(lines[keep[-1] - 1].get("text") or "").rstrip().endswith((":", "—", "...", "…")):
+        return None                         # the Short can't end mid-thought
     out = dict(draft, lines=[lines[i - 1] for i in keep])
     words = len(text_of(out, rev.get("hook")).split())
     if not WORDS_MIN <= words <= WORDS_MAX:
