@@ -487,7 +487,14 @@ def start(open_browser=True):
 def open_page(path="/"):
     """Opens one of the display's pages (e.g. /team) in the browser."""
     url = f"http://localhost:{PORT}{path}"
-    if WINDOWS:
-        webbrowser.open(url)
-    else:
-        subprocess.run(["open", url])
+
+    def go():
+        try:
+            if WINDOWS:
+                webbrowser.open(url)
+            else:
+                subprocess.run(["open", url], timeout=30)
+        except Exception as e:
+            print(f"(couldn't open {path}: {e})")
+    # In the background: on Windows, opening the browser can hang, and it used to freeze him.
+    threading.Thread(target=go, daemon=True, name="open-page").start()

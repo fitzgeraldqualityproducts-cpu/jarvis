@@ -431,6 +431,7 @@ class _ClipPlayer:
     def __init__(self, clip):
         import sounddevice as sd
         self._sd, self._data, self._pos = sd, clip.samples.reshape(-1, 1), 0
+        self.seconds = len(self._data) / max(1, clip.rate)
         self._done = threading.Event()
         device = None
         if sys.platform == "win32":
@@ -502,9 +503,27 @@ class _Watch:
         self.spotter = _Spotter(own_text, ears.RATE)
         self.stream = sd.InputStream(samplerate=ears.RATE, channels=1, blocksize=ears.BLOCK, dtype="int16")
         self.stream.start()
+        self.last, self.dead = time.time(), False
 
     def heard(self):
-        """Reads the next bit of sound (about 40 ms); True if he should stop."""
+        """Reads the next bit of sound (about 40 ms); True if he should stop.
+        Never waits on the mic: if it stops sending sound (Windows does this when the mic is busy,
+        asleep or unplugged), he stops listening for interruptions and just finishes talking,
+        instead of freezing mid-sentence."""
+        if self.dead:
+            time.sleep(0.03)
+            return False
+        try:
+            ready = self.stream.read_available >= self.ears.BLOCK
+        except Exception:
+            ready = False
+        if not ready:
+            if time.time() - self.last > MIC_STALL_SECONDS:
+                self.dead = True
+                print("(the mic stopped sending sound, so I can't hear interruptions this time)")
+            time.sleep(0.01)
+            return False
+        self.last = time.time()
         block, _ = self.stream.read(self.ears.BLOCK)
         return bool(self.det.feed(block[:, 0]) or self.spotter.feed(block[:, 0]))
 
@@ -525,11 +544,14 @@ def _muted():
 
 def _wait(proc, stop):
     """Waits for a phrase to finish, but cuts it off at once if he's muted. True if muted."""
+    deadline = _deadline(proc)
     while proc.poll() is None:
         if _muted():
             proc.terminate()
             stop.set()
             print("(muted mid-sentence)")
+            return True
+        if _overdue(proc, deadline, stop):
             return True
         time.sleep(0.05)
     try:
@@ -537,6 +559,29 @@ def _wait(proc, stop):
     except Exception:
         pass
     return False
+
+
+MIC_STALL_SECONDS = 2.0     # no sound from the mic for this long: it has stalled
+
+
+def _deadline(proc):
+    """When a phrase must have finished by: its length plus a margin (3 minutes if unknown)."""
+    secs = getattr(proc, "seconds", None)
+    return time.time() + (float(secs) + 10 if secs else 180)
+
+
+def _overdue(proc, deadline, stop):
+    """True (and the phrase is stopped) if the speaker stopped playing it. Without this, a stalled
+    sound device kept him "speaking" forever, and every command waited behind it."""
+    if time.time() < deadline:
+        return False
+    print("(the speaker stopped playing, so I skipped the rest of what I was saying)")
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+    stop.set()
+    return True
 
 
 def _play(audio, interruptible, stop, own_text="", watch=None):
@@ -553,12 +598,15 @@ def _play(audio, interruptible, stop, own_text="", watch=None):
             own = True
         else:
             own = False
+        deadline = _deadline(proc)
         try:
             while proc.poll() is None:
                 if _muted():
                     proc.terminate()
                     stop.set()
                     print("(muted mid-sentence)")
+                    return True
+                if _overdue(proc, deadline, stop):
                     return True
                 if watch.heard():
                     proc.terminate()
@@ -572,7 +620,7 @@ def _play(audio, interruptible, stop, own_text="", watch=None):
                 watch.close()
     except Exception as e:
         print(f"(couldn't listen for interruptions: {e})")
-        proc.wait()
+        return _wait(proc, stop)
     finally:
         if isinstance(proc, _ClipPlayer):
             proc.close()
