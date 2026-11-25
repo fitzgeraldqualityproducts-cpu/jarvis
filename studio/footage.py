@@ -158,11 +158,37 @@ def _download(url, out):
     tmp.replace(out)
 
 
-def choose(answer, seconds, used=()):
+# words that make a search about space: NASA's real footage is tried first for these
+SPACE = {"moon", "lunar", "mars", "planet", "rocket", "launch", "space", "astronaut", "orbit", "satellite", "sun",
+         "solar", "star", "stars", "galaxy", "nebula", "asteroid", "comet", "meteor", "saturn", "jupiter", "venus",
+         "mercury", "neptune", "uranus", "pluto", "iss", "telescope", "eclipse", "spacecraft", "shuttle", "aurora",
+         "cosmos", "universe", "milky", "crater", "spacewalk", "earth from space"}
+_FILLER = {"the", "a", "an", "of", "in", "on", "and", "with", "at", "to", "from", "for", "over", "under", "into"}
+
+
+def _stems(text):
+    return {w[:5] for w in re.findall(r"[a-z0-9]+", str(text).lower()) if w not in _FILLER and len(w) > 2}
+
+
+def matches(query, text):
+    """True when every word of the search shows up in the clip's own tags, title or link (first 5 letters, so
+    "launch" matches "launching"). A clip that doesn't is skipped: the AI picture is a better fit than a loose one."""
+    want = _stems(query)
+    return not want or want <= _stems(text)
+
+
+def is_space(query):
+    q = str(query).lower()
+    return bool(set(re.findall(r"[a-z]+", q)) & SPACE) or "earth from space" in q
+
+
+def choose(answer, seconds, used=(), query=""):
     """The best clip in a Pexels answer for a scene this long: {"id", "url", "file", "user", "page"} or None."""
     best = None
     for v in (answer or {}).get("videos") or []:
         if not isinstance(v, dict) or v.get("id") in used or float(v.get("duration") or 0) < seconds + 0.3:
+            continue
+        if query and not matches(query, f"{v.get('url', '')} {v.get('tags', '')} {v.get('alt', '')}".replace("-", " ")):
             continue
         files = [f for f in v.get("video_files") or [] if isinstance(f, dict) and f.get("link")
                  and str(f.get("file_type", "")).endswith("mp4") and (f.get("height") or 0) >= MIN_HEIGHT
@@ -179,12 +205,14 @@ def choose(answer, seconds, used=()):
     return best
 
 
-def choose_pixabay(answer, seconds, used=()):
+def choose_pixabay(answer, seconds, used=(), query=""):
     """The best clip in a Pixabay answer: portrait first, then landscape tall enough to crop, then 1080p landscape
     (shown framed); the smallest sharp file of each. None if nothing fits."""
     best = None
     for v in (answer or {}).get("hits") or []:
         if not isinstance(v, dict) or f"pixabay_{v.get('id')}" in used or float(v.get("duration") or 0) < seconds + 0.3:
+            continue
+        if query and not matches(query, f"{v.get('tags', '')} {str(v.get('pageURL', '')).replace('-', ' ')}"):
             continue
         for f in (v.get("videos") or {}).values():
             if not isinstance(f, dict) or not str(f.get("url") or "").startswith("https://"):
@@ -224,8 +252,9 @@ def _nasa_seconds(meta):
     return 0.0
 
 
-def nasa_candidates(answer, used=()):
-    """NASA search results worth trying: real footage (not talks or briefings), not credited to someone else."""
+def nasa_candidates(answer, used=(), query=""):
+    """NASA search results worth trying: real footage (not talks or briefings), not credited to someone else, about
+    the search's subject."""
     out = []
     for it in ((answer or {}).get("collection") or {}).get("items") or []:
         d = ((it or {}).get("data") or [{}])[0] or {}
@@ -233,6 +262,8 @@ def nasa_candidates(answer, used=()):
         text = f" {d.get('title', '')} {d.get('description', '')} ".lower()
         if not nid or f"nasa_{nid}" in used or d.get("media_type") not in (None, "video") or not it.get("href") \
                 or _NASA_SKIP.search(text):
+            continue
+        if query and not matches(query, f"{text} {' '.join(str(k) for k in d.get('keywords') or [])}"):
             continue
         out.append({"id": f"nasa_{nid}", "nasa_id": nid, "manifest": it["href"], "title": str(d.get("title") or "")[:120],
                     "user": "NASA", "page": f"https://images.nasa.gov/details/{urllib.parse.quote(nid)}",
@@ -280,7 +311,10 @@ def fetch(query, seconds, used=()):
     guard.allow("web.read", f"stock footage search: {query}", record=False)
     from studio import engines
     why = []
-    for site in sources():
+    order = sources()
+    if "nasa" in order and is_space(query):          # real NASA footage first for space subjects
+        order = ["nasa"] + [s for s in order if s != "nasa"]
+    for site in order:
         try:
             out, info = _fetch_from(site, query, seconds, used, engines.outputs_dir("footage"))
         except Exception as e:
@@ -297,7 +331,7 @@ def _fetch_from(site, query, seconds, used, folder):
     if site in ("pexels", "pixabay"):
         answer = _search(query) if site == "pexels" else _pixabay_search(query)
         pick = choose if site == "pexels" else choose_pixabay
-        info = pick(answer, seconds, used) or pick(answer, seconds)     # a fresh clip, else a used one again
+        info = pick(answer, seconds, used, query) or pick(answer, seconds, (), query)   # fresh first, else a used one
         if not info:
             return None, f"{NAMES[site]}: nothing long enough for \"{query}\""
         name = f"pexels_{info['id']}_{info['height']}.mp4" if site == "pexels" else f"{info['id']}_{info['height']}.mp4"
@@ -310,7 +344,8 @@ def _fetch_from(site, query, seconds, used, folder):
         info["layout"], _ = _layout(out)
         return out, info
     # NASA: a few results in turn; the first that's real footage, long enough and downloads is used
-    every = nasa_candidates(_nasa_get(NASA_API + "?" + urllib.parse.urlencode({"q": query[:100], "media_type": "video"})))
+    every = nasa_candidates(_nasa_get(NASA_API + "?" + urllib.parse.urlencode({"q": query[:100], "media_type": "video"})),
+                            query=query)
     cands = ([c for c in every if c["id"] not in used] + [c for c in every if c["id"] in used])[:4]  # fresh first
     for c in cands:
         files, secs = _nasa_files(c, seconds)

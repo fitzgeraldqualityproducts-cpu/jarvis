@@ -115,3 +115,24 @@ def test_bad_key_is_refused(studio_home):  # noqa: F811
     with pytest.raises(ValueError):
         footage.save_key("pixabay key please")
     assert json.dumps(footage.sources()) == '["nasa"]'
+
+
+def test_clips_must_match_the_search_and_space_tries_nasa_first(studio_home, monkeypatch):  # noqa: F811
+    from studio import footage
+    assert footage.matches("rocket launch", "rocket, launching, space, smoke")
+    assert not footage.matches("full moon", "beach, sunset, sea, crescent")
+    assert footage.is_space("full moon rising") and not footage.is_space("ocean waves")
+    hits = {"hits": [{"id": 1, "duration": 20, "tags": "beach, sunset, sea", "user": "A",
+                      "videos": {"large": {"url": "https://cdn/1.mp4", "width": 1080, "height": 1920}}},
+                     {"id": 2, "duration": 20, "tags": "moon, full moon, night sky", "user": "B",
+                      "videos": {"large": {"url": "https://cdn/2.mp4", "width": 1080, "height": 1920}}}]}
+    assert footage.choose_pixabay(hits, 5, query="full moon")["id"] == "pixabay_2"
+    assert footage.choose_pixabay(hits, 5, query="lava flow") is None          # nothing fits: the AI picture stays
+    footage.save_key("12345678-0123456789abcdef0123456789ab")
+    asked = []
+    monkeypatch.setattr(footage, "_fetch_from", lambda site, q, s, used, folder: (asked.append(site), (None, "no"))[1])
+    footage.fetch("full moon", 3.0)
+    assert asked == ["nasa", "pixabay"]
+    asked.clear()
+    footage.fetch("ocean waves", 3.0)
+    assert asked == ["pixabay", "nasa"]
