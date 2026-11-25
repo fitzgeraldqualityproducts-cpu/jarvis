@@ -65,6 +65,7 @@ class Player:
         import sounddevice as sd
         self._sd = sd
         self._data, rate = _decode(path)
+        self.seconds = len(self._data) / max(1, rate)
         self._pos = 0
         self._done = threading.Event()
         self._closed = False

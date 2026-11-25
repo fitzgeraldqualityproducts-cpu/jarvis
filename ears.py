@@ -91,18 +91,55 @@ def _muted():
         return False
 
 
+class MicStalled(Exception):
+    """The mic stopped sending sound (on Windows: busy, asleep or unplugged)."""
+
+
+_stall = {"told": False}
+
+
+def read_block(stream, timeout=3.0):
+    """The next ~40 ms of sound, without ever waiting forever: a plain stream.read() blocks for
+    good when Windows stops delivering mic audio, which froze Jarvis. Raises MicStalled."""
+    deadline = time.time() + timeout
+    while True:
+        try:
+            if stream.read_available >= BLOCK:
+                break
+        except Exception:
+            break                       # can't tell: just read
+        if time.time() > deadline:
+            if not _stall["told"]:
+                _stall["told"] = True
+                print("(the mic stopped sending sound; I'll keep reopening it)")
+            raise MicStalled()
+        time.sleep(0.005)
+    block, _ = stream.read(BLOCK)
+    if _stall["told"]:
+        _stall["told"] = False
+        print("(the mic is sending sound again)")
+    return block
+
+
 def wait_for_wake(clap_threshold=0.35, paused=None):
     """Blocks until a double clap ('clap') or "Hey Jarvis" ('wake').
-    Returns None if paused() becomes true."""
+    Returns None if paused() becomes true. If the mic stalls, it's reopened (with a pause)."""
     det = Detector(clap_threshold)
-    with sd.InputStream(samplerate=RATE, channels=1, blocksize=BLOCK, dtype="int16") as stream:
-        while True:
-            if paused and paused():
-                return None
-            block, _ = stream.read(BLOCK)
-            hit = det.feed(block[:, 0])
-            if hit:
-                return hit
+    while True:
+        try:
+            with sd.InputStream(samplerate=RATE, channels=1, blocksize=BLOCK, dtype="int16") as stream:
+                while True:
+                    if paused and paused():
+                        return None
+                    block = read_block(stream)
+                    hit = det.feed(block[:, 0])
+                    if hit:
+                        return hit
+        except MicStalled:
+            for _ in range(20):         # wait 2 s before reopening, still honouring pause
+                if paused and paused():
+                    return None
+                time.sleep(0.1)
 
 
 def wait_for_double_clap(threshold=0.35):
@@ -140,7 +177,10 @@ def record_phrase(start_timeout=8, max_seconds=15, silence_seconds=0.9, preroll=
             if _muted():                       # muted mid-sentence: throw away what he heard
                 frames, voiced = [], 0.0
                 break
-            block, _ = stream.read(BLOCK)
+            try:
+                block = read_block(stream)
+            except MicStalled:
+                break                          # the mic stalled: treat it as nothing heard
             block = block[:, 0].copy()
             level = float(np.sqrt(np.mean(block.astype(np.float32) ** 2)))
             display.update(level=min(level / 6000, 1.0))

@@ -91,7 +91,11 @@ def _brain():
 def _mic():
     ok, detail = _py("import json\n"
                      "try:\n    import sounddevice as sd, numpy as np\n    s = sd.InputStream(samplerate=16000, channels=1, blocksize=640, dtype='int16'); s.start()\n"
-                     "    b = np.concatenate([s.read(640)[0] for _ in range(10)]); s.close()\n"
+                     "    import time; t = time.time()\n"
+                     "    while s.read_available < 6400 and time.time() - t < 5: time.sleep(0.05)\n"
+                     "    if s.read_available < 640:\n"
+                     "        s.close(); print('@@' + json.dumps([False, 'opens but sends no sound (busy, asleep or unplugged?)'])); raise SystemExit\n"
+                     "    b = np.concatenate([s.read(640)[0] for _ in range(min(10, s.read_available // 640))]); s.close()\n"
                      "    print('@@' + json.dumps([True, f'opens (level {int(np.abs(b).max())})']))\n"
                      "except Exception as e:\n    print('@@' + json.dumps([False, str(e)[:200]]))", 30)
     return ok, detail, []
