@@ -131,3 +131,32 @@ def test_stage_clock_only_restarts_on_a_new_stage():
     assert db.video(v)["state_since"] == first
     db.set_video(v, state="validating")
     assert db.video(v)["state_since"] >= first
+
+
+def test_charts_and_fonts_are_served_locally():
+    """Tabler, ECharts and the fonts ship inside Jarvis (no internet); nothing outside vendor/studio leaks out."""
+    import re
+    from studio import dashboard
+    page = dashboard.PAGE.read_text(encoding="utf-8")
+    assert "https://" not in re.sub(r"https://(youtube\.com|tabler\.io|github\.com)[^\s\"'`]*", "", page.split("<script>", 1)[0])
+    for name in re.findall(r"/studio/v/([\w.-]+)", page):
+        code, body, ctype = dashboard.handle("/studio/v/" + name)
+        assert code == 200 and len(body) > 1000, name
+    assert dashboard.handle("/studio/v/tabler.min.css")[2].startswith("text/css")
+    assert dashboard.handle("/studio/v/echarts.min.js")[2].startswith("text/javascript")
+    for bad in ("/studio/v/../../studio/config.py", "/studio/v/%2e%2e%2fconfig.json", "/studio/v/LICENSES.txt",
+                "/studio/v/nope.js", "/studio/v/.hidden.css"):
+        assert dashboard.handle(bad)[0] == 404, bad
+
+
+def test_history_gives_one_reading_a_day():
+    from studio import dashboard, db
+    _line()
+    now = time.time()
+    for days_ago, subs, views in ((3, 1000, 300000), (2, 1100, 350000), (2.0001, 1050, 340000), (1, 1200, 400000), (40, 5, 50)):
+        db.insert("INSERT INTO analytics(youtube_id, fetched, period, source, metrics) VALUES(?,?,?,?,?)",
+                  "UC_BIZ", now - days_ago * 86400, "lifetime", "channel", json.dumps({"subscriberCount": subs, "viewCount": views}))
+    h = dashboard.state(now)["history"]
+    assert [x["subs"] for x in h] == [1000, 1100, 1200, 1284]          # last reading of each day; 40 days ago left out
+    assert h[-1]["views"] == 412880 and all(x["live"] >= 0 for x in h)
+    assert h[-1]["live"] == 1

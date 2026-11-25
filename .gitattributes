@@ -5,3 +5,4 @@
 *.m4a binary
 *.ico binary
 READ?ME?FIRST.txt text eol=crlf
+*.woff2 binary
