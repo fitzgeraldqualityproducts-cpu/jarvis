@@ -43,10 +43,12 @@ TEMPLATES = {
             "(a full wave = two gaps), value = that distance with its unit, e.g. '6.1 cm' (or '' if unknown)",
     "measure": "a ruler between two things with the distance: {from, to, value, unit, label}  e.g. from 'hot "
                "spot', to 'next hot spot', value '6.1', unit 'cm'",
+    "temperature": "a thermometer filling to a temperature: {value, unit, label, low, high}  e.g. value '-56', unit "
+                   "'°C', label 'air at 55,000 ft (standard atmosphere)', low '-60', high '20'",
 }
 
 
-NEW_TEMPLATES = ("wave", "measure")      # offered to the planner only with config "shots" on (see art.shots_on)
+NEW_TEMPLATES = ("wave", "measure", "temperature")      # offered to the planner only with config "shots" on (see art.shots_on)
 
 
 def _rgb(h):
@@ -193,6 +195,8 @@ def _valid(s):
             return str(s.get("span") or "gap") in ("gap", "wavelength")
         if t == "measure":
             return bool(str(s["value"]).strip()) and bool(str(s.get("from") or "").strip())
+        if t == "temperature":
+            return _num(s["value"]) is not None
     except (KeyError, TypeError, ValueError):
         return False
     return False
@@ -250,8 +254,14 @@ One scene per line, chosen from:
 {tmpl}
 Use only numbers from the line or these checked calculations:
 {calcs or '- (none)'}
-Keep text short (labels under 6 words, headline under 9). Prefer number/equation/compare/scale when the line
-has numbers; use steps for a process; headline otherwise. Writer's visual notes are hints only.
+Keep text short (labels under 6 words, headline under 9). Every scene must explain or show its line, not
+decorate it: a number gets number (it counts up); a calculation gets equation (it builds term by term); two or
+more quantities compared get compare (side by side, same unit); sizes far apart get scale; a process gets steps;
+when offered, a temperature gets temperature, a distance or spacing gets measure, a wave gets wave. headline only
+when nothing is measurable. A value that depends on an assumption (the standard atmosphere, an average, sea level)
+is labelled as such ("≈", "standard atmosphere"). Two different numbers for the same kind of thing (two
+altitudes, two dates) must say in their labels how they differ (e.g. "record flight" vs "cruise target"), never
+look like the same thing. Writer's visual notes are hints only.
 Also give every scene "art": 5-12 words describing a picture of the scene's real-world subject as a place or
 objects seen from a person's point of view (e.g. "a crowded beach at Waikiki seen from the sand"); no text,
 numbers, diagrams, faces or famous people. The picture maker cannot write: never ask for a sign, label, screen,
@@ -519,6 +529,27 @@ def draw_scene(scene, pal, handle="", bg=None):
             put((0, ya + 40), str(scene["value"])[:16], _font(72), amber)
         if scene.get("label"):
             put((0, y0 + 80), str(scene["label"])[:40], _font(56, False), text)
+    elif t == "temperature":
+        from studio import edit
+        ov = edit.overlay(scene) or {"frac": 0.5, "value": str(scene.get("value")), "cold": False, "low": "", "high": ""}
+        tx, ty, th = x0 + 120, y0 + 160, 600
+        col = cyan if ov["cold"] else amber
+        d.rounded_rectangle([tx, ty, tx + 60, ty + th], radius=30, outline=text, width=5)
+        lvl = th * ov["frac"]
+        d.rounded_rectangle([tx + 12, ty + th - lvl, tx + 48, ty + th], radius=18, fill=col)
+        d.ellipse([tx - 30, ty + th - 10, tx + 90, ty + th + 110], fill=col, outline=text, width=5)
+        drawn.append((tx - 30, ty, tx + 90, ty + th + 110))
+        for s_, yy in ((ov["high"], ty), (ov["low"], ty + th - 40)):
+            if s_:
+                d.text((tx + 90, yy), s_, font=_font(40, False), fill=muted)
+        fv, _, _ = _fit(d, str(ov["value"]), 140, x1 - tx - 260, 1)
+        bb = put((tx + 260, ty + 200), ov["value"], fv, col, center=False)
+        if scene.get("label"):
+            fl, ll, _ = _fit(d, str(scene["label"]), 50, x1 - tx - 260, 3, bold=False)
+            yy = bb[3] + 30
+            for ln in ll:
+                put((tx + 260, yy), ln, fl, text, center=False)
+                yy += fl.size + 12
     elif t == "measure":
         ya = y0 + 470
         d.line([(x0 + 40, ya), (x1 - 40, ya)], fill=amber, width=8)
@@ -715,6 +746,15 @@ def _split_num(v):
 CARRY_SCENES = 1          # a counter stays up over this many following scenes that have no number of their own
 
 
+def _year_like(value, parts, label=""):
+    """True for a date such as 1947 or 2023 (a whole number from 1000 to 2100 with no comma and no unit other than a
+    year word), which must appear as it is, never count up."""
+    num, dec, unit = parts
+    if dec or not 1000 <= num <= 2100 or "," in str(value):
+        return False
+    return not unit or unit.lower() in ("ad", "ce", "bc", "bce") or "YEAR" in str(label).upper()
+
+
 def huds(scenes):
     """The counter for every scene: {"label", "value", "sub"} plus "num"/"from"/"dec"/"unit" when the value
     is a number that can count up. A scene without a number keeps the last counter, like the reference."""
@@ -736,6 +776,8 @@ def huds(scenes):
                 prev = _split_num(last["value"]) if last else None
                 h.update(num=parts[0], dec=min(parts[1], 2), unit=parts[2],
                          **{"from": prev[0] if prev and prev[2] == parts[2] and prev[0] < parts[0] else 0.0})
+                if _year_like(h["value"], parts, h["label"]):
+                    h["from"] = parts[0]          # a date counting up from 0 would show years that never happened
             last = h
             out.append(dict(h))
             held = 0
@@ -1151,6 +1193,9 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                 n_hd = sum(1 for k in raws if enh.get(k, {}).get("hd"))
                 used["sharpen"] = (f"Real-ESRGAN: {n_hd} of {len(raws)} pictures" if sharpen else "off") + \
                     (f" ({enh['_note'][:160]})" if enh.get("_note") else "")
+            used["detail"] = (f"pictures made at {art.GEN_W}x{art.GEN_H}" +
+                              (", enlarged 4x by Real-ESRGAN" if sharpen else ", enlarged without the sharpener") +
+                              "; text, captions and diagrams drawn natively at 1080x1920")
             for k, rp in sorted(raws.items()):
                 bgs[k] = art.prepare(rp, pal, look, hd=enh.get(k, {}).get("hd"))
                 bg_paths[k] = folder / f"bg_{k + 1:02d}.png"
@@ -1409,7 +1454,8 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
            "timing": timing, "speech_start": round(float(words[0]["s"] or 0), 2) if words else None,
            "tail_seconds": round(end - max(last_word, speech_end), 2),
            "trimmed_lead": round(lead - 0.08, 3) if lead > 0.25 else 0.0,
-           "scene_boxes": boxes, "words": len(words), "engines": used,
+           "scene_boxes": boxes, "words": len(words), "engines": used, "cinematic": look == "hud",
+           "overlay_boxes": {str(k): list(edit.overlay_box(ov)) for k, ov in (ovs or {}).items()},
            "line_starts": [round(float(x), 3) for x in starts], **rep}
     if not record:
         return rep

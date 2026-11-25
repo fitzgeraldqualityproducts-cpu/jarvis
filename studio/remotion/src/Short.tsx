@@ -10,10 +10,11 @@ import {
 
 type Hud = {label: string; value: string; sub?: string; num?: number; from?: number; dec?: number; unit?: string};
 type Bar = {label: string; v: number; frac: number; text: string; top: boolean};
-type Overlay = {kind: 'bars' | 'equation' | 'steps' | 'wave' | 'measure'; x: number; y: number; w: number; h: number;
+type Overlay = {kind: 'bars' | 'equation' | 'steps' | 'wave' | 'measure' | 'thermo'; x: number; y: number; w: number; h: number;
   items?: (Bar | string)[]; terms?: string[]; right?: string; note?: string; log?: boolean;
   span?: 'gap' | 'wavelength'; value?: string; spot?: string; label?: string; from?: string; to?: string;
-  geo?: {peaks: number[]; nodes: number[]; a: number; b: number}};
+  geo?: {peaks: number[]; nodes: number[]; a: number; b: number}; frac?: number; low?: string; high?: string;
+  cold?: boolean};
 type Cue = {t: number; kind: 'cut' | 'count' | 'pop' | 'rehook' | 'payoff' | 'jump'; scene: number; until?: number;
   sfx?: string; transition?: string};
 type Scene = {start: number; end: number; image: string; video?: string; videoSeconds?: number; hold?: string;
@@ -233,6 +234,35 @@ const OverlayBox: React.FC<{ov: Overlay; span: number; p: ShortProps}> = ({ov, s
       </div>
     );
   }
+  if (ov.kind === 'thermo') {
+    // a thermometer that fills (or drains) to the temperature, its scale marked, the value popping in beside it
+    const fill = spring({frame: frame - Math.round(0.25 * fps), fps, config: {damping: 22, stiffness: 70},
+      durationInFrames: 26});
+    const pop = spring({frame: frame - Math.round(0.9 * fps), fps, config: {damping: 10, stiffness: 160},
+      durationInFrames: 14});
+    const tubeH = ov.h - 120;
+    const level = tubeH * (ov.frac || 0) * fill;
+    const col = ov.cold ? p.palette.cyan : p.palette.amber;
+    return (
+      <div style={{...panel, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 40}}>
+        <svg width={190} height={ov.h - 52} style={{flexShrink: 0}}>
+          <rect x={44} y={10} width={32} height={tubeH} rx={16} fill="rgba(255,255,255,0.12)" stroke="white" strokeWidth={3} />
+          <rect x={50} y={10 + tubeH - level} width={20} height={level} rx={10} fill={col} />
+          <circle cx={60} cy={tubeH + 34} r={30} fill={col} stroke="white" strokeWidth={3} />
+          {[0, 0.25, 0.5, 0.75, 1].map((f) => <line key={f} x1={78} x2={94} y1={10 + tubeH * (1 - f)} y2={10 + tubeH * (1 - f)}
+            stroke="white" strokeWidth={2} opacity={0.7} />)}
+          <text x={100} y={22} fill="white" opacity={0.8} style={{fontFamily: SANS, fontSize: 20}}>{ov.high}</text>
+          <text x={100} y={tubeH + 8} fill="white" opacity={0.8} style={{fontFamily: SANS, fontSize: 20}}>{ov.low}</text>
+        </svg>
+        <div style={{display: 'flex', flexDirection: 'column'}}>
+          {ov.label ? <div style={{fontFamily: SANS, fontWeight: 700, fontSize: 30, letterSpacing: '0.03em',
+            maxWidth: ov.w - 260}}>{ov.label}</div> : null}
+          <div style={{...big(true), fontSize: 96, color: col, opacity: Math.min(1, pop * 1.4),
+            transform: `scale(${0.6 + 0.4 * pop})`, transformOrigin: 'left center', marginTop: 8}}>{ov.value}</div>
+        </div>
+      </div>
+    );
+  }
   if (ov.kind === 'measure') {
     // a ruler that grows from one thing to the other, then the distance pops in
     const inner = ov.w - 68;
@@ -330,6 +360,13 @@ const CinemaScene: React.FC<{scene: Scene; index: number; p: ShortProps}> = ({sc
   const fadeIn = scene.transition === 'fade' ? Math.max(p.fade, 0.5) : p.fade;
   const opacity = index === 0 ? 1 : interpolate(t, [0, fadeIn], [0, 1], {extrapolateRight: 'clamp'});
   const zoomIn = scene.transition === 'zoom' ? interpolate(t, [0, 0.35], [1.12, 1], {extrapolateRight: 'clamp'}) : 1;
+  // text never crossfades with text: the outgoing scene's counter, card and title leave the moment the next scene
+  // starts (only the pictures dissolve), and the last scene's text is gone before the loop blends back to frame 1
+  // and the incoming scene's text waits until that is gone, so the two never show at once
+  const textA = Math.min(
+    interpolate(t, [span, span + 0.06], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+    index === 0 ? 1 : interpolate(t, [0.07, 0.17], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+    textLeft(p, scene.start + t));
   return (
     <AbsoluteFill style={{opacity, transform: zoomIn !== 1 ? `scale(${zoomIn})` : undefined}}>
       {scene.motion ? (
@@ -352,6 +389,7 @@ const CinemaScene: React.FC<{scene: Scene; index: number; p: ShortProps}> = ({sc
           <Img src={staticFile(scene.bg || scene.image)} />
         </AbsoluteFill>
       )}
+      <AbsoluteFill style={{opacity: textA}}>
       {scene.overlay ? <OverlayBox ov={scene.overlay} span={span} p={p} /> : null}
       {scene.hud ? <HudBox hud={scene.hud} span={span} fps={p.fps} bold={p.type === 'bold'} /> : null}
       {scene.title ? (
@@ -359,16 +397,24 @@ const CinemaScene: React.FC<{scene: Scene; index: number; p: ShortProps}> = ({sc
           textShadow: SHADOW, ...big(p.type === 'bold'), fontSize: p.type === 'bold' ? 68 : 66,
           lineHeight: p.type === 'bold' ? 1.12 : 1.2}}>{scene.title}</div>
       ) : null}
+      </AbsoluteFill>
     </AbsoluteFill>
   );
 };
+
+// 1 until just before the loop blend, then 0: the last scene's words are gone before frame 1 (with its own
+// question and counter) blends back in, so two sets of text are never on screen at once
+const textLeft = (p: ShortProps, gt: number) => p.scenes.length > 1 && p.loopBlend > 0
+  ? interpolate(gt, [p.duration - p.loopBlend - 0.15, p.duration - p.loopBlend], [1, 0],
+    {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}) : 1;
 
 const LineCaption: React.FC<{p: ShortProps}> = ({p}) => {
   const frame = useCurrentFrame();
   const t = frame / p.fps;
   const page = p.pages.find((pg) => pg.s <= t && t < pg.e);
   if (!page || !page.text) return null;
-  const a = interpolate(t, [page.s, page.s + 0.18], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const a = textLeft(p, t) *
+    interpolate(t, [page.s, page.s + 0.18], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   if (p.type === 'bold') {
     // 1-2 short lines that pop in; numbers and key words in the accent colour; the word being said lifts a
     // little; the payoff line comes in bigger, as a reveal

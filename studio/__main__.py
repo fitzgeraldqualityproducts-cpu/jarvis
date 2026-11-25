@@ -227,6 +227,11 @@ def _video(argv):
     print(f"\nTitle: {up['title']}\n\nQuality checks:")
     for c in res["checks"]:
         print(f"  {'PASS' if c['passed'] else 'FAIL'}  {c['name']}  {c['detail']}")
+    guess = (json.loads(db.video(vid)["meta"] or "{}").get("final_review") or {}).get("retention_guess") or {}
+    if guess:
+        print("\nWhere viewers might leave (the editor's guess from the frames, not real viewer data):")
+        for part, why in guess.items():
+            print(f"  {part}: {why}")
     db.set_video(vid, state="ready" if res["ok"] else "validating", stage_done="validating" if res["ok"] else "rendering")
     print("\nReady to publish (Phase 8 will do that)." if res["ok"] else "\nNot ready: it failed the checks above.")
     _reveal(rep["path"])

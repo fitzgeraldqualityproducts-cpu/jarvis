@@ -18,6 +18,7 @@ from studio import config, db
 
 MODES = ("advise", "block", "off")
 MAX_FRAMES = 10
+SECTIONS = ("hook", "setup", "explanation", "rehook", "payoff", "loop")   # the retention guess, part by part
 TILE_W, TILE_H = 324, 576          # 0.3 of 1080 x 1920: captions still readable
 
 
@@ -86,12 +87,15 @@ def review(video_id):
     meta = json.loads(v["meta"] or "{}")
     rep = meta.get("render") or {}
     row = script.latest(video_id, "passed")
-    lines = [str(ln.get("text", "")) for ln in json.loads(row["structure"] or "{}").get("lines") or []] if row else []
+    struct = json.loads(row["structure"] or "{}").get("lines") or [] if row else []
+    lines = [str(ln.get("text", "")) for ln in struct]
+    beats = [str(ln.get("beat") or "") for ln in struct]
     dur = media.probe(v["path"])["duration"]
     when = moments(rep, dur)
     out = os.path.join(os.path.dirname(v["path"]), "final_review.png")
     sheet(v["path"], [t for t, _ in when], out)
-    said = "\n".join(f"Frame {i + 1} ({t:.1f} s): " + (f'the narrator is saying "{lines[k]}"' if k is not None and k < len(lines)
+    said = "\n".join(f"Frame {i + 1} ({t:.1f} s): " + (f'[{beats[k] or "line"}] the narrator is saying "{lines[k]}"'
+                                                   if k is not None and k < len(lines)
                                                    else "the first frame, before anything is said" if i == 0 else "")
                      for i, (t, k) in enumerate(when))
     up = meta.get("upload") or {}
@@ -111,10 +115,14 @@ Check every frame for:
 - broken AI artwork: garbled text or symbols inside the picture, melted hands or faces, obvious glitches
 - anything misleading, or that looks like someone else's logo or brand
 - frame 1 must make sense on its own and make a viewer want to stay
+"visual_hook" scores only what frame 1 SHOWS (the picture and on-screen text, ignoring the narration): would it
+stop a thumb? Then, for each part of the video ({", ".join(SECTIONS)}), give one short guess at whether viewers
+would stay through it and why, from what you see; these are guesses, not measurements.
 Say only what you can actually see. "major" means a viewer would notice and it hurts trust or understanding;
 small style preferences are "minor". If everything is fine, give no problems.
 
-JSON only: {{"score": 0-10, "first_frame": 0-10, "problems": [{{"frame": 3, "issue": "what is wrong, briefly",
+JSON only: {{"score": 0-10, "first_frame": 0-10, "visual_hook": 0-10,
+"sections": {{"hook": "likely holds: ...", "...": "..."}}, "problems": [{{"frame": 3, "issue": "what is wrong, briefly",
 "severity": "minor|major"}}]}}""", timeout=300, purpose=f"final-cut review: video {video_id}", images=[out])
     probs = []
     for p in (ans.get("problems") if isinstance(ans, dict) else None) or []:
@@ -122,7 +130,8 @@ JSON only: {{"score": 0-10, "first_frame": 0-10, "problems": [{{"frame": 3, "iss
             probs.append({"frame": int(p["frame"]) if str(p.get("frame", "")).isdigit() else None,
                           "issue": str(p["issue"])[:200],
                           "severity": "major" if str(p.get("severity")).lower() == "major" else "minor"})
-    res = {"score": _num(ans, "score"), "first_frame": _num(ans, "first_frame"), "problems": probs[:12],
+    res = {"score": _num(ans, "score"), "first_frame": _num(ans, "first_frame"),
+           "visual_hook": _num(ans, "visual_hook"), "retention_guess": _sections(ans), "problems": probs[:12],
            "major": sum(p["severity"] == "major" for p in probs), "mode": m, "frames": len(when)}
     res["ok"] = not (m == "block" and res["major"])
     meta = json.loads(db.video(video_id)["meta"] or "{}")
@@ -132,6 +141,14 @@ JSON only: {{"score": 0-10, "first_frame": 0-10, "problems": [{{"frame": 3, "iss
         lessons.record("video", [f"final review: {p['issue']}" for p in probs if p["severity"] == "major"][:5],
                        topics.topic(v["topic_id"]) if v.get("topic_id") else None, video_id)
     return res
+
+
+def _sections(ans):
+    """{section: one-line guess} for the known sections only. Labelled as a guess: no viewer data behind it."""
+    got = (ans or {}).get("sections") if isinstance(ans, dict) else None
+    if not isinstance(got, dict):
+        return {}
+    return {k: str(got[k])[:160] for k in SECTIONS if str(got.get(k) or "").strip()}
 
 
 def _num(ans, key):
@@ -144,7 +161,8 @@ def _num(ans, key):
 def detail(res):
     if not res:
         return ""
-    head = f"score {res['score']}/10, first frame {res['first_frame']}/10"
+    head = f"score {res['score']}/10, first frame {res['first_frame']}/10" + \
+        (f", visual hook {res['visual_hook']}/10" if res.get("visual_hook") is not None else "")
     if not res["problems"]:
         return head + ", no problems"
     return head + "; " + "; ".join(f"{p['severity']}: frame {p['frame']}: {p['issue']}" for p in res["problems"][:4])

@@ -11,6 +11,7 @@ Visual:    the picture never stands still for long, and no two scenes reuse the 
            or "block" (they fail QA). "final-cut review" (studio/finalreview.py) runs last."""
 import json
 import os
+import re
 import time
 
 import numpy as np
@@ -93,6 +94,120 @@ def repeated_pictures(paths):
     return out
 
 
+# ---------- what's on screen must match the checked script ----------
+_NUM = re.compile(r"(?<![\w.])[-+]?\d[\d,]*(?:\.\d+)?")
+
+
+_SCALE = {"thousand": 1e3, "million": 1e6, "billion": 1e9, "trillion": 1e12}
+_SCALED = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(thousand|million|billion|trillion)\b", re.I)
+
+
+def _nums(text):
+    out = []
+    for m in _NUM.findall(str(text or "")):
+        try:
+            out.append(float(m.replace(",", "")))
+        except ValueError:
+            pass
+    return out
+
+
+def screen_numbers(scenes):
+    """[(scene number, field, value)] for every number the plan puts on screen (values, labels, cards)."""
+    out = []
+    for k, sc in enumerate(scenes or []):
+        if not isinstance(sc, dict):
+            continue
+        for f in ("value", "right", "left", "label", "text", "from", "to", "unit"):
+            for v in _nums(sc.get(f)):
+                out.append((k + 1, f, v))
+        for it in sc.get("items") or []:
+            vals = [it.get("value"), it.get("label")] if isinstance(it, dict) else [it]
+            for x in vals:
+                for v in _nums(x):
+                    out.append((k + 1, "items", v))
+    return out
+
+
+def script_numbers(row):
+    """Every number in the fact-checked script: its lines, hook and checked calculations (with their results)."""
+    st = json.loads(row["structure"] or "{}") if row else {}
+    bag = [row["hook"] if row else "", row["body"] if row else ""]
+    bag += [ln.get("text", "") for ln in st.get("lines") or []]
+    for c in st.get("calcs") or []:
+        bag += [c.get("expr"), c.get("result"), c.get("actual"), c.get("says")]
+    out = {round(abs(v), 6) for x in bag for v in _nums(x)}
+    for x in bag:                                  # "5 million" on screen is 5,000,000
+        for m in _SCALED.finditer(str(x or "")):
+            try:
+                out.add(round(float(m.group(1).replace(",", "")) * _SCALE[m.group(2).lower()], 6))
+            except ValueError:
+                pass
+    return out
+
+
+def unmatched_numbers(scenes, row):
+    """On-screen numbers that aren't in the checked script (allowing rounding to what's shown, and the small
+    counting numbers 0-10 that steps and labels use). [(scene, field, value)]"""
+    known = script_numbers(row)
+    bad = []
+    for k, f, v in screen_numbers(scenes):
+        if abs(v) <= 10 and v == int(v):
+            continue
+        if any(abs(abs(v) - n) <= max(1e-9, 0.006 * n) for n in known):   # "-56 °C" can be said "56 below"
+            continue
+        bad.append((k, f, v))
+    return bad
+
+
+def _hit(a, b, pad=8):
+    """Do two boxes (x0, y0, x1, y1) overlap (with a little breathing room)?"""
+    return not (a[2] + pad <= b[0] or b[2] + pad <= a[0] or a[3] + pad <= b[1] or b[3] + pad <= a[1])
+
+
+def text_overlaps(rep):
+    """[what overlaps] among the cinematic look's text layers: a scene's counter/title, its diagram card and the
+    captions. (Caption boxes come as x, y, w, h.)"""
+    if not rep.get("cinematic"):
+        return []
+    caps = [(c[0], c[1], c[0] + c[2], c[1] + c[3]) for c in rep.get("caption_boxes") or []]
+    scene_boxes = rep.get("scene_boxes") or []
+    out = []
+    for k, ov in (rep.get("overlay_boxes") or {}).items():
+        k = int(k)
+        if k < len(scene_boxes) and _hit(scene_boxes[k], ov, pad=0):
+            out.append(f"scene {k + 1}: the counter overlaps the diagram card")
+        if any(_hit(c, ov) for c in caps):
+            out.append(f"scene {k + 1}: a caption overlaps the diagram card")
+    for k, b in enumerate(scene_boxes[1:], 1):
+        if any(_hit(c, b) for c in caps):
+            out.append(f"scene {k + 1}: a caption overlaps the counter")
+            break
+    return out
+
+
+def soft_pictures(rep):
+    """None when no AI pictures were used or the sharpener is off; else "" when every AI picture was enlarged by
+    Real-ESRGAN, or why not. A small AI picture stretched to 1080x1920 without it looks soft, so this blocks."""
+    used = rep.get("engines") or {}
+    m = re.search(r"Real-ESRGAN: (\d+) of (\d+)", str(used.get("sharpen") or ""))
+    if not m:
+        return None
+    done, total = int(m.group(1)), int(m.group(2))
+    return "" if done >= total else f"only {done} of {total} pictures were sharpened; the rest would look soft"
+
+
+def decodes_cleanly(path):
+    """(ok, detail): ffmpeg reads every frame and sample of the file without an error."""
+    from clipper import media
+    try:
+        r = media.run(["-v", "error", "-i", str(path), "-f", "null", "-"], check=False, timeout=600)
+        err = (r.stderr or "").strip()
+        return (r.returncode == 0 and not err), (err[:160] or "decoded every frame")
+    except Exception as e:
+        return False, str(e)[:160]
+
+
 def visual_mode():
     try:
         from studio import config
@@ -169,9 +284,24 @@ def check(video_id):
             from studio import lessons, topics
             lessons.record("video", [f"visual qc: {x}" for x in found][:4],
                            topics.topic(v["topic_id"]) if v.get("topic_id") else None, video_id)
+    weak = soft_pictures(rep)
+    if weak is not None:
+        _add(checks, "pictures sharpened to full size", not weak, weak or (rep.get("engines") or {}).get("sharpen", ""))
+    over = text_overlaps(rep)
+    _add(checks, "text layers don't overlap", not over, "; ".join(over[:3]))
+    if info.get("audio_duration") and info.get("video_duration"):
+        gap = abs(float(info["audio_duration"]) - float(info["video_duration"]))
+        _add(checks, "sound and picture same length", gap <= 0.25, f"{gap:.2f} s apart")
+    ok, why = decodes_cleanly(path)
+    _add(checks, "file decodes cleanly", ok, why)
     _add(checks, "file size", os.path.getsize(path) < 256 * 1024 * 1024, f"{os.path.getsize(path) / 1e6:.1f} MB")
     row = script.latest(video_id, "passed")
     _add(checks, "fact-checked script", bool(row), "" if row else "no passed script")
+    if row and meta.get("scenes"):
+        bad = unmatched_numbers(meta["scenes"], row)
+        _add(checks, "on-screen numbers match the script", not bad,
+             "; ".join(f"scene {k} {f}: {v:g} isn't in the checked script" for k, f, v in bad[:4]) or
+             f"{len(screen_numbers(meta['scenes']))} numbers checked")
     sup = db.one("SELECT COUNT(DISTINCT url) n FROM sources WHERE video_id=? AND verdict='supported'", video_id)["n"]
     bad = db.one("SELECT COUNT(*) n FROM sources WHERE video_id=? AND verdict IN ('wrong','unsupported')", video_id)["n"]
     _add(checks, "sources", sup >= 2 and bad == 0, f"{sup} supporting sources, {bad} problems")
