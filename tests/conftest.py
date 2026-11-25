@@ -43,6 +43,9 @@ def clipper_home(tmp_path, monkeypatch):
     def no_clip(images, texts):
         raise RuntimeError("no OpenCLIP in tests")
     monkeypatch.setattr(art, "CLIP_SCORE", no_clip)          # pictures aren't scored unless a test fakes it
+    from studio import script
+    monkeypatch.setattr(script, "number_check_on", lambda: False)   # other tests' fake Claude answers stay as they are
+    monkeypatch.setattr(script, "lookup_on", lambda: False)         # (test_studio_make_sense switches these back on)
     from studio import obsidian
     monkeypatch.setattr(obsidian, "vault", lambda: None)     # never writes into a real Obsidian vault
     yield tmp_path
