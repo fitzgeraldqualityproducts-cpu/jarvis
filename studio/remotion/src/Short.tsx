@@ -381,13 +381,16 @@ const LineCaption: React.FC<{p: ShortProps}> = ({p}) => {
       <div style={{position: 'absolute', left: p.caption.left, width: p.caption.width, top: p.caption.y * p.height,
         transform: `translateY(-50%) scale(${0.86 + 0.14 * pop})`, textAlign: 'center', color: 'white',
         fontFamily: BLACK, fontWeight: 900, fontSize: size, lineHeight: p.caption.lineHeight || 1.15,
-        textShadow: OUTLINE, opacity: a, display: 'flex', flexWrap: 'wrap', justifyContent: 'center',
-        columnGap: '0.28em'}}>
+        textShadow: OUTLINE, opacity: a, textWrap: 'balance', wordSpacing: '0.08em'} as React.CSSProperties}>
         {toks.map((w, i) => {
           const wd = page.words[i] !== undefined ? p.words[page.words[i]] : undefined;
           const now = wd ? wd.s <= t && t < Math.max(wd.e, wd.s + 0.12) : false;
-          return <span key={i} style={{color: hi.has(i) ? p.palette.amber : 'white',
-            display: 'inline-block', transform: `translateY(${now ? -4 : 0}px)`}}>{w}</span>;
+          return (
+            <React.Fragment key={i}>
+              <span style={{color: hi.has(i) ? p.palette.amber : 'white', display: 'inline-block',
+                transform: `translateY(${now ? -4 : 0}px)`}}>{w}</span>{i < toks.length - 1 ? ' ' : null}
+            </React.Fragment>
+          );
         })}
       </div>
     );

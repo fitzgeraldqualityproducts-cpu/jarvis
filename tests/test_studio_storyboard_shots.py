@@ -61,7 +61,7 @@ def test_wave_diagram_spaces_hot_spots_half_a_wavelength_apart():
     assert video._valid({"type": "wave"}) and not video._valid({"type": "wave", "span": "sideways"})
 
 
-def test_ruler_diagram_and_its_counter():
+def test_ruler_diagram_keeps_the_last_counter():
     from studio import edit, video
     sc = {"type": "measure", "from": "hot spot", "to": "next hot spot", "value": "6.1", "unit": "cm",
           "label": "the gap the turntable fixes"}
@@ -69,7 +69,7 @@ def test_ruler_diagram_and_its_counter():
     assert ov["kind"] == "measure" and ov["value"] == "6.1 cm" and ov["to"] == "next hot spot"
     assert video._valid(sc) and not video._valid({"type": "measure", "value": "6.1"})
     h = video.huds([{"type": "number", "value": "2.45", "unit": "GHz", "label": "oven"}, sc])
-    assert h[1]["value"] == "6.1 cm" and h[1]["num"] == 6.1
+    assert h[1].get("carried") and h[1]["value"] == "2.45 GHz"         # the ruler shows 6.1 cm itself
 
 
 def test_classic_look_draws_the_new_diagrams_inside_the_safe_area():
@@ -247,3 +247,18 @@ def test_new_looks_flag_is_for_one_run_and_leaves_settings_alone(studio_home, mo
     assert cli._new_looks(["--new-looks"]) is True
     assert art.shots_on() is True and video.type_style() == "bold"
     assert "shots" not in config.general() and "type_style" not in config.general()
+
+
+def test_hand_made_short_timings_are_shown(studio_home):  # noqa: F811
+    from studio import timings
+    timings.add(77, "SDXL-Turbo pictures", 120, "heavy")
+    assert "made by hand" in timings.text(77) and "SDXL-Turbo pictures" in timings.text(77)
+    timings.add(77, "rendering", 400, "stage")
+    assert "of work" in timings.text(77)
+
+
+def test_a_ruler_does_not_repeat_its_number_in_the_counter():
+    from studio import video
+    h = video.huds([{"type": "number", "value": "924", "unit": "mph", "label": "speed"},
+                    {"type": "measure", "from": "ground", "to": "jet", "value": "55,000", "unit": "ft"}])
+    assert h[1] is None or h[1].get("value") != "55,000 ft"

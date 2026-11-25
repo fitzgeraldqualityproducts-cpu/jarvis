@@ -110,6 +110,9 @@ def _mins(s):
 def text(vid=None):
     r = report(vid) if vid else summary()
     head = f"Short #{vid}" if vid else f"Average of the last {r['shorts']} Shorts"
+    if not r["stages"] and r["parts"]:                # a Short rendered by hand: only its heavy jobs were timed
+        return "\n".join([f"{head}: made by hand, so only its heavy jobs and Claude calls were timed:"] +
+                         [f"  {n:<28} {_mins(s):>9}" for n, s in r["parts"][:15]])
     if not r["stages"]:
         return f"{head}: no timings yet (they start with the next Short made after this update)."
     tot = r["total"] or 1

@@ -173,8 +173,10 @@ def _script(argv):
     db.set_video(vid, topic_id=t["id"], title=t["title"], state="scripting", stage_done="researching")
     topics.set_status(t["id"], "in_production", video_id=vid, script_status="writing")
     print(f"Idea #{t['id']}: {t['title']}  (video {vid})")
+    from studio import timings
     try:
-        script.make(t, vid)
+        with timings.video(vid), timings.step("writing and fact-check", "stage"):
+            script.make(t, vid)
     except script.ScriptRejected as e:
         db.set_video(vid, state="rejected", error=str(e), error_kind="permanent", finished=time.time())
         topics.set_status(t["id"], "rejected", reject_reason="script failed the fact-check")
@@ -187,7 +189,8 @@ def _script(argv):
     print("\n" + page.read_text())
     if "--no-voice" not in argv:
         print("Recording the narration...")
-        rec = narration.narrate(script.latest(vid)["body"], folder / "voice.wav", vid)
+        with timings.video(vid), timings.step("narration", "stage"):
+            rec = narration.narrate(script.latest(vid)["body"], folder / "voice.wav", vid)
         db.set_video(vid, state="rendering", stage_done="generating_audio", duration=rec["seconds"])
         print(f"Narration: {rec['seconds']} s, {rec['checks']['wpm']} words a minute, {rec['loudness']} LUFS. Checks passed.")
         _reveal(str(folder / "voice.wav"))
@@ -213,7 +216,7 @@ def _video(argv):
     print(f"\nMaking video {vid}: {db.video(vid)['title']}")
     t0 = time.time()
     from studio import timings
-    with timings.video(vid):                     # a Short made by hand is timed too (python -m studio timings <id>)
+    with timings.video(vid), timings.step("rendering", "stage"):   # timed too (python -m studio timings <id>)
         rep = video.render(vid, progress=lambda s: print("  " + s))
     print(f"  Rendered {rep['duration']} s in {time.time() - t0:.0f} s ({rep['timing']['method']}, "
           f"{rep['timing']['matched']:.0%} of words matched)")
