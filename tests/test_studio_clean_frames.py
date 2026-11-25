@@ -195,3 +195,29 @@ def test_a_scene_showing_the_main_subject_gets_no_stock_clip(monkeypatch, tmp_pa
     used = {}
     video._footage_moves(1, scenes, [0, 2, 4, 6], tmp_path, used, record=False)
     assert asked == ["ocean waves"]
+
+
+def test_visual_plan_waits_for_the_daily_reset_instead_of_a_plain_plan(studio_home, monkeypatch):  # noqa: F811
+    """Short 20 was rendered from the plain fallback plan (no diagrams) after the day's Claude calls ran out."""
+    import time
+    from studio import claude, video
+    from studio.jobs import QuotaWait
+
+    def out_of_calls(*a, **k):
+        raise QuotaWait("the studio has used today's 60 Claude calls", time.time() + 60)
+    monkeypatch.setattr(claude, "ask_json", out_of_calls)
+    row = {"hook": "Why fold paper?", "structure": json.dumps({"lines": [{"text": t} for t in
+                                                                         ("Why fold paper?", "Fold it once.", "Then twelve times.")]})}
+    with pytest.raises(QuotaWait):
+        video.plan(row)
+
+    def broken(*a, **k):
+        raise RuntimeError("bad JSON")
+    monkeypatch.setattr(claude, "ask_json", broken)
+    assert len(video.plan(row)) == 3                    # any other failure still falls back to a plain plan
+
+
+def test_small_numbers_appear_as_they_are():
+    from studio import video
+    h = video.huds([{"type": "number", "value": "0.1", "unit": "millimeters", "label": "say your tissue is"}])
+    assert h[0]["from"] == h[0]["num"] == 0.1
