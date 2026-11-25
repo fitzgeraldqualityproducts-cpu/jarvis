@@ -84,7 +84,7 @@ def learn(idx):
         pk = json.loads((v or {}).get("meta") or "{}").get("packaging") if v else None
         if pk:
             rows.append((pk, float(r["index"]), r.get("hook_hold")))
-    out = {"n": len(rows)}
+    out = {"n": len(rows), "openings": _openings(idx)}
     for part in ("title", "frame"):
         labels = sorted({lb for pk, _, _ in rows for lb in pk.get(part) or []})
         d = {}
@@ -96,6 +96,41 @@ def learn(idx):
         out[part] = d
     db.put("studio_packaging", out)
     return out
+
+
+OPENINGS = 3                       # how many best-holding openings the writer and the hook rater see
+
+
+def _openings(idx):
+    """The opening lines of measured Shorts, best hook hold (share still watching 10% in) first."""
+    out = []
+    for r in (idx or {}).values():
+        if r.get("hook_hold") is None or not r.get("video_id"):
+            continue
+        s = db.one("SELECT hook FROM scripts WHERE video_id=? AND status='passed' ORDER BY version DESC LIMIT 1",
+                   r["video_id"])
+        if s and s["hook"]:
+            out.append({"hook": s["hook"], "hold": round(float(r["hook_hold"]), 3), "video_id": r["video_id"]})
+    return sorted(out, key=lambda o: -o["hold"])
+
+
+def best_openings(n=OPENINGS):
+    """The n openings that held viewers best, once at least MIN_SHORTS Shorts have a measured hook hold (and the
+    best clearly beat the typical one); [] until then."""
+    ops = (db.get("studio_packaging", {}) or {}).get("openings") or []
+    if len(ops) < MIN_SHORTS:
+        return []
+    mid = statistics.median(o["hold"] for o in ops)
+    return [o for o in ops[:n] if o["hold"] >= mid + HOLD_GAP / 2] or []
+
+
+def openings_advice():
+    best = best_openings()
+    if not best:
+        return ""
+    return ("Openings that kept the most viewers past the first seconds on this channel: "
+            + "; ".join(f"\"{b['hook']}\" ({100 * b['hold']:.0f}% still watching)" for b in best)
+            + ". Give every hook that same kind of pull (never the same words or topic).")
 
 
 def _mean(xs):

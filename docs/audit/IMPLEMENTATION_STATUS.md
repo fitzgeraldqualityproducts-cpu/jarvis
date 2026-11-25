@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-24. This file is updated with every PR in the roadmap. "Done" means merged and
+Last updated: 2026-11-25. This file is updated with every PR in the roadmap. "Done" means merged and
 tested. "Live" means switched on on the PC.
 
 ## Phase 1: Inspect: done
@@ -85,6 +85,28 @@ thinking), then the fact-check (about 2,000-3,000 each).
 | 1. Final-cut review | Claude looks at a contact sheet (the first frame plus the middle of each line) next to what is said, and reports problems as minor or major | `final_review`: `advise` (default, never stops a Short), `block`, `off` | Built and tested. A real CLI image read was checked |
 | 4. Smarter topics | Shows Claude yesterday's most-read Wikipedia articles as hints. Blends Wikipedia page views into interest. Catches repeats by meaning with Jarvis's local embedding model | `wiki_trends` (on), `duplicate_meaning_at` (0.9) | Built and tested. Tune the threshold on the PC with `python -m studio similar` |
 | 6. Packaging that learns | Saves each Short's title style and first-frame look. Once a style is clearly ahead on the index (titles) or hook hold (first frames), over 3+ Shorts each side, the writer is told and that title style is picked first | none (does nothing until there is evidence) | Built and tested. Shorts have no CTR data, so it uses index and hook hold |
+
+## Shorts that make sense (Connor's picks 1, 2, 5; then 5, 6; then 1, 2, 4)
+
+| Upgrade | What it does | Switch | State |
+|---|---|---|---|
+| Footage relevance | A stock clip must match every word of its search (tags, title, description). Space searches ask NASA first | none | Built and tested with fakes |
+| Storyboard | The visual plan picks one real, filmable main subject and carries it through every scene, so the pictures tell one story | `storyboard` (on) | Built and tested |
+| Picture check (OpenCLIP) | OpenCLIP ViT-B/32 (MIT, free, runs in tools/sdxl) scores each AI picture against its line. Under `picture_fit_min` (0.22): 2 more takes, best kept. Still under `picture_fit_floor` (0.17): a plain background so the diagram carries the scene (never the hook). Footage whose middle frame scores under `footage_fit_floor` is dropped and the AI picture stays | `picture_fit` (on) | Built and tested with fakes. Thresholds to calibrate on the PC |
+| Explain it back + confused viewer | The local brain (Ollama) plays a 14-year-old new to the topic: it retells the passed script, rates 1-5 how well that matches the intended point, and names lines it really couldn't follow (a skipped step, an unexplained word). A rating of 2 or lower, or a named line, sends it back once with what the viewer said. Never on the last allowed try, never twice | `explain_back` (on) | Built and tested with fakes. Skipped when Ollama isn't running |
+| One question per Short | The writer builds the whole Short around one question the hook raises; the payoff answers it. The fact-checker names the question and rates "answered" 0-10: under 4 sends the script back, under 6 is an editor note | none | Built and tested |
+| Plain comparisons | Every surprising number gets a familiar comparison the moment it appears ("127 C, hotter than boiling water"), from the facts or everyday knowledge only. The fact-checker lists bare numbers as an editor note | none | Built and tested |
+| Hook check | Once 3+ Shorts have a measured hook hold, the best-holding openings are shown to the writer, and the fact-checker rates every hook "proven" against them. That rating counts in picking the hook; a weak one gets an editor note | none (does nothing until there is evidence) | Built and tested |
+| Obsidian weekly report | The weekly report (now with what worked, what flopped, what changes next) is also saved to `<vault>/HussUniversity/Weekly reports/<date>.md`. Vault: `obsidian_vault`, else OneDrive\Documents\Obsidian Vault | `obsidian_report` (on) | Built and tested. Writes only that folder |
+
+## Audit follow-up (Connor's picks 1, 2, 3, 6 on 2026-11-25)
+
+| Step | What it does | Switch | State |
+|---|---|---|---|
+| 1. Measure the script stage | `python -m studio stops [--since YYYY-MM-DD]`: Shorts that passed (first try, after a rewrite, by cutting lines) or stopped, why, and fact-checks per Short. Read only | none | Built and tested. First reading (PC, by hand, 2026-11-25): before the fixes 4 of 13 passed, 9 stopped (originality 6, unsupported lines 6, word count 2; 2.6 checks per stopped Short). No Short has been written since the fixes |
+| 2. Free number check | Before any fact-check: a line that says a number but lists no fact gets the fact whose words have that number. A number found in no fact or calculation (and not marked textbook science) becomes a "needs" lookup: a page that states it is found, or the line is dropped. The hook, payoff and loop lines are left for the fact-check | `number_check` (on) | Built and tested |
+| 3. Look up before cutting | When the fact-check flags one or two lines as unsupported, one search looks for a reputable page that states each line's number (Jarvis downloads it and checks the number is really on it). Lines it sources get that page and only those lines are checked again. Nothing found: the usual cut or rewrite. Once per draft, never for a "wrong" line, and never when it could cost the Short a try | `lookup_before_cut` (on) | Built and tested with fakes |
+| 6. Visual upgrades sample | The PC test Short of the story work is made with every #82 upgrade (sharpen, depth motion, lively edit, sound effects, footage). Connor's typed OK in the PC thread switches them on | n/a | Waiting for the sample |
 
 ## Phases 6-7: validate and activate
 

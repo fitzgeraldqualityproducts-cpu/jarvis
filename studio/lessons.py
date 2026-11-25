@@ -30,6 +30,11 @@ RULES = [
     *[(f"weak_{k}", "script", rf"^judge: weaker {k}\b",
        f"Side-by-side drafts lost on {v.split(': ')[0]} {{n}} time(s): {v.split(': ', 1)[1]}.")
       for k, v in JUDGE_ADVICE.items()],
+    ("one_question", "script", r"^one question:",
+     "Scripts were sent back {n} time(s) because the payoff didn't answer the hook's question: pick the one question "
+     "first, and make the payoff answer it in plain words."),
+    ("viewer_lost", "script", r"^clarity: a first-time viewer",
+     "A first-time viewer got lost {n} time(s): one step per line, no skipped step, and tie every line to the main point."),
     ("stock_phrase", "script", r"stock phrase",
      "Drafts were dropped {n} time(s) for stock explainer phrases: say the re-hook and transitions in your own words."),
     ("too_long", "script", r"\d+ words; it must be .*cut|words; it must be \d+-\d+.*cut",
@@ -136,10 +141,13 @@ def advice(area, now=None):
         try:
             from studio import packaging
             pk = packaging.advice()
+            ops = packaging.openings_advice()
         except Exception:
-            pk = ""
+            pk = ops = ""
         if pk:
             lines.append(pk)
+        if ops:
+            lines.append(ops)
     if not lines:
         return ""
     return "Lessons from this channel's own rejected work (follow them):\n" + "\n".join(f"- {l}" for l in lines)

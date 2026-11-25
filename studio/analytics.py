@@ -341,7 +341,8 @@ def report(now=None, save=True):
                 lines.append(f"- {label} {k}: index {v['mean']:.0f} over {v['n']} Short(s)")
         lines.append("- Topic picking: " + (", ".join(f"{k} {v:+.1f} points" for k, v in sorted(nud.items()))
                                             if nud else f"no changes yet (needs {MIN_PER_PILLAR}+ measured Shorts per pillar)"))
-    from studio import retention
+    from studio import obsidian, retention
+    lines += [""] + obsidian.review(idx)
     lines += ["", "## Where viewers left", ""] + retention.text().rstrip("\n").split("\n")
     lines += ["", "## Does the quality score predict real results?", ""] + retention.score_text().rstrip("\n").split("\n")
     from studio import eligibility
@@ -355,6 +356,10 @@ def report(now=None, save=True):
     if save:
         out = data_dir("reports") / f"week-{_date(now)}.md"
         out.write_text(text, encoding="utf-8")
+        try:
+            obsidian.write(text, now)
+        except Exception as e:
+            print(f"(couldn't write the report into Obsidian: {str(e)[:160]})")
     return text
 
 

@@ -59,6 +59,94 @@ def raw_pictures(video_id, scenes, lines, look="diagram"):
     return have
 
 
+# ---------- does each picture fit its line? (OpenCLIP, see workers/clip_worker.py) ----------
+
+FIT_MIN = 0.22          # a picture scoring under this (OpenCLIP cosine with its line) gets more takes
+FIT_FLOOR = 0.17        # still under this after the takes: a plain background instead of an off-topic picture
+TAKES = 2               # extra pictures tried for a weak scene
+CLIP_SCORE = None       # tests swap this: (image paths, texts) -> [[similarity]]
+
+
+def fit_on():
+    try:
+        from studio import config
+        return config.general().get("picture_fit", True) is not False
+    except Exception:
+        return True
+
+
+def _cfg_num(key, default):
+    try:
+        from studio import config
+        return float(config.general().get(key, default))
+    except (TypeError, ValueError, Exception):
+        return default
+
+
+def clip_scores(images, texts):
+    """[[similarity of image i with text j]] from OpenCLIP (in the sdxl environment)."""
+    if CLIP_SCORE:
+        return CLIP_SCORE([str(p) for p in images], list(texts))
+    ans = engines.run("sdxl", "clip_worker", {"images": [str(p) for p in images], "texts": list(texts)})
+    if ans.get("error"):
+        raise engines.EngineError(ans["error"])
+    return ans["sims"]
+
+
+def line_text(scene, line):
+    """What a scene's picture should show: its line and its planned subject."""
+    return f"{' '.join(str(line).split())[:200]}. {subject(scene, line)}"[:300]
+
+
+def plain(out, W=GEN_W, H=GEN_H):
+    """A plain dark-blue gradient (the background for a scene no picture fitted)."""
+    from PIL import Image
+    y = np.linspace(0, 1, H)[:, None, None]
+    top, bottom = np.array([18, 32, 58]), np.array([6, 10, 22])
+    img = (top * (1 - y) + bottom * y).astype("uint8").repeat(W, axis=1)
+    Image.fromarray(img, "RGB").save(out)
+    return Path(out)
+
+
+def fit(video_id, scenes, lines, raws, look="diagram"):
+    """Checks every picture against its line; weak ones get TAKES more tries and the best fit is kept; one that
+    still doesn't fit becomes a plain background. Returns (raws, report {"scores", "retaken", "plain"})."""
+    order = sorted(raws)
+    texts = [line_text(scenes[i], lines[i] if i < len(lines) else "") for i in order]
+    sims = clip_scores([raws[i] for i in order], texts)
+    score = {i: float(sims[k][k]) for k, i in enumerate(order)}
+    lo, floor = _cfg_num("picture_fit_min", FIT_MIN), _cfg_num("picture_fit_floor", FIT_FLOOR)
+    weak = [i for i in order if score[i] < lo]
+    rep = {"scores": {i + 1: round(score[i], 3) for i in order}, "retaken": [], "plain": []}
+    if weak:
+        folder = engines.outputs_dir("videos", str(video_id), "art")
+        want = []
+        for i in weak:
+            p = prompt(scenes[i], lines[i] if i < len(lines) else "", look)
+            for t in range(1, TAKES + 1):
+                seed = int(video_id) * 100 + i + 1000 * t
+                out = folder / f"art_{i + 1:02d}_{_key(p, seed)}.png"
+                want.append((i, out, {"prompt": p, "out": str(out), "seed": seed}))
+        todo = [w for _, out, w in want if not out.exists()]
+        if todo:
+            with engines.heavy("more AI pictures (SDXL-Turbo)"):
+                engines.run("sdxl", "sdxl_worker", {"images": todo, "width": GEN_W, "height": GEN_H, "steps": 4})
+        takes = [(i, out) for i, out, _ in want if out.exists()]
+        if takes:
+            s2 = clip_scores([o for _, o in takes], [texts[order.index(i)] for i, _ in takes])
+            for k, (i, out) in enumerate(takes):
+                if float(s2[k][k]) > score[i]:
+                    score[i], raws[i] = float(s2[k][k]), out
+                    if i + 1 not in rep["retaken"]:
+                        rep["retaken"].append(i + 1)
+        for i in weak:
+            if score[i] < floor and i > 0:          # the hook keeps a picture: its first frame must look finished
+                raws[i] = plain(folder / f"plain_{i + 1:02d}.png")
+                rep["plain"].append(i + 1)
+        rep["scores"] = {i + 1: round(score[i], 3) for i in order}
+    return raws, rep
+
+
 ENHANCE_LICENCE = ("sharpened with Real-ESRGAN x4plus (BSD-3-Clause); depth from Depth Anything V2 Small "
                    "(Apache-2.0)")
 
