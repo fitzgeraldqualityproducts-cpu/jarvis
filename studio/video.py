@@ -510,7 +510,10 @@ def huds(scenes):
                 h.update(num=parts[0], dec=min(parts[1], 2), unit=parts[2],
                          **{"from": prev[0] if prev and prev[2] == parts[2] and prev[0] < parts[0] else 0.0})
             last = h
-        out.append(dict(last) if last else None)
+            out.append(dict(h))
+            continue
+        # a scene without a number keeps the last counter, standing still: it never counts again
+        out.append(dict(last, **({"from": last["num"]} if "num" in last else {}), carried=True) if last else None)
     if out and out[0]:
         out[0]["from"] = out[0].get("num", 0.0)          # the first frame already shows the hook's number
     return out
@@ -665,7 +668,7 @@ def _depth_moves(raws, enh, starts, folder, pal, used):
     return out
 
 
-def _footage_fits(scenes, got, folder):
+def _footage_fits(scenes, got, folder, report=None):
     """Keeps the footage clips whose middle frame OpenCLIP says shows what the scene is about (its search and its
     planned picture). Returns (kept, dropped scene numbers). Not checked (kept) when OpenCLIP can't run."""
     from studio import art
@@ -689,6 +692,8 @@ def _footage_fits(scenes, got, folder):
     except Exception:
         return got, []
     floor = art._cfg_num("footage_fit_floor", art.FIT_FLOOR)
+    if report is not None:
+        report.update({g[0] + 1: round(float(sims[i][i]), 3) for i, g in enumerate(got)})
     keep = [g for i, g in enumerate(got) if float(sims[i][i]) >= floor]
     return keep, [g[0] + 1 for i, g in enumerate(got) if float(sims[i][i]) < floor]
 
@@ -720,7 +725,10 @@ def _footage_moves(video_id, scenes, starts, folder, used, record):
             continue
         seen[info["id"]] = start + need
         got.append((k, p, info))
-    got, dropped = _footage_fits(scenes, got, folder)
+    fscores = {}
+    got, dropped = _footage_fits(scenes, got, folder, fscores)
+    if fscores:
+        used["footage_scores"] = ", ".join(f"scene {k} {v:.2f}" for k, v in sorted(fscores.items()))
     if dropped:
         why.append(f"{len(dropped)} clip{'s' if len(dropped) != 1 else ''} didn't show the line, kept the AI picture")
     for k, p, info in got:
@@ -791,6 +799,7 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                     raws, fitrep = art.fit(video_id, scenes, lines, raws, look)
                     used["fit"] = (f"OpenCLIP: lowest {min(fitrep['scores'].values()):.2f}, "
                                    f"retaken {fitrep['retaken'] or 'none'}, plain {fitrep['plain'] or 'none'}")
+                    used["fit_scores"] = ", ".join(f"scene {k} {v:.2f}" for k, v in sorted(fitrep["scores"].items()))
                 except Exception as e:
                     used["fit"] = f"not checked ({str(e)[:160]})"
             sharpen, depth = eng["sharpen"] == "esrgan", eng["motion"] == "depth" and look == "hud"
