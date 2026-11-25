@@ -40,7 +40,7 @@ def youtube_partner_progress():
 
 
 @tool("Google Drive backup of the YouTube business's finished Shorts: how many are backed up, how much space "
-      "was cleared from the Mac, and anything still to copy. Use for 'are my Shorts backed up', 'Drive backup'.")
+      "was cleared from this computer, and anything still to copy. Use for 'are my Shorts backed up', 'Drive backup'.")
 def youtube_drive_backup_status():
     from studio import drive
     return drive.say()
@@ -56,7 +56,7 @@ def back_up_shorts_to_drive():
     freed = drive.free_local()
     note = " Your Google Drive is nearly full, so I stopped." if res["problem"] == "full" else ""
     return (f"Copied {res['copied']} file(s) ({res['bytes'] / (1 << 20):.0f} MB) to Google Drive and cleared "
-            f"{freed / (1 << 20):.0f} MB from the Mac.{note} " + drive.say())
+            f"{freed / (1 << 20):.0f} MB from this computer.{note} " + drive.say())
 
 
 @tool("Open the live YouTube business dashboard: the production line showing every Short moving from idea to "
