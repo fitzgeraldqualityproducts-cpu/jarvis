@@ -7,12 +7,15 @@ state() every few seconds.
 When Jarvis isn't running, `python -m studio dashboard` serves the same page by itself."""
 import json
 import time
+from datetime import datetime
 import urllib.parse
 from pathlib import Path
 
 from studio import config, db, guard
 
 PAGE = Path(__file__).resolve().parent.parent / "studio.html"
+VENDOR = PAGE.with_name("vendor") / "studio"     # Tabler, ECharts and fonts, kept locally (no internet needed)
+VENDOR_TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".woff2": "font/woff2"}
 
 # (key, label, icon, the job states that sit at this station)
 STATIONS = [
@@ -236,8 +239,36 @@ def state(now=None):
         "cards": cards, "ideas": ideas, "published": pub, "live_count": live_count, "private_count": private_count,
         "next_upload": nxt, "stats": _stats(), "activity": _activity(now),
         "cost_usd": sum(t["cost_usd"] or 0 for t in db.q("SELECT cost_usd FROM tools")),
-        "hardware": _hardware(), "backup": _backup(), "timings": _timings(),
+        "hardware": _hardware(), "backup": _backup(), "timings": _timings(), "history": _history(now),
     }
+
+
+def _history(now, days=14):
+    """One reading a day for the charts: subscribers and total views (last channel reading of each day)
+    and how many Shorts were public by then. Days with no reading are left out. Never raises."""
+    try:
+        ch = guard.locked_channel()
+        out = []
+        if ch:
+            by_day = {}
+            for r in db.q("SELECT fetched, metrics FROM analytics WHERE youtube_id=? AND source='channel' AND fetched>? "
+                          "ORDER BY fetched, id", ch["youtube_channel_id"], now - (days + 1) * 86400):
+                m = _j(r["metrics"], {})
+                by_day[time.strftime("%Y-%m-%d", time.localtime(float(r["fetched"])))] = m
+            out = [{"day": d, "subs": m.get("subscriberCount"), "views": m.get("viewCount")}
+                   for d, m in sorted(by_day.items())][-(days + 1):]
+        public = []
+        for r in db.q("SELECT published_at FROM published WHERE privacy='public' AND published_at IS NOT NULL"):
+            try:
+                t = datetime.fromisoformat(str(r["published_at"]).replace("Z", "+00:00")).timestamp()
+                public.append(time.strftime("%Y-%m-%d", time.localtime(t)))
+            except ValueError:
+                pass
+        for h in out:
+            h["live"] = sum(1 for d in public if d <= h["day"])
+        return out
+    except Exception:
+        return []
 
 
 def _timings():
@@ -288,6 +319,13 @@ def handle(path):
     try:
         if path == "/studio/state":
             return 200, json.dumps(state(), default=str).encode(), "application/json"
+        if path.startswith("/studio/v/"):
+            name = urllib.parse.unquote(path[len("/studio/v/"):])
+            f = VENDOR / name
+            ctype = VENDOR_TYPES.get(Path(name).suffix)
+            if ctype and "/" not in name and "\\" not in name and not name.startswith(".") and f.is_file():
+                return 200, f.read_bytes(), ctype
+            return 404, b"not found", "text/plain"
         if path.startswith("/studio/thumb/") and path.endswith(".img") and path[14:-4].isdigit():
             f = thumb_file(int(path[14:-4]))
             if f:
@@ -312,7 +350,7 @@ def serve(port=8766, open_browser=True):
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "max-age=300" if "/thumb/" in p else "no-store")
+            self.send_header("Cache-Control", "max-age=300" if "/thumb/" in p or "/studio/v/" in p else "no-store")
             self.end_headers()
             self.wfile.write(body)
 

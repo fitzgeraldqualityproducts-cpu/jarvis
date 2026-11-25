@@ -1,116 +1,145 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YouTube Studio Line</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<!-- Everything below is served by Jarvis from vendor/studio/ (no internet needed). Licences: vendor/studio/LICENSES.txt -->
+<link rel="stylesheet" href="/studio/v/tabler.min.css">
 <style>
+@font-face{font-family:Orbitron;font-weight:500;font-display:swap;src:url(/studio/v/orbitron-latin-500-normal.woff2) format("woff2")}
+@font-face{font-family:Orbitron;font-weight:700;font-display:swap;src:url(/studio/v/orbitron-latin-700-normal.woff2) format("woff2")}
+@font-face{font-family:Rajdhani;font-weight:400;font-display:swap;src:url(/studio/v/rajdhani-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:Rajdhani;font-weight:500;font-display:swap;src:url(/studio/v/rajdhani-latin-500-normal.woff2) format("woff2")}
+@font-face{font-family:Rajdhani;font-weight:600;font-display:swap;src:url(/studio/v/rajdhani-latin-600-normal.woff2) format("woff2")}
+@font-face{font-family:Rajdhani;font-weight:700;font-display:swap;src:url(/studio/v/rajdhani-latin-700-normal.woff2) format("woff2")}
+
+/* "Holo glass": glass panels over deep space, cyan + violet (Connor's pick, 2026-11-25) */
 :root{
-  --bg:#0b1020; --bg2:#111a33; --panel:#151f3b; --panel2:#1b2648; --track:#26345e; --line:#22305a;
-  --text:#e8ecf8; --muted:#8d9ac0; --soft:#b8c3e6;
-  --accent:#7aa2ff; --accent2:#b28cff; --good:#5ee39a; --goodbg:#173d2a; --warn:#fbbf24; --warnbg:#3d3214;
-  --bad:#ff7a7a; --badbg:#4a1d24;
-  --font:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  --c:#5ce1ff; --v:#a78bfa; --good:#5eead4; --warn:#fbbf24; --bad:#fb7185;
+  --text:#e6f3ff; --muted:#9fb0d8; --soft:#c8d6ff; --line:rgba(255,255,255,.08);
+  --glass:rgba(255,255,255,.045); --glass2:rgba(255,255,255,.07); --edge:rgba(255,255,255,.11);
+  --hfont:Orbitron,"Segoe UI",sans-serif; --bfont:Rajdhani,"Segoe UI",system-ui,sans-serif;
+  --tblr-body-color:#e6f3ff; --tblr-body-bg:#060a18; --tblr-font-sans-serif:Rajdhani,"Segoe UI",system-ui,sans-serif;
 }
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{background:var(--bg);color:var(--text);font-family:var(--font);-webkit-font-smoothing:antialiased}
-body{min-height:100vh;background:linear-gradient(160deg,var(--bg),var(--bg2)) fixed}
+html,body{background:#060a18;color:var(--text);font-family:var(--bfont);font-size:15px;-webkit-font-smoothing:antialiased}
+body{min-height:100vh;
+  background:radial-gradient(circle at 15% 10%,rgba(92,225,255,.16),transparent 40%),radial-gradient(circle at 85% 30%,rgba(167,139,250,.18),transparent 45%),
+    radial-gradient(circle at 50% 100%,rgba(92,225,255,.1),transparent 50%),#060a18 fixed}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.07;z-index:0;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 66L0 50V16L28 0l28 16v34L28 66zm0 34V66' fill='none' stroke='%235ce1ff' stroke-width='1'/%3E%3C/svg%3E")}
 a{color:inherit}
-.wrap{max-width:1480px;margin:0 auto;padding:26px 32px 40px}
+.wrap{max-width:1560px;margin:0 auto;padding:22px 28px 34px;position:relative;z-index:1}
+.ico{width:1em;height:1em;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.125em;flex:none}
+
+/* panels */
+.panel{background:var(--glass);border:1px solid var(--edge);border-radius:18px;padding:16px 20px;min-width:0;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 10px 40px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.07)}
+.sec{font:700 11px var(--bfont);color:#b9c8ff;letter-spacing:.2em;text-transform:uppercase;margin:0 0 10px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.sec em{font-style:normal;text-transform:none;letter-spacing:0;font-weight:500;font-size:13px;color:var(--muted)}
 
 /* header */
 .top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:18px}
-.logo{font:800 26px var(--font);letter-spacing:-.01em;margin-right:8px}
-.logo span{color:var(--accent)} .logo small{font-weight:600;color:var(--muted);font-size:20px}
-.pill{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:20px;background:var(--panel2);font-size:14px;color:var(--soft)}
-.pill .d{width:9px;height:9px;border-radius:50%;background:var(--muted)}
-.pill.good{background:var(--goodbg);color:var(--good)} .pill.good .d{background:var(--good);animation:pulse 2s infinite}
-.pill.warn{background:var(--warnbg);color:var(--warn)} .pill.warn .d{background:var(--warn)}
-.pill.bad{background:var(--badbg);color:var(--bad)} .pill.bad .d{background:var(--bad)}
-.pill.off .d{background:#56607e}
+.logo{font:700 24px var(--hfont);letter-spacing:.08em;margin-right:6px;display:flex;align-items:center;gap:10px}
+.logo .ico{color:var(--c);font-size:26px}
+.logo .nm{background:linear-gradient(90deg,var(--c),var(--v));-webkit-background-clip:text;background-clip:text;color:transparent}
+.logo small{font:500 15px var(--bfont);color:var(--muted);letter-spacing:.18em;text-transform:uppercase}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;font-size:14px;font-weight:600;
+  background:rgba(167,139,250,.12);color:#d4c8ff;border:1px solid rgba(167,139,250,.3)}
+.pill .d{width:8px;height:8px;border-radius:50%;background:#7b84a8}
+.pill.good{background:rgba(94,234,212,.12);color:var(--good);border-color:rgba(94,234,212,.32)} .pill.good .d{background:var(--good);box-shadow:0 0 10px var(--good);animation:pulse 2s infinite}
+.pill.warn{background:rgba(251,191,36,.12);color:var(--warn);border-color:rgba(251,191,36,.32)} .pill.warn .d{background:var(--warn)}
+.pill.bad{background:rgba(251,113,133,.13);color:var(--bad);border-color:rgba(251,113,133,.35)} .pill.bad .d{background:var(--bad)}
 .sp{flex:1}
-.upd{font-size:12px;color:var(--muted)}
-@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(94,227,154,.6)}70%{box-shadow:0 0 0 9px rgba(94,227,154,0)}100%{box-shadow:0 0 0 0 rgba(94,227,154,0)}}
-
-/* stats */
-.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-bottom:18px}
-.st{background:var(--panel);border-radius:14px;padding:16px 20px;min-width:0}
-.st small{color:var(--muted);font-size:13px}
-.st b{display:block;font-size:30px;font-weight:700;margin-top:4px;letter-spacing:-.01em}
-.st i{font-style:normal;color:var(--muted);font-size:12px}
-.bar{height:8px;background:var(--line);border-radius:4px;margin-top:10px;overflow:hidden}
-.bar>span{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .8s}
-
-/* the line */
-.line{background:#121a33;border-radius:18px;padding:22px 20px 26px;margin-bottom:18px;position:relative}
-.line h3,.box h4{font-size:13px;font-weight:700;color:var(--muted);letter-spacing:1.2px;text-transform:uppercase}
-.line h3{margin-bottom:20px;display:flex;gap:12px;align-items:center}
-.line h3 em{font-style:normal;text-transform:none;letter-spacing:0;font-weight:500;color:var(--soft)}
-.scroll{overflow-x:auto;padding-bottom:4px}
-.stations{display:grid;grid-template-columns:repeat(9,minmax(120px,1fr));position:relative;min-width:1080px}
-.rail{position:absolute;left:5.5%;right:5.5%;top:27px;height:4px;background:var(--track);border-radius:2px;overflow:hidden}
-.rail>span{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--good),var(--accent));transition:width .8s}
-.rail>span:after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,rgba(255,255,255,.55) 0 10px,transparent 10px 28px);
-  animation:flow 1.1s linear infinite;opacity:.55}
-@keyframes flow{from{background-position:0 0}to{background-position:28px 0}}
-.sg{text-align:center;position:relative;padding:0 4px}
-.dot{width:58px;height:58px;border-radius:50%;margin:0 auto;background:var(--panel2);border:3px solid #2c3b6a;display:flex;align-items:center;justify-content:center;
-  font-size:24px;position:relative;transition:all .4s}
-.cnt{position:absolute;top:-6px;right:-10px;min-width:22px;height:22px;border-radius:11px;background:var(--accent);color:#0b1020;font-size:12px;font-weight:800;
-  display:flex;align-items:center;justify-content:center;padding:0 6px}
-.cnt.z{display:none}
-.sg.done .dot{background:var(--goodbg);border-color:#38c47a}
-.sg.now .dot{background:#2a3d8a;border-color:var(--accent);box-shadow:0 0 0 8px rgba(122,162,255,.16),0 0 30px var(--accent);animation:glow 2.4s ease-in-out infinite}
-.sg.failed .dot{background:var(--badbg);border-color:var(--bad)}
-@keyframes glow{50%{box-shadow:0 0 0 13px rgba(122,162,255,.08),0 0 44px var(--accent)}}
-.sg p{font-size:13px;margin-top:10px;color:var(--soft)} .sg.now p{color:#fff;font-weight:700}
-.cards{display:flex;flex-direction:column;gap:10px;align-items:center;margin-top:14px}
-.card{width:100%;max-width:168px;background:#1d2b55;border-radius:11px;padding:8px;font-size:12px;text-align:left;border:1px solid #3a4d8a;
-  animation:pop .5s ease;color:var(--soft)}
-.card.now{border-color:var(--accent);box-shadow:0 6px 24px rgba(122,162,255,.25)}
-.card.fail{border-color:var(--bad);background:#2c1a2a}
-.card.wait{border-color:var(--warn)}
-@keyframes pop{from{transform:translateY(8px) scale(.96);opacity:0}}
-.th{height:84px;border-radius:7px;margin-bottom:7px;display:flex;align-items:flex-end;padding:6px;font-weight:700;font-size:12px;color:#fff;line-height:1.25;
-  background-size:cover;background-position:center 30%;position:relative;overflow:hidden;text-shadow:0 1px 4px rgba(0,0,0,.6)}
-.th:before{content:"";position:absolute;inset:0;background:linear-gradient(transparent 40%,rgba(0,0,0,.55))}
-.th span{position:relative}
-.card b{color:#fff;font-weight:600}
-.card .t{color:var(--muted);font-size:11px;margin-top:3px}
-.card .why{font-size:11px;margin-top:5px;line-height:1.35}
-.card.fail .why{color:var(--bad)} .card.wait .why{color:var(--warn)}
-.prog{height:5px;background:var(--line);border-radius:3px;margin-top:7px;overflow:hidden;position:relative}
-.prog>i{position:absolute;top:0;bottom:0;width:40%;background:var(--accent);border-radius:3px;animation:slide 1.6s ease-in-out infinite}
-@keyframes slide{from{left:-40%}to{left:100%}}
-.more{font-size:12px;color:var(--muted)}
-.empty{margin-top:18px;padding:14px 18px;border-radius:12px;background:var(--panel);font-size:14px;color:var(--soft);display:none;gap:12px;align-items:center}
-.empty.show{display:flex}
-
-/* bottom */
-.bottom{display:grid;grid-template-columns:1.1fr 1.3fr .8fr;gap:16px}
-.box{background:var(--panel);border-radius:14px;padding:16px 20px;font-size:14px;min-width:0}
-.box h4{margin-bottom:10px}
-.row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);align-items:center}
-.row:last-child{border-bottom:0}
-.row .l{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row em{font-style:normal;color:var(--good);white-space:nowrap}
-.row em.bad{color:var(--bad)} .row em.warn{color:var(--warn)}
-.row .mini{width:30px;height:42px;border-radius:5px;flex:none;background-size:cover;background-position:center;margin-right:10px}
-.feed .row{justify-content:flex-start;align-items:flex-start}
-.feed .tm{color:var(--muted);font-variant-numeric:tabular-nums;flex:none;width:62px;font-size:13px;padding-top:1px}
-.feed .tx{min-width:0;line-height:1.4}
-.feed .k{width:8px;height:8px;border-radius:50%;flex:none;margin:7px 10px 0 0;background:var(--accent)}
-.feed .k.good{background:var(--good)} .feed .k.bad{background:var(--bad)} .feed .k.warn{background:var(--warn)}
-.none{color:var(--muted);font-size:13px;padding:8px 0}
-.err{display:none;margin-bottom:14px;padding:10px 14px;border-radius:10px;background:var(--badbg);color:var(--bad);font-size:13px}
+.upd{font-size:13px;color:var(--muted)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(94,234,212,.6)}70%{box-shadow:0 0 0 9px rgba(94,234,212,0)}100%{box-shadow:0 0 0 0 rgba(94,234,212,0)}}
+.err{display:none;margin-bottom:14px;padding:10px 14px;border-radius:12px;background:rgba(251,113,133,.14);border:1px solid rgba(251,113,133,.35);color:var(--bad);font-size:14px}
 .err.show{display:block}
 
-@media (max-width:1100px){.bottom{grid-template-columns:1fr 1fr}.bottom .box:last-child{grid-column:1/-1}}
+/* stat cards */
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-bottom:16px}
+.st{padding:14px 18px 10px;overflow:hidden}
+.st small{display:block;font-size:11px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+.st .v{display:flex;align-items:flex-end;justify-content:space-between;gap:8px}
+.st b{display:block;font:700 26px var(--hfont);margin-top:4px;background:linear-gradient(90deg,#fff,var(--c));-webkit-background-clip:text;background-clip:text;color:transparent}
+.st i{font-style:normal;color:var(--muted);font-size:13px}
+.spark{height:44px;margin:6px -8px -4px}
+.spark.off{display:none}
+.ring{width:118px;height:80px;margin:-12px -10px -8px 0;flex:none}
+
+/* the line */
+.line{margin-bottom:16px;padding:18px 20px 22px}
+.scroll{overflow-x:auto;padding-bottom:4px}
+.stations{display:grid;grid-template-columns:repeat(9,minmax(124px,1fr));position:relative;min-width:1120px;padding-top:8px}
+.rail{position:absolute;left:5.5%;right:5.5%;top:36px;height:4px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden}
+.rail>span{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--good),var(--c),var(--v));box-shadow:0 0 14px var(--c);transition:width .8s}
+.rail>span:after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,rgba(255,255,255,.6) 0 8px,transparent 8px 26px);animation:flow 1.2s linear infinite;opacity:.5}
+@keyframes flow{from{background-position:0 0}to{background-position:26px 0}}
+.sg{text-align:center;position:relative;padding:0 4px}
+.dot{width:58px;height:58px;border-radius:50%;margin:0 auto;display:flex;align-items:center;justify-content:center;font-size:26px;position:relative;
+  background:rgba(14,20,44,.85);border:1px solid rgba(255,255,255,.18);color:#c8d6ff;transition:all .4s}
+.cnt{position:absolute;top:-6px;right:-10px;min-width:21px;height:21px;border-radius:11px;background:linear-gradient(90deg,var(--c),var(--v));color:#060a18;
+  font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;padding:0 5px;font-family:var(--bfont)}
+.cnt.z{display:none}
+.sg.done .dot{background:rgba(20,60,60,.9);border-color:var(--good);color:var(--good)}
+.sg.now .dot{background:conic-gradient(from 0deg,rgba(92,225,255,.55),rgba(167,139,250,.55),rgba(92,225,255,.55));border-color:transparent;color:#fff;
+  box-shadow:0 0 30px rgba(92,225,255,.6);animation:glow 2.4s ease-in-out infinite}
+.sg.failed .dot{background:rgba(70,20,40,.9);border-color:var(--bad);color:var(--bad)}
+@keyframes glow{50%{box-shadow:0 0 46px rgba(92,225,255,.85)}}
+.sg p{font-size:14px;font-weight:600;margin:10px 0 0;color:var(--muted)} .sg.now p{color:#fff;font-weight:700}
+.cards{display:flex;flex-direction:column;gap:9px;align-items:center;margin-top:12px}
+.sc{width:100%;max-width:170px;padding:7px;font-size:13px;text-align:left;color:var(--soft);background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.12);border-radius:14px;animation:pop .5s ease}
+.sc.now{border-color:rgba(92,225,255,.6);box-shadow:0 8px 30px rgba(92,225,255,.2)}
+.sc.fail{border-color:var(--bad);background:rgba(251,113,133,.08)}
+.sc.wait{border-color:var(--warn)}
+@keyframes pop{from{transform:translateY(8px) scale(.96);opacity:0}}
+.th{height:82px;border-radius:10px;margin-bottom:7px;display:flex;align-items:flex-end;padding:6px;font-weight:700;font-size:13px;color:#fff;line-height:1.2;
+  background-size:cover;background-position:center 30%;position:relative;overflow:hidden;text-shadow:0 1px 4px rgba(0,0,0,.7)}
+.th:before{content:"";position:absolute;inset:0;background:linear-gradient(transparent 35%,rgba(0,0,0,.6))}
+.th span{position:relative}
+.sc b{color:#fff;font-weight:600}
+.sc .t{color:var(--muted);font-size:12px;margin-top:3px}
+.sc .why{font-size:12px;margin-top:4px;line-height:1.3}
+.sc.fail .why{color:var(--bad)} .sc.wait .why{color:var(--warn)}
+.prog{height:4px;background:rgba(255,255,255,.1);border-radius:2px;margin-top:6px;overflow:hidden;position:relative}
+.prog>i{position:absolute;top:0;bottom:0;width:40%;background:linear-gradient(90deg,var(--c),var(--v));border-radius:2px;animation:slide 1.6s ease-in-out infinite}
+@keyframes slide{from{left:-40%}to{left:100%}}
+.more{font-size:12px;color:var(--muted)}
+.idle{margin-top:16px;padding:12px 16px;border-radius:14px;background:var(--glass2);border:1px solid var(--edge);font-size:15px;color:var(--soft);display:none;gap:12px;align-items:center}
+.idle .ico{font-size:22px;color:var(--c)}
+.idle.show{display:flex}
+
+/* charts + lists */
+.grid2{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;margin-bottom:16px}
+.grid3{display:grid;grid-template-columns:1fr 1.15fr 1fr;gap:16px}
+.chart{height:250px}
+.note{color:var(--muted);font-size:14px;padding:10px 0}
+.li{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line);align-items:center;font-size:15px}
+.li:last-child{border-bottom:0}
+.li .l{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:none}
+.li .l:hover{color:var(--c)}
+.li em{font-style:normal;color:var(--c);white-space:nowrap;font-weight:700;font-variant-numeric:tabular-nums}
+.li em.bad{color:var(--bad)} .li em.warn{color:var(--warn)} .li em.ok{color:var(--good)}
+.li .mini{width:32px;height:48px;border-radius:8px;flex:none;background-size:cover;background-position:center;margin-right:10px}
+.feed .li{justify-content:flex-start;align-items:flex-start;border-bottom:0;padding:5px 0}
+.feed .tm{color:var(--muted);font-variant-numeric:tabular-nums;flex:none;width:62px;font-size:13px;padding-top:1px}
+.feed .tx{min-width:0;line-height:1.35}
+.feed .k{width:8px;height:8px;border-radius:50%;flex:none;margin:7px 10px 0 0;background:var(--c);box-shadow:0 0 8px var(--c)}
+.feed .k.good{background:var(--good);box-shadow:0 0 8px var(--good)} .feed .k.bad{background:var(--bad);box-shadow:0 0 8px var(--bad)}
+.feed .k.warn{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+.none{color:var(--muted);font-size:14px;padding:8px 0}
+.gauges{display:grid;grid-template-columns:repeat(3,1fr);margin:-4px 0 2px}
+.gauges>div{height:128px}
+.gauges:empty{display:none}
+.parts{margin-top:4px;font-size:13px;color:var(--muted)}
+.parts b{color:var(--soft);font-weight:600}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+@media (max-width:1100px){.grid2{grid-template-columns:1fr}.grid3{grid-template-columns:1fr 1fr}.grid3 .panel:last-child{grid-column:1/-1}.stats{grid-template-columns:1fr 1fr}}
 @media (max-width:760px){
-  .wrap{padding:18px 16px 30px}.stats{grid-template-columns:1fr 1fr}.bottom{grid-template-columns:1fr}
-  .logo{font-size:22px}
+  .wrap{padding:18px 16px 30px}.grid3{grid-template-columns:1fr}.stats{grid-template-columns:1fr}
+  .logo{font-size:20px}
   .stations{grid-template-columns:1fr;min-width:0;gap:12px}
   .rail{display:none}
   .sg{display:grid;grid-template-columns:70px 1fr;text-align:left;align-items:center;column-gap:8px}
@@ -123,7 +152,7 @@ a{color:inherit}
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="logo" id="logo">Your channel <small>· Studio</small></div>
+    <div class="logo"><svg class="ico" viewBox="0 0 24 24" data-i="atom"></svg><span id="logo"><span class="nm">Your channel</span></span><small>· Studio line</small></div>
     <div class="pill" id="run"><span class="d"></span><span>Loading…</span></div>
     <div class="pill" id="next">Next upload: …</div>
     <div class="sp"></div>
@@ -132,26 +161,33 @@ a{color:inherit}
   <div class="err" id="err"></div>
 
   <div class="stats">
-    <div class="st"><small>Subscribers</small><b id="s-subs">–</b><i id="s-subs-n"></i></div>
-    <div class="st"><small>Channel views</small><b id="s-views">–</b><i id="s-views-n"></i></div>
-    <div class="st"><small>Shorts live</small><b id="s-live">–</b><i id="s-live-n"></i></div>
-    <div class="st"><small>Partner Program progress</small><b id="s-ypp">–</b><div class="bar"><span id="s-ypp-bar" style="width:0"></span></div><i id="s-ypp-n"></i></div>
+    <div class="panel st"><small>Subscribers</small><b id="s-subs">–</b><i id="s-subs-n"></i><div class="spark off" id="sp-subs"></div></div>
+    <div class="panel st"><small>Channel views</small><b id="s-views">–</b><i id="s-views-n"></i><div class="spark off" id="sp-views"></div></div>
+    <div class="panel st"><small>Shorts live</small><b id="s-live">–</b><i id="s-live-n"></i><div class="spark off" id="sp-live"></div></div>
+    <div class="panel st"><small>Partner Program progress</small><div class="v"><div><b id="s-ypp">–</b><i id="s-ypp-n"></i></div><div class="ring" id="ypp-ring"></div></div></div>
   </div>
 
-  <div class="line">
-    <h3>Where each Short is right now <em id="line-sum"></em></h3>
+  <div class="panel line">
+    <h3 class="sec">Where each Short is right now <em id="line-sum"></em></h3>
     <div class="scroll"><div class="stations" id="stations"><div class="rail"><span id="rail" style="width:0"></span></div></div></div>
-    <div class="empty" id="empty"><span style="font-size:22px">☕</span><span id="empty-t"></span></div>
+    <div class="idle" id="idle"><svg class="ico" viewBox="0 0 24 24" data-i="coffee"></svg><span id="idle-t"></span></div>
   </div>
 
-  <div class="bottom">
-    <div class="box"><h4>Recently published</h4><div id="pub"></div></div>
-    <div class="box feed"><h4>What Jarvis did lately</h4><div id="feed"></div></div>
-    <div class="box"><h4>Health</h4><div id="health"></div></div>
-    <div class="box" id="time-box" style="display:none"><h4>Where the minutes go</h4><div id="timings"></div></div>
+  <div class="grid2">
+    <div class="panel"><h3 class="sec">Views and subscribers <em>last 14 days</em></h3>
+      <div class="chart" id="c-growth"></div><div class="note" id="growth-note" style="display:none"></div></div>
+    <div class="panel"><h3 class="sec">Where the minutes go <em id="time-sum"></em></h3>
+      <div class="chart" id="timings"></div><div class="parts" id="parts"></div><div class="note" id="time-note" style="display:none">This fills in after the first finished Short.</div></div>
+  </div>
+
+  <div class="grid3">
+    <div class="panel"><h3 class="sec">Recently published</h3><div id="pub"></div></div>
+    <div class="panel feed"><h3 class="sec">What Jarvis did lately</h3><div id="feed"></div></div>
+    <div class="panel"><h3 class="sec">Health</h3><div class="gauges" id="gauges"></div><div id="health"></div></div>
   </div>
 </div>
 
+<script src="/studio/v/echarts.min.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -176,6 +212,69 @@ function when(t){
 function feedTime(t, now){
   return (now - t) < 86400 ? clock(t) : new Date(t*1000).toLocaleDateString([], {weekday:"short"});
 }
+const mins = s => s >= 60 ? (s / 60).toFixed(1) + " min" : Math.round(s) + " s";
+
+// Tabler Icons (MIT), outline paths
+const ICONS = {
+  idea: '<path d="M3 12h1m8 -9v1m8 8h1m-15.4 -6.4l.7 .7m12.1 -.7l-.7 .7"/><path d="M9 16a5 5 0 1 1 6 0a3.5 3.5 0 0 0 -1 3a2 2 0 0 1 -4 0a3.5 3.5 0 0 0 -1 -3"/><path d="M9.7 17l4.6 0"/>',
+  script: '<path d="M20 17v-12c0 -1.121 -.879 -2 -2 -2s-2 .879 -2 2v12l2 2l2 -2"/><path d="M16 7h4"/><path d="M18 19h-13a2 2 0 1 1 0 -4h4a2 2 0 1 0 0 -4h-3"/>',
+  factcheck: '<path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"/><path d="M21 21l-6 -6"/>',
+  voice: '<path d="M9 5a3 3 0 0 1 3 -3a3 3 0 0 1 3 3v5a3 3 0 0 1 -3 3a3 3 0 0 1 -3 -3l0 -5"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M8 21l8 0"/><path d="M12 17l0 4"/>',
+  video: '<path d="M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12"/><path d="M8 4l0 16"/><path d="M16 4l0 16"/><path d="M4 8l4 0"/><path d="M4 16l4 0"/><path d="M4 12l16 0"/><path d="M16 8l4 0"/><path d="M16 16l4 0"/>',
+  qa: '<path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M9 12l2 2l4 -4"/>',
+  ready: '<path d="M12 3l8 4.5l0 9l-8 4.5l-8 -4.5l0 -9l8 -4.5"/><path d="M12 12l8 -4.5"/><path d="M12 12l0 9"/><path d="M12 12l-8 -4.5"/><path d="M16 5.25l-8 4.5"/>',
+  upload: '<path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2"/><path d="M7 9l5 -5l5 5"/><path d="M12 4l0 12"/>',
+  live: '<path d="M2 8a4 4 0 0 1 4 -4h12a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-12a4 4 0 0 1 -4 -4v-8"/><path d="M10 9l5 3l-5 3l0 -6"/>',
+  atom: '<path d="M9 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"/><path d="M12 21l0 .01"/><path d="M3 9l0 .01"/><path d="M21 9l0 .01"/><path d="M8 20.1a9 9 0 0 1 -5 -7.1"/><path d="M16 20.1a9 9 0 0 0 5 -7.1"/><path d="M6.2 5a9 9 0 0 1 11.4 0"/>',
+  coffee: '<path d="M3 14c.83 .642 2.077 1.017 3.5 1c1.423 .017 2.67 -.358 3.5 -1c.83 -.642 2.077 -1.017 3.5 -1c1.423 -.017 2.67 .358 3.5 1"/><path d="M8 3a2.4 2.4 0 0 0 -1 2a2.4 2.4 0 0 0 1 2"/><path d="M12 3a2.4 2.4 0 0 0 -1 2a2.4 2.4 0 0 0 1 2"/><path d="M3 10h14v5a6 6 0 0 1 -6 6h-2a6 6 0 0 1 -6 -6v-5"/><path d="M16.746 16.726a3 3 0 1 0 .252 -5.555"/>',
+};
+const svg = (k, fallback) => ICONS[k] ? `<svg class="ico" viewBox="0 0 24 24">${ICONS[k]}</svg>` : esc(fallback || "");
+document.querySelectorAll("svg[data-i]").forEach(el => { el.innerHTML = ICONS[el.dataset.i] || ""; });
+
+// ---------- charts (Apache ECharts, drawn only when their numbers change) ----------
+const EC = window.echarts || null;            // the page still works (text only) if the chart file is missing
+const COL = {c:"#5ce1ff", v:"#a78bfa", good:"#5eead4", warn:"#fbbf24", bad:"#fb7185", text:"#e6f3ff", muted:"#9fb0d8", grid:"rgba(255,255,255,.07)"};
+const charts = {}, drawn = {};
+function chart(id, option){
+  if (!EC || !$(id)) return;
+  try {
+    const key = JSON.stringify(option);
+    if (drawn[id] === key) return;
+    const first = !charts[id];
+    if (first) charts[id] = EC.init($(id), null, {renderer: "canvas"});
+    charts[id].setOption({animation: first, textStyle: {fontFamily: "Rajdhani, Segoe UI, sans-serif", color: COL.text}, ...option}, true);
+    drawn[id] = key;
+  } catch (e) { console.warn("chart " + id + ":", e); }     // a chart problem never blanks the page
+}
+function unchart(id){ if (charts[id]) { charts[id].dispose(); delete charts[id]; delete drawn[id]; } }
+window.addEventListener("resize", () => Object.values(charts).forEach(c => c.resize()));
+const fade = (col, a) => EC ? new EC.graphic.LinearGradient(0, 0, 0, 1, [{offset: 0, color: col + a}, {offset: 1, color: col + "00"}]) : col;
+const AX = {axisLine: {lineStyle: {color: COL.grid}}, axisTick: {show: false}, axisLabel: {color: COL.muted, fontSize: 12}, splitLine: {lineStyle: {color: COL.grid}}};
+
+function spark(id, vals){
+  const ok = vals.filter(v => v != null).length >= 2;
+  $(id).className = "spark" + (ok && EC ? "" : " off");
+  if (!ok) return unchart(id);
+  chart(id, {grid: {left: 0, right: 0, top: 4, bottom: 0}, xAxis: {type: "category", show: false, boundaryGap: false}, yAxis: {show: false, min: "dataMin"},
+    series: [{type: "line", data: vals, smooth: true, symbol: "none", connectNulls: true, lineStyle: {color: COL.c, width: 2, shadowColor: COL.c, shadowBlur: 8},
+      areaStyle: {color: fade(COL.c, "55")}}]});
+}
+function ring(id, pct, col){
+  chart(id, {series: [{type: "gauge", startAngle: 200, endAngle: -20, radius: "100%", center: ["50%", "70%"], min: 0, max: 100,
+    progress: {show: true, width: 8, roundCap: true, itemStyle: {color: col || COL.c, shadowColor: col || COL.c, shadowBlur: 10}},
+    axisLine: {roundCap: true, lineStyle: {width: 8, color: [[1, COL.grid]]}}, pointer: {show: false}, axisTick: {show: false},
+    splitLine: {show: false}, axisLabel: {show: false}, detail: {show: false}, data: [{value: Math.round(pct * 10) / 10}]}]});
+}
+function dial(id, name, pct, col, label){
+  chart(id, {series: [{type: "gauge", radius: "88%", center: ["50%", "56%"], startAngle: 220, endAngle: -40, min: 0, max: 100,
+    progress: {show: true, width: 8, roundCap: true, itemStyle: {color: col, shadowColor: col, shadowBlur: 12}},
+    axisLine: {roundCap: true, lineStyle: {width: 8, color: [[1, COL.grid]]}}, pointer: {show: false}, axisTick: {show: false},
+    splitLine: {show: false}, axisLabel: {show: false}, anchor: {show: false},
+    title: {offsetCenter: [0, "62%"], color: COL.muted, fontSize: 12}, detail: {offsetCenter: [0, "0%"], fontSize: 20, fontWeight: 700, color: COL.text,
+      fontFamily: "Orbitron, Segoe UI, sans-serif", formatter: () => label},
+    data: [{value: Math.round(pct), name}]}]});
+}
+const level = (p, warn, bad) => p >= bad ? COL.bad : p >= warn ? COL.warn : COL.good;
 
 let page = null, built = false, lastOk = 0;
 
@@ -184,15 +283,15 @@ function buildStations(st){
   st.forEach((s, i) => {
     const el = document.createElement("div");
     el.className = "sg"; el.id = "sg" + i;
-    el.innerHTML = `<div class="dot">${s.icon}<span class="cnt z" id="cnt${i}"></span></div><p>${esc(s.label)}</p><div class="cards" id="cards${i}"></div>`;
+    el.innerHTML = `<div class="dot">${svg(s.key, s.icon)}<span class="cnt z" id="cnt${i}"></span></div><p>${esc(s.label)}</p><div class="cards" id="cards${i}"></div>`;
     host.appendChild(el);
   });
   built = true;
 }
 
 function cardHtml(c, now, focus){
-  const th = c.thumb ? `background-image:linear-gradient(transparent,transparent),url(/studio/thumb/${c.id}.img)` : `background:${grad(c.id)}`;
-  let cls = "card", why = "", bar = "";
+  const th = c.thumb ? `background-image:url(/studio/thumb/${c.id}.img)` : `background:${grad(c.id)}`;
+  let cls = "sc", why = "", bar = "";
   if (c.failed) { cls += " fail"; why = `<div class="why">${esc(c.state === "rejected" ? "Turned down: " : "Stopped: ")}${esc(c.error || "see the log")}</div>`; }
   else if (c.waiting) { cls += " wait"; why = `<div class="why">Retrying at ${clock(c.waiting.until)}${c.waiting.why ? ": " + esc(c.waiting.why) : ""}</div>`; }
   else if (focus) { cls += " now"; }
@@ -217,6 +316,60 @@ function emptyReason(d){
   return "Nothing on the line this second. The next Short starts within a few minutes.";
 }
 
+function dayLabel(day, i){
+  const d = new Date(day + "T12:00:00");
+  return i === 0 || d.getDate() === 1 ? d.toLocaleDateString([], {month: "short", day: "numeric"}) : String(d.getDate());
+}
+
+function renderCharts(d){
+  const h = d.history || [];
+  spark("sp-subs", h.map(x => x.subs ?? null));
+  spark("sp-views", h.map(x => x.views ?? null));
+  spark("sp-live", h.map(x => x.live ?? null));
+
+  // views gained each day (from the daily total) + subscribers
+  const days = h.slice(1).map((x, i) => ({day: x.day, gain: x.views != null && h[i].views != null ? Math.max(0, x.views - h[i].views) : null, subs: x.subs}));
+  const enough = days.length >= 1 && EC;
+  $("c-growth").style.display = enough ? "" : "none";
+  $("growth-note").style.display = enough ? "none" : "";
+  if (!enough) {
+    unchart("c-growth");
+    $("growth-note").textContent = EC ? "This chart fills in once Jarvis has read the channel's numbers on two different days." : "Charts couldn't load.";
+  } else {
+    chart("c-growth", {
+      tooltip: {trigger: "axis", backgroundColor: "rgba(10,14,32,.94)", borderColor: COL.c, textStyle: {color: COL.text}},
+      legend: {right: 0, top: 0, textStyle: {color: COL.muted, fontSize: 13}, itemWidth: 12, itemHeight: 8},
+      grid: {left: 48, right: 44, top: 32, bottom: 26},
+      xAxis: {type: "category", data: days.map((x, i) => dayLabel(x.day, i)), ...AX, splitLine: {show: false}},
+      yAxis: [{type: "value", minInterval: 1, ...AX}, {type: "value", minInterval: 1, ...AX, splitLine: {show: false}}],
+      series: [
+        {name: "Views that day", type: "bar", data: days.map(x => x.gain), barMaxWidth: 34,
+          itemStyle: {borderRadius: [4, 4, 0, 0], color: EC ? new EC.graphic.LinearGradient(0, 0, 0, 1, [{offset: 0, color: COL.c}, {offset: 1, color: COL.v + "40"}]) : COL.c}},
+        {name: "Subscribers", type: "line", yAxisIndex: 1, data: days.map(x => x.subs ?? null), smooth: true, symbolSize: 6, connectNulls: true,
+          lineStyle: {color: COL.v, width: 2.5}, itemStyle: {color: COL.v}}]});
+  }
+
+  // where the minutes go
+  const tm = d.timings;
+  const showT = !!(tm && tm.stages && tm.stages.length);
+  $("time-sum").textContent = showT ? `per Short, last ${tm.shorts} · ${mins(tm.total)}` : "";
+  $("time-note").style.display = showT ? "none" : "";
+  $("timings").style.display = showT && EC ? "" : "none";
+  $("parts").innerHTML = showT && tm.parts.length ? "Slowest parts: " + tm.parts.map(([n, s]) => `${esc(n)} <b>${esc(mins(s))}</b>`).join(" · ") : "";
+  if (showT && EC) {
+    const st = tm.stages, top = st[0][1];
+    $("timings").style.height = Math.max(150, st.length * 32 + 20) + "px";
+    chart("timings", {
+      tooltip: {trigger: "item", formatter: p => esc(p.name) + ": " + mins(p.value * 60)},
+      grid: {left: 16, right: 64, top: 6, bottom: 4, containLabel: true},
+      xAxis: {type: "value", show: false}, yAxis: {type: "category", inverse: true, data: st.map(x => x[0]), ...AX, axisLine: {show: false}, axisLabel: {color: COL.text, fontSize: 13}},
+      series: [{type: "bar", barWidth: 14, showBackground: true, backgroundStyle: {color: COL.grid, borderRadius: 7}, itemStyle: {borderRadius: 7},
+        data: st.map(([n, s], i) => ({value: Math.round(s / 6) / 10, itemStyle: {color: s === top && top > 0 ? COL.warn : [COL.c, "#79cdfd", "#8fb9fc", "#9aa8fb", "#a39afa", COL.v, COL.v][Math.min(i, 6)]}})),
+        label: {show: true, position: "right", color: COL.muted, fontSize: 12, formatter: p => mins(p.value * 60)}}]});
+    charts["timings"] && charts["timings"].resize();
+  } else unchart("timings");
+}
+
 function render(d){
   if (page !== null && d.page && d.page !== page) { location.reload(); return; }
   page = d.page;
@@ -224,8 +377,7 @@ function render(d){
   const now = d.now;
 
   // header
-  $("logo").innerHTML = (() => { const t = d.channel.title || "Your channel"; const m = t.match(/^([A-Z][a-z]+)([A-Z].*)$/);
-    return (m ? `${esc(m[1])}<span>${esc(m[2])}</span>` : esc(t)) + " <small>· Studio</small>"; })();
+  $("logo").innerHTML = `<span class="nm">${esc(d.channel.title || "Your channel")}</span>`;
   document.title = (d.channel.title || "YouTube") + " · Studio";
   const run = $("run"); run.className = "pill " + d.run.level; run.lastElementChild.textContent = d.run.text;
   $("next").textContent = d.next_upload.t ? "Next upload: " + when(d.next_upload.t) : "Next upload: " + (d.next_upload.text || "–");
@@ -233,7 +385,7 @@ function render(d){
   // stats
   const s = d.stats;
   $("s-subs").textContent = s.subscribers == null ? "–" : Number(s.subscribers).toLocaleString();
-  $("s-subs-n").textContent = s.fetched ? "as of " + feedTime(s.fetched, now) + (now - s.fetched < 86400 ? "" : "") : "not read from YouTube yet";
+  $("s-subs-n").textContent = s.fetched ? "as of " + feedTime(s.fetched, now) : "not read from YouTube yet";
   $("s-views").textContent = num(s.views == null ? null : +s.views);
   $("s-views-n").textContent = s.fetched ? "all time" : "";
   $("s-live").textContent = d.live_count;
@@ -242,10 +394,12 @@ function render(d){
   if (s.ypp && s.ypp.share != null) {
     const pct = s.ypp.share * 100;
     $("s-ypp").textContent = (pct < 10 ? pct.toFixed(1) : Math.round(pct)) + "%";
-    $("s-ypp-bar").style.width = Math.max(1, pct) + "%";
+    $("ypp-ring").style.display = "";
+    ring("ypp-ring", Math.max(1, Math.min(100, pct)));
     const r = s.ypp.rules, v = r.shorts_views_90d;
     $("s-ypp-n").textContent = v && v.have != null ? `${num(v.have)} of ${num(v.need)} Shorts views` + (s.ypp.estimate ? " (estimate)" : "") : "";
-  } else { $("s-ypp").textContent = "–"; $("s-ypp-n").textContent = "checked once Shorts are public"; }
+  } else { $("s-ypp").textContent = "–"; $("s-ypp-n").textContent = "checked once Shorts are public";
+    unchart("ypp-ring"); $("ypp-ring").style.display = "none"; }
 
   // the line: which Short is "the one being made" (newest active, not failed)
   const active = d.cards.filter(c => !c.failed && c.station <= 5);
@@ -263,7 +417,7 @@ function render(d){
     const shown = here.slice(-2);
     let html = shown.map(c => cardHtml(c, now, focus && c.id === focus.id)).join("");
     if (here.length > 2) html += `<div class="more">+${here.length - 2} more</div>`;
-    if (i === 8) html = d.published.slice(0, 1).map(p => `<div class="card"><div class="th" style="${p.thumb ? `background-image:url(/studio/thumb/${p.id}.img)` : `background:${grad(p.id)}`}"><span>${esc(p.title)}</span></div><b>${p.views == null ? "Live" : num(p.views) + " views"}</b><div class="t">Latest upload</div></div>`).join("");
+    if (i === 8) html = d.published.slice(0, 1).map(p => `<div class="sc"><div class="th" style="${p.thumb ? `background-image:url(/studio/thumb/${p.id}.img)` : `background:${grad(p.id)}`}"><span>${esc(p.title)}</span></div><b>${p.views == null ? "Live" : num(p.views) + " views"}</b><div class="t">Latest upload</div></div>`).join("");
     const box = $("cards" + i);
     if (box.dataset.h !== html) { box.innerHTML = html; box.dataset.h = html; }
   });
@@ -272,51 +426,54 @@ function render(d){
   const making = d.cards.filter(c => !c.failed && c.station <= 5).length;
   $("line-sum").textContent = making ? `${making} being made · ${d.autopilot.ready} ready` : d.autopilot.ready ? `${d.autopilot.ready} ready` : "";
   const empty = !focus;
-  $("empty").className = "empty" + (empty ? " show" : "");
-  if (empty) $("empty-t").textContent = emptyReason(d);
+  $("idle").className = "idle" + (empty ? " show" : "");
+  if (empty) $("idle-t").textContent = emptyReason(d);
 
   // recently published
   $("pub").innerHTML = d.published.length ? d.published.slice(0, 5).map(p =>
-    `<div class="row"><span style="display:flex;align-items:center;min-width:0"><span class="mini" style="${p.thumb ? `background-image:url(/studio/thumb/${p.id}.img)` : `background:${grad(p.id)}`}"></span>` +
-    `<a class="l" href="https://youtube.com/shorts/${esc(p.youtube_id)}" target="_blank" rel="noopener" style="text-decoration:none">${esc(p.title)}</a></span>` +
+    `<div class="li"><span style="display:flex;align-items:center;min-width:0"><span class="mini" style="${p.thumb ? `background-image:url(/studio/thumb/${p.id}.img)` : `background:${grad(p.id)}`}"></span>` +
+    `<a class="l" href="https://youtube.com/shorts/${esc(p.youtube_id)}" target="_blank" rel="noopener">${esc(p.title)}</a></span>` +
     `<em class="${p.privacy === "public" ? "" : "warn"}">${p.privacy !== "public" ? esc(p.privacy || "") : p.views == null ? "new" : num(p.views) + " views"}</em></div>`).join("")
     : `<div class="none">Nothing published yet. The first Short will show up here.</div>`;
 
   // activity
-  $("feed").innerHTML = d.activity.length ? d.activity.slice(0, 7).map(e =>
-    `<div class="row"><span class="tm">${feedTime(e.t, now)}</span><span class="k ${e.kind}"></span><span class="tx">${esc(e.text)}</span></div>`).join("")
+  $("feed").innerHTML = d.activity.length ? d.activity.slice(0, 8).map(e =>
+    `<div class="li"><span class="tm">${feedTime(e.t, now)}</span><span class="k ${e.kind}"></span><span class="tx">${esc(e.text)}</span></div>`).join("")
     : `<div class="none">No activity in the last few days.</div>`;
 
-  // health
+  // health: dials for the PC's busy parts, then the rest as rows
   const a = d.autopilot, fs = a.failure_streak, stop = d.stop_after;
+  const hw = d.hardware || {};
+  const dials = [];
+  if (hw.gpu && (hw.gpu.util != null || hw.gpu.total_gb)) {
+    const p = hw.gpu.util != null ? +hw.gpu.util : 100 * hw.gpu.used_gb / hw.gpu.total_gb;
+    dials.push(["g-gpu", "Graphics card", p, hw.gpu.temp_c >= 85 ? COL.bad : hw.gpu.temp_c >= 78 ? COL.warn : level(p, 97, 101), Math.round(p) + "%"]); }
+  if (hw.load != null) { const p = Math.min(100, hw.load * 100); dials.push(["g-cpu", "Processor", p, level(p, 90, 98), Math.round(p) + "%"]); }
+  if (hw.memory != null) { const p = hw.memory * 100; dials.push(["g-ram", "Memory", p, level(p, 90, 96), Math.round(p) + "%"]); }
+  const want = dials.map(x => x[0]).join(",");
+  if ($("gauges").dataset.ids !== want) {
+    ["g-gpu", "g-cpu", "g-ram"].forEach(unchart);
+    $("gauges").innerHTML = dials.map(x => `<div id="${x[0]}"></div>`).join("");
+    $("gauges").dataset.ids = want;
+  }
+  try { if (EC) dials.forEach(x => dial(...x)); else $("gauges").innerHTML = ""; } catch (e) { console.warn("dials:", e); }
+
   const rows = [
-    ["Failures in a row", `${fs} of ${stop}`, fs === 0 ? "" : fs >= stop - 1 ? "bad" : "warn"],
+    ["Failures in a row", `${fs} of ${stop}`, fs === 0 ? "ok" : fs >= stop - 1 ? "bad" : "warn"],
     ["Started today", `${a.started_today} of ${a.max_per_day}`, ""],
     ["Waiting to upload", `${a.ready} of ${a.buffer}`, ""],
-    ["Upload mode", {manual: "You upload", private: "Private", public: "Public"}[d.mode] || d.mode, d.mode === "public" ? "" : "warn"],
-    ["Running cost", "$" + Math.round(d.cost_usd || 0), (d.cost_usd || 0) > 0 ? "bad" : ""],
+    ["Upload mode", {manual: "You upload", private: "Private", public: "Public"}[d.mode] || d.mode, d.mode === "public" ? "ok" : "warn"],
+    ["Running cost", "$" + Math.round(d.cost_usd || 0), (d.cost_usd || 0) > 0 ? "bad" : "ok"],
   ];
-  const hw = d.hardware || {};
   if (hw.gpu) rows.push(["Graphics card", `${hw.gpu.used_gb} of ${hw.gpu.total_gb} GB` +
       (hw.gpu.temp_c != null ? ` · ${Math.round(hw.gpu.temp_c)}°C` : ""), hw.gpu.temp_c >= 85 ? "bad" : hw.gpu.temp_c >= 78 ? "warn" : ""]);
-  if (hw.load != null) rows.push(["Processor", Math.round(hw.load * 100) + "% busy", hw.load > 0.9 ? "warn" : ""]);
-  if (hw.memory != null) rows.push(["Memory", Math.round(hw.memory * 100) + "% used", hw.memory > 0.9 ? "warn" : ""]);
   for (const [k, v] of Object.entries(hw.drives || {}))
-    rows.push([k.length === 1 ? `Drive ${k}: free` : "Disk free", v + " GB", v < 10 ? "bad" : v < 25 ? "warn" : ""]);
+    rows.push([k.length === 1 ? `Drive ${k}: free` : "Disk free", v + " GB", v < 10 ? "bad" : v < 25 ? "warn" : "ok"]);
   if (d.backup) rows.push(["Last backup", d.backup.hours_ago == null ? "none yet" : d.backup.hours_ago < 1 ? "under an hour ago" :
-      Math.round(d.backup.hours_ago) + " h ago", d.backup.hours_ago == null || d.backup.hours_ago > 36 ? "warn" : ""]);
-  $("health").innerHTML = rows.map(r => `<div class="row"><span>${r[0]}</span><em class="${r[2]}">${esc(r[1])}</em></div>`).join("");
+      Math.round(d.backup.hours_ago) + " h ago", d.backup.hours_ago == null || d.backup.hours_ago > 36 ? "warn" : "ok"]);
+  $("health").innerHTML = rows.map(r => `<div class="li"><span>${r[0]}</span><em class="${r[2]}">${esc(r[1])}</em></div>`).join("");
 
-  const tm = d.timings;
-  $("time-box").style.display = tm ? "" : "none";
-  if (tm) {
-    const mins = s => s >= 60 ? (s / 60).toFixed(1) + " min" : Math.round(s) + " s";
-    const top = tm.stages.length ? tm.stages[0][1] : 0;
-    $("timings").innerHTML = `<div class="row"><span>Per Short (last ${tm.shorts})</span><em>${esc(mins(tm.total))}</em></div>` +
-      tm.stages.map(([n, s]) => `<div class="row"><span>${esc(n)}</span><em class="${s === top && top > 0 ? "warn" : ""}">${esc(mins(s))}</em></div>`).join("") +
-      (tm.parts.length ? `<div class="row"><span style="opacity:.7">Slowest parts</span><em></em></div>` +
-        tm.parts.map(([n, s]) => `<div class="row"><span style="opacity:.8">· ${esc(n)}</span><em>${esc(mins(s))}</em></div>`).join("") : "");
-  }
+  try { renderCharts(d); } catch (e) { console.warn("charts:", e); }      // a chart problem never blanks the page
   $("upd").textContent = "Live · updated " + clock(now);
 }
 
