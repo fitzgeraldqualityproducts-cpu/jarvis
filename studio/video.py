@@ -237,7 +237,11 @@ change what the viewer sees about every 1.5-2 seconds of narration (a line of un
 words 2, longer 3), each {"art": 5-12 words for the picture, "camera": one of push-in, pull-out, pan-left,
 pan-right, close-up, tilt-up, "shows": what it shows, under 8 words}. Shots in one scene are the same moment from
 a new angle or closer, never a different subject. "transition" into the scene: cut, fade or zoom. "sfx": whoosh,
-pop, tick, rise or none (only where it marks something: a reveal, a number landing, a new idea).
+pop, tick, rise or none (only where it marks something: a reveal, a number landing, a new idea). "real": when
+the line is about one specific, named real thing a camera has photographed (an aircraft like "X-59", a
+spacecraft, a telescope, a planet, a landmark), its exact name, so a real photo can be used; else "".
+When the scene type draws a diagram (compare, scale, equation, steps, wave, measure), the card sits in the
+middle of the screen: keep the picture's subject in the top third, with open sky, ground or water below it.
 Honesty: AI pictures show places and objects. Never a staged "experiment result", a measurement reading, a
 chart or a lab photo, as if it were recorded evidence. A demonstration or measurement is drawn as a diagram
 (the scene "type"), never faked as a photo."""
@@ -261,7 +265,7 @@ Lines:
 """ + "\n".join(f"{i + 1}. {t}  (note: {st['lines'][i].get('visual', '')})" for i, t in enumerate(lines)) + \
         ('\n\nJSON object: {"subject": "the main subject", "story": "what the viewer sees from start to finish, in '
          'two sentences", "scenes": [exactly one object per line, in order, e.g. {"type": "headline", "text": "...", '
-         '"art": "...", "footage": "...", "purpose": "...", "shots": [{"art": "...", "camera": "push-in", '
+         '"art": "...", "footage": "...", "real": "", "purpose": "...", "shots": [{"art": "...", "camera": "push-in", '
          '"shows": "..."}], "transition": "cut", "sfx": "none"}]}' if story else
          '\n\nJSON array with exactly one object per line, in order, e.g. [{"type": "headline", "text": "..."}]')
     scenes = []
@@ -308,6 +312,11 @@ def board_fields(sc, src, line):
     src = src if isinstance(src, dict) else {}
     sc = dict(sc)
     sc["purpose"] = " ".join(str(src.get("purpose") or sc.get("purpose") or "").split())[:80]
+    real = " ".join(str(src.get("real") or sc.get("real") or "").split())[:40]
+    if real:
+        sc["real"] = real                    # a specific real thing: a real photo is looked for (footage.photo)
+    else:
+        sc.pop("real", None)
     shots = []
     for sh in (src.get("shots") or sc.get("shots") or [])[:3]:
         if isinstance(sh, dict) and str(sh.get("art") or "").strip():
@@ -604,28 +613,54 @@ def _black(size):
     return _font(size, True)
 
 
+MIN_GROUP = 3            # a caption group never leaves 1-2 words on their own (when the line has words to spare)
+
+
 def _even_groups(d, f, words, idx):
     """idx split into the fewest near-equal groups of at most BOLD_WORDS that fit two caption lines, each break
-    moved by a word where that lands it right after punctuation (so a phrase stays together)."""
+    moved by a word where that lands it right after punctuation (so a phrase stays together), and no group of
+    only 1-2 words when the line is long enough to avoid it."""
     if not idx:
         return []
-    for n in range(max(1, math.ceil(len(idx) / BOLD_WORDS)), len(idx) + 1):
-        cuts, prev = [], 0
-        for c in range(1, n):
-            b = round(c * len(idx) / n)
-            for cand in (b, b - 1, b + 1):
-                if prev < cand < len(idx) and re.search(r"[.,;:!?]$", words[idx[cand - 1]]["w"]):
-                    b = cand
-                    break
-            b = max(prev + 1, min(b, len(idx) - (n - c)))
-            cuts.append(b)
-            prev = b
-        bounds = [0] + cuts + [len(idx)]
-        groups = [idx[a:b] for a, b in zip(bounds, bounds[1:]) if b > a]
-        if all(len(g) <= BOLD_WORDS + 1 and
-               len(_wrap(d, " ".join(words[j]["w"] for j in g), f, BOLD_CAPTION["width"])) <= 2 for g in groups):
-            return groups
+    least = MIN_GROUP if len(idx) >= 2 * MIN_GROUP else 1
+    for strict in (True, False):
+        for n in range(max(1, math.ceil(len(idx) / BOLD_WORDS)), len(idx) + 1):
+            if strict and n * least > len(idx):
+                break
+            cuts, prev = [], 0
+            for c in range(1, n):
+                b = round(c * len(idx) / n)
+                for cand in (b, b - 1, b + 1):
+                    ok = not strict or (cand - prev >= least and len(idx) - cand >= least * (n - c))
+                    if ok and prev < cand < len(idx) and re.search(r"[.,;:!?]$", words[idx[cand - 1]]["w"]):
+                        b = cand
+                        break
+                b = max(prev + 1, min(b, len(idx) - (n - c)))
+                cuts.append(b)
+                prev = b
+            bounds = [0] + cuts + [len(idx)]
+            groups = [idx[a:b] for a, b in zip(bounds, bounds[1:]) if b > a]
+            if strict and any(len(g) < least for g in groups):
+                continue
+            if all(len(g) <= BOLD_WORDS + 1 and
+                   len(_wrap(d, " ".join(words[j]["w"] for j in g), f, BOLD_CAPTION["width"])) <= 2 for g in groups):
+                return groups
     return [[i] for i in idx]
+
+
+def phrase_marks(lines, words, starts):
+    """{scene: [seconds into the scene where each later caption phrase starts]}, so storyboard shots can cut
+    exactly when the caption changes (never in the middle of a phrase)."""
+    from PIL import Image, ImageDraw
+    d = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    f = _black(BOLD_CAPTION["size"])
+    out = {}
+    for k in range(1, len(lines)):
+        s0, s1 = starts[k], starts[k + 1]
+        idx = [i for i, w in enumerate(words) if s0 <= float(w["s"] or 0) < s1]
+        groups = _even_groups(d, f, words, idx)
+        out[k] = [round(float(words[g[0]]["s"]) - s0, 3) for g in groups[1:]]
+    return out
 
 
 def _bold_caption_props(lines, words, starts, beats=None):
@@ -850,12 +885,58 @@ MOVE_WORKERS = 3          # camera moves drawn at once (the processor has 8 thre
 SHOT_CUT = 0.12          # a new shot fades in over this many seconds
 
 
-def shot_times(span, n):
-    """Where each of n shots starts inside a scene of span seconds (equal parts; the first at 0)."""
-    return [round(span * j / n, 3) for j in range(n)]
+def footage_mod_photos_on():
+    from studio import footage
+    return footage.photos_on()
 
 
-def _depth_moves(raws, enh, starts, folder, pal, used, scenes=None, shot_raws=None, shot_enh=None):
+def _real_photos(video_id, scenes, raws, used):
+    """Swaps in a real NASA photo (whole, framed) for every scene whose storyboard names a specific real thing,
+    so an AI picture never stands in for it. {scene: photo info}. Scenes without a photo keep their picture."""
+    from studio import art, engines, footage
+    folder = engines.outputs_dir("videos", str(video_id), "photos")
+    got, missing, seen = {}, [], set()
+    for k, sc in enumerate(scenes):
+        name = sc.get("real") if isinstance(sc, dict) else None
+        if not name or k not in raws:
+            continue
+        path, info = footage.photo(name, folder, used=seen)
+        if not path:
+            missing.append(name)
+            continue
+        seen.add(info["id"])
+        out = folder / f"framed_{k + 1:02d}_{info['id']}.png"
+        try:
+            art.framed_photo(path, out)
+        except Exception:
+            missing.append(name)
+            continue
+        raws[k] = out
+        got[k] = info
+        if isinstance(sc.get("shots"), list) and len(sc["shots"]) > 1:
+            sc["shots"] = sc["shots"][:1]              # no AI shots of a real thing: the photo holds the scene
+    if got or missing:
+        used["photos"] = (f"NASA photos: {len(got)} scene(s)" if got else "NASA photos: none") + \
+            (f"; none found for {', '.join(sorted(set(missing)))[:120]}" if missing else "")
+    return got
+
+
+SNAP = 0.8               # a shot cut moves up to this far to land where the caption phrase changes
+
+
+def shot_times(span, n, marks=None):
+    """Where each of n shots starts inside a scene of span seconds: equal parts (the first at 0), each cut moved to
+    the nearest caption phrase start within SNAP seconds (marks), keeping every shot at least 1 s long."""
+    at = [round(span * j / n, 3) for j in range(n)]
+    for j in range(1, n):
+        near = [m for m in marks or [] if abs(m - at[j]) <= SNAP and m - at[j - 1] >= 1.0 and
+                (j + 1 >= n or at[j + 1] - m >= 1.0) and span - m >= 1.0]
+        if near:
+            at[j] = round(min(near, key=lambda m: abs(m - at[j])), 3)
+    return at
+
+
+def _depth_moves(raws, enh, starts, folder, pal, used, scenes=None, shot_raws=None, shot_enh=None, marks=None):
     """{scene: {"video", "kind", "shots"?}}: a camera move through each picture that has a depth map
     (studio/motion.py). A scene with extra storyboard shots gets a move per shot, each over its part of the scene,
     with the storyboard's camera; "shots" lists [{"at", "video"}] for the 2nd and 3rd."""
@@ -871,7 +952,7 @@ def _depth_moves(raws, enh, starts, folder, pal, used, scenes=None, shot_raws=No
         extra = [j for j in range(1, len(shots)) if (k, j) in shot_raws and shot_enh.get((k, j), {}).get("depth")]
         span = starts[k + 1] - starts[k]
         n = 1 + len(extra)
-        at = shot_times(span, n)
+        at = shot_times(span, n, (marks or {}).get(k))
         cams = [shots[0].get("camera") if shots else None] + [shots[j].get("camera") for j in extra]
         parts = [(0, rp, enh[k], cams[0])] + [(j, shot_raws[(k, j)], shot_enh[(k, j)], cams[m + 1])
                                               for m, j in enumerate(extra)]
@@ -913,6 +994,10 @@ def _depth_moves(raws, enh, starts, folder, pal, used, scenes=None, shot_raws=No
     return out
 
 
+FOOTAGE_FLOOR = 0.25     # a clip scoring under this (OpenCLIP, its middle frame vs its line) isn't used: Short 16's
+                         # mismatched clips scored 0.20-0.26; the scene keeps its own picture or diagram instead
+
+
 def _footage_fits(scenes, got, folder, report=None):
     """Keeps the footage clips whose middle frame OpenCLIP says shows what the scene is about (its search and its
     planned picture). Returns (kept, dropped scene numbers). Not checked (kept) when OpenCLIP can't run."""
@@ -936,7 +1021,7 @@ def _footage_fits(scenes, got, folder, report=None):
         sims = art.clip_scores(frames, texts)
     except Exception:
         return got, []
-    floor = art._cfg_num("footage_fit_floor", art.FIT_FLOOR)
+    floor = art._cfg_num("footage_fit_floor", FOOTAGE_FLOOR)
     if report is not None:
         report.update({g[0] + 1: round(float(sims[i][i]), 3) for i, g in enumerate(got)})
     keep = [g for i, g in enumerate(got) if float(sims[i][i]) >= floor]
@@ -1032,7 +1117,7 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     pal = palette()
     handle = (db.one("SELECT handle FROM channel WHERE id=1") or {"handle": ""})["handle"] or ""
     look = eng.get("look", "diagram")
-    bgs, bg_paths, raws, enh = {}, {}, {}, {}
+    bgs, bg_paths, raws, enh, photos = {}, {}, {}, {}, {}
     shot_raws, shot_enh = {}, {}                             # (scene, shot) -> extra storyboard shots
     if eng["images"] == "sdxl" or look == "hud":
         progress("Painting a picture for every scene (SDXL-Turbo)")
@@ -1048,6 +1133,8 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                     used["fit_scores"] = ", ".join(f"scene {k} {v:.2f}" for k, v in sorted(fitrep["scores"].items()))
                 except Exception as e:
                     used["fit"] = f"not checked ({str(e)[:160]})"
+            if raws and footage_mod_photos_on():
+                photos = _real_photos(video_id, scenes, raws, used)
             sharpen, depth = eng["sharpen"] == "esrgan", eng["motion"] == "depth" and look == "hud"
             if raws and depth and art.shots_on() and any(isinstance(sc, dict) and len(sc.get("shots") or []) > 1
                                                          for sc in scenes):
@@ -1085,9 +1172,15 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     progress("Drawing the scenes")
     imgs, boxes, stills = [], [], []
     if record:
-        db.run("DELETE FROM assets WHERE video_id=? AND origin='generated'", video_id)
-        from studio import art
+        db.run("DELETE FROM assets WHERE video_id=? AND (origin='generated' OR kind='photo:scene')", video_id)
+        from studio import art, footage as _fm
         for k, bp in bg_paths.items():
+            if k in photos:
+                ph = photos[k]
+                db.insert("INSERT INTO assets(video_id, kind, path, origin, source_url, license, attribution, sha256, "
+                          "created) VALUES(?,?,?,?,?,?,?,?,?)", video_id, "photo:scene", str(bp), "stock", ph["page"],
+                          _fm.LICENCES["nasa"], f"Photo: NASA ({ph['title'][:80]})", _sha(bp), time.time())
+                continue
             db.insert("INSERT INTO assets(video_id, kind, path, origin, source_url, license, attribution, sha256, created) "
                       "VALUES(?,?,?,?,?,?,?,?,?)", video_id, "art:scene", str(bp), "generated", None, art.LICENCE,
                       art.prompt(scenes[k], lines[k] if k < len(lines) else "", look)[:300], _sha(bp), time.time())
@@ -1153,7 +1246,7 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
         if look == "hud" and eng["compose"] == "remotion" and eng["motion"] == "depth":
             with timings.step("camera moves (depth)"):
                 moves.update({k: v for k, v in _depth_moves(raws, enh, starts, folder, pal, used, scenes, shot_raws,
-                                                            shot_enh).items() if k not in moves})
+                                                            shot_enh, phrase_marks(lines, words, starts)).items() if k not in moves})
     finally:
         if worker:
             worker.join()
@@ -1367,6 +1460,14 @@ def metadata(video_id):
         stock_line = f"Some scenes are stock footage from {where}" + (" (" + "; ".join(credits[:4]) + ")" if credits else "") + "."
         if "NASA" in libs:
             stock_line += " NASA does not endorse this channel."
+    photo_credits = [r["attribution"] for r in db.q("SELECT DISTINCT attribution FROM assets WHERE video_id=? AND "
+                                                    "kind='photo:scene'", video_id) if r["attribution"]]
+    photo_line = ("Some pictures are real NASA photos (" + "; ".join(photo_credits[:3]) + "). NASA does not endorse "
+                  "this channel.") if photo_credits else ""
+    if photo_line and stock:
+        stock_line += " " + photo_line
+    elif photo_line:
+        stock, stock_line = True, photo_line
     if ai_pictures or ai_music or stock:          # said plainly, before the hashtags
         pics = ("The other pictures are AI-generated illustrations." if stock else
                 "The pictures are AI-generated illustrations, not real footage.") if ai_pictures else ""

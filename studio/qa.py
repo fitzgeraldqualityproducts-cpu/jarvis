@@ -157,7 +157,7 @@ def check(video_id):
     vm = visual_mode()
     if vm != "off":
         still = still_stretches(path)
-        pics = [a["path"] for a in db.q("SELECT path FROM assets WHERE video_id=? AND kind='art:scene' ORDER BY id",
+        pics = [a["path"] for a in db.q("SELECT path FROM assets WHERE video_id=? AND kind IN ('art:scene', 'photo:scene') ORDER BY id",
                                          video_id)]
         same = repeated_pictures(pics)
         found = ([f"picture stands still for {s} s at {t} s" for t, s in still[:3]] +

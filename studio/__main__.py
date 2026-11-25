@@ -98,10 +98,12 @@ def _new_looks(argv):
     """--new-looks: switches the looks that wait for Connor's OK on for this run only (config untouched)."""
     if "--new-looks" not in argv:
         return False
-    from studio import art, video
+    from studio import art, footage, video
     art.shots_on = lambda: True
     video.type_style = lambda: "bold"
-    print("New looks on for this run only: storyboard shots, wave/ruler diagrams, bold captions.")
+    footage.photos_on = lambda: True
+    print("New looks on for this run only: storyboard shots, wave/ruler diagrams, bold captions, real NASA photos "
+          "of named things.")
     return True
 
 
