@@ -317,6 +317,25 @@ def nasa_photo_candidates(answer, name, used=()):
     return out
 
 
+def photo_problem(path):
+    """Why a downloaded photo can't be shown, or "": a long survey strip (an orbiter's map swath, the Short 17
+    Olympus Mons picture), a tiny file, or one with wide black margins (a tilted map tile or scan)."""
+    try:
+        import numpy as np
+        from PIL import Image
+        with Image.open(path) as im:
+            w, h = im.size
+            if min(w, h) < 400:
+                return f"too small ({w}x{h})"
+            if max(w, h) / min(w, h) > 2.2:
+                return f"a long strip ({w}x{h})"
+            g = np.asarray(im.convert("L").resize((96, 96)), dtype=np.float32)
+        dark = float((g < 12).mean())
+        return f"{dark:.0%} black margins" if dark > 0.15 else ""
+    except Exception as e:
+        return f"unreadable ({str(e)[:60]})"
+
+
 def photo(name, folder, used=()):
     """(path, info) of a real NASA photo of this named thing (an aircraft, spacecraft, telescope, planet...),
     or (None, why). Never raises."""
@@ -337,8 +356,11 @@ def photo(name, folder, used=()):
                 except Exception:
                     continue
             if out.exists():
-                return out, c
-        return None, f"NASA: no photo of \"{name}\""
+                bad = photo_problem(out)
+                if not bad:
+                    return out, c
+                out.unlink(missing_ok=True)       # a survey strip or a scan with black edges: try the next one
+        return None, f"NASA: no photo of \"{name}\" fit to show"
     except Exception as e:
         return None, f"NASA photo search failed: {str(e)[:100]}"
 

@@ -149,7 +149,11 @@ const OverlayBox: React.FC<{ov: Overlay; span: number; p: ShortProps}> = ({ov, s
         {bars.map((b, i) => {
           const grow = spring({frame: frame - Math.round((0.3 + i * 0.14) * fps), fps,
             config: {damping: 18, stiffness: 90}, durationInFrames: 22});
-          const full = ov.w - 68 - 210;
+          // the value text gets the room it needs (up to 55% of the card), shrinking only if still too long
+          const size0 = Math.min(38, row * 0.4);
+          const room = Math.min(ov.w * 0.55, Math.max(210, String(b.text).length * size0 * 0.6 + 16));
+          const vSize = Math.min(size0, (room - 16) / Math.max(1, String(b.text).length * 0.6));
+          const full = ov.w - 68 - room;
           return (
             <div key={i} style={{height: row, display: 'flex', flexDirection: 'column', justifyContent: 'center'}}>
               <div style={{fontFamily: SANS, fontWeight: 700, fontSize: Math.min(30, row * 0.32), letterSpacing: '0.04em',
@@ -157,7 +161,7 @@ const OverlayBox: React.FC<{ov: Overlay; span: number; p: ShortProps}> = ({ov, s
               <div style={{display: 'flex', alignItems: 'center', marginTop: 6}}>
                 <div style={{height: Math.min(34, row * 0.34), width: Math.max(6, full * b.frac * grow), borderRadius: 10,
                   background: b.top ? p.palette.amber : p.palette.cyan, boxShadow: '0 4px 14px rgba(0,0,0,0.4)'}} />
-                <div style={{...big(p.type === 'bold'), fontSize: Math.min(38, row * 0.4), marginLeft: 16, opacity: grow,
+                <div style={{...big(p.type === 'bold'), fontSize: vSize, marginLeft: 16, opacity: grow,
                   whiteSpace: 'nowrap'}}>{b.text}</div>
               </div>
             </div>
@@ -185,7 +189,7 @@ const OverlayBox: React.FC<{ov: Overlay; span: number; p: ShortProps}> = ({ov, s
           })}
         </div>
         <div style={{...big(p.type === 'bold'), fontSize: 96, marginTop: 14, color: p.palette.amber, opacity: Math.min(1, pop * 1.4),
-          transform: `scale(${0.6 + 0.4 * pop})`}}>= {ov.right}</div>
+          transform: `scale(${0.6 + 0.4 * pop})`}}>{/^[=≈~<>≤≥]/.test(String(ov.right).trim()) ? '' : '= '}{ov.right}</div>
       </div>
     );
   }

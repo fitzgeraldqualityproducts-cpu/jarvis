@@ -125,3 +125,28 @@ def test_an_unbacked_comparison_is_removed_not_reworded(studio_home, monkeypatch
     fixed = script._fix_lines(draft, topic, ["line 2 is unsupported: no source says this is slower than a snail"])
     assert "remove just\nthe comparison" in seen[0] and "never swap in another" in seen[0]
     assert fixed["lines"][1]["text"] == "That's about 7 millimetres an hour."
+
+
+def test_survey_strips_and_black_edged_scans_are_not_used_as_photos(tmp_path):
+    """Short 17's Olympus Mons "photo" was an orbiter's tilted map strip with black wedges."""
+    import numpy as np
+    from PIL import Image
+    from studio import footage
+    ok = tmp_path / "ok.jpg"
+    Image.fromarray(np.full((800, 1200, 3), 120, np.uint8)).save(ok)
+    strip = tmp_path / "strip.jpg"
+    Image.fromarray(np.full((3000, 900, 3), 120, np.uint8)).save(strip)
+    edged = tmp_path / "edged.jpg"
+    a = np.full((900, 900, 3), 120, np.uint8)
+    a[:, :300] = 0
+    Image.fromarray(a).save(edged)
+    assert footage.photo_problem(ok) == ""
+    assert "strip" in footage.photo_problem(strip) and "black" in footage.photo_problem(edged)
+
+
+def test_bar_units_keep_whole_words():
+    from studio import edit
+    ov = edit.overlay({"type": "compare", "unit": "× farther than high",
+                       "items": [{"label": "Steep (5°)", "value": 11}, {"label": "Shallow (2°)", "value": 29}]})
+    assert [i["text"] for i in ov["items"]] == ["11 × farther than high", "29 × farther than high"]
+    assert edit._whole_words("tonnes of rocket fuel burned", 12) == "tonnes of"

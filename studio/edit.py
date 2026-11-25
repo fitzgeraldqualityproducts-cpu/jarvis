@@ -101,6 +101,16 @@ def _items(scene):
 WAVE_PEAKS = 4            # a standing wave shows this many peaks (antinodes) across the panel
 
 
+def _whole_words(v, n):
+    """The words of v that fit in n characters (at least the first word, cut to n)."""
+    out = ""
+    for w in str(v or "").split():
+        if len(out) + len(w) + (1 if out else 0) > n:
+            break
+        out = f"{out} {w}" if out else w
+    return out or str(v or "").strip()[:n]
+
+
 def _short(v, n):
     return " ".join(str(v or "").split())[:n]
 
@@ -120,7 +130,7 @@ def overlay(scene):
     """One scene's animated diagram (or None): {"kind": "bars"|"steps"|"equation"|"wave"|"measure", ...}
     with positions in px."""
     t = scene.get("type")
-    unit = " ".join(str(scene.get("unit") or "").split())[:12]
+    unit = _whole_words(scene.get("unit"), 22)     # never cut mid-word ("11 x farther th" in Short 17)
     if t in ("compare", "scale"):
         items = _items(scene)
         if len(items) < 2:
