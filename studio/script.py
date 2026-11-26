@@ -1666,8 +1666,11 @@ def _fix_story(draft, topic, problems):
                       for i, ln in enumerate(draft["lines"]))
     n = len(text_of(draft, draft["hooks"][0] if draft.get("hooks") else None).split())
     ans = claude.ask_json(f"""A story editor found places in this Short script where a first-time viewer gets lost. Fix ONLY those
-places. For each: either add ONE short set-up line (under 14 words) just before the flagged line that gives what is
-missing in plain words (what a term means, a value with its unit, why an assumption is fair), or reword the
+places, every one of them: each problem below needs its own edit on (or just before) the line it names. For each:
+either add ONE short set-up line (under 14 words) just before the flagged line that gives what is
+missing in plain words (what a term means, a value with its unit, why an assumption is fair, a step the viewer
+would otherwise have to work out, like "two steps up means 32 times 32"; when the problem says what is missing,
+the set-up line says exactly that), or reword the
 flagged line so it no longer needs it (plain words instead of jargon like a band name or an abbreviation). A
 line the fact-checker marked wrong is reworded to its correction. If the conclusion doesn't follow, reword the
 payoff line (the line before the last) so it answers the opening question plainly from the lines before it. A
@@ -1716,7 +1719,10 @@ JSON only: {"edits": [{"op": "insert_before|replace|delete", "line": 5, "text": 
         fixed = _kept_story(fixed, _fit_length(fixed, words))
     if _story_hard(fixed) > _story_hard(draft):
         return None                                    # the repair broke something the code can see
-    fixed["story_fix"] = {"problems": [p[:200] for p in problems[:5]], "edits": len(edits)}
+    named = {int(m) for p in problems for m in re.findall(r"^narrative: (?:unexplained number: )?line (\d+)", p)}
+    touched = {int(e["line"]) for e in edits} | {int(e["line"]) + 1 for e in edits}
+    fixed["story_fix"] = {"problems": [p[:200] for p in problems[:5]], "edits": len(edits),
+                          "missed_lines": sorted(named - touched)}
     return fixed
 
 

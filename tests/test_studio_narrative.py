@@ -427,3 +427,9 @@ def test_story_repair_allowed_with_length_problem():
     assert script.STORY_LINE.match(hard[1])
     assert script._story_repairable(hard)
     assert not script._story_repairable(["107 words; it must be 60-105"])
+
+
+def test_stopped_story_keeps_real_grade():
+    from studio import narrative
+    nar = {"hard": ["narrative: x"], "score": 49.0, "grade": 82.5}
+    assert "graded 82.5" in narrative.summary(nar)

@@ -20,5 +20,10 @@ def text(video_id):
         out += ["Blocking problems:"] + [f"  - {h[len('narrative: '):]}" for h in r["hard"]]
     if r["advice"]:
         out += ["Notes:"] + [f"  - {a}" for a in r["advice"]]
+    sf = st.get("story_fix")
+    if sf:
+        out.append(f"Story repair: {sf.get('edits', 0)} edit(s)"
+                   + (f"; lines it didn't touch: {', '.join(map(str, sf['missed_lines']))}"
+                      if sf.get("missed_lines") else ""))
     out.append("Parts: " + ", ".join(f"{k} {v:.0%}" for k, v in r["parts"].items()))
     return "\n".join(out)
