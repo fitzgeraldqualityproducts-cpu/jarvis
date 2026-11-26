@@ -200,7 +200,7 @@ def _drafts_wanted(feedback, previous):
     return max(1, min(3, n))
 
 
-def write(topic, feedback=None, previous=None, only_originality=False):
+def write(topic, feedback=None, previous=None, only_originality=False, keep_original=False):
     """A draft: {"hooks": [5], "lines": [{"text", "facts": [ids], "visual", "beat"}], "calcs": [...], "titles": [...]}.
     A first draft is written three ways at once (each built around a different everyday image); the code drops the
     ones that break a hard rule and a short judging call picks the strongest of the rest."""
@@ -233,6 +233,10 @@ def write(topic, feedback=None, previous=None, only_originality=False):
                "Don't add any new claim while fixing:\n"
                + "\n".join(f"- {p}" for p in feedback) + idea + story_fix + "\n\nPrevious draft:\n"
                + json.dumps(previous)[:6000])
+        if keep_original and not tips:            # the previous draft passed originality: don't lose it while fixing
+            fix += ("\n\nThe previous draft's everyday image and way of explaining PASSED the originality check. "
+                    "Keep that same image and framing from the hook to the loop while you fix the problems above; "
+                    "never fall back on the standard explainer of this question (Test 28 lost its 6/10 that way).")
         if only_originality:                      # the last, originality-only rewrite (Connor, 2026-11-26)
             fix = ("\n\nYour previous draft failed review twice for the same reason: it reads like the standard "
                    "explainer of this question. Its facts, numbers and maths were fine, so this rewrite is ONLY about "
@@ -1659,6 +1663,10 @@ def revise_step(topic, video_id=None):
         fixed = _fix_story(_draft_of(row), topic, hard)    # a story gap: add the missing set-up, keep the rest
         if fixed:
             return draft_step(topic, video_id, draft=fixed)
+    orig = checks.get("originality")
+    if isinstance(orig, (int, float)) and orig >= 6:   # a full rewrite for other problems keeps the original image
+        fixed = write(topic, checks.get("problems") or [], _draft_of(row), keep_original=True)
+        return draft_step(topic, video_id, draft=fixed)
     return draft_step(topic, video_id, checks.get("problems") or [], _draft_of(row))
 
 

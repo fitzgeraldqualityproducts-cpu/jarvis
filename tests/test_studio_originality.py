@@ -139,3 +139,30 @@ def test_a_held_short_never_goes_out_until_connor_approves(fakes, capsys):  # no
     cli._approve(["approve", "--video", str(vid)])
     assert script.held_for_review(vid) is None and autopilot._ready_count() == 1
     assert script.originality_hold(5, list(ORIG), 8, 7, 9, NAR) is not None
+
+
+def test_a_fix_rewrite_keeps_an_image_that_passed_originality(fakes, monkeypatch):  # noqa: F811
+    from studio import claude, jobs, script, topics
+    fc, tid = fakes
+    fc.bad_reviews = 1                     # v1 has a wrong line (originality 8 is fine), v2 passes
+    fc.flag = {1: [(3, "unsupported"), (5, "wrong")]}   # more than a near-miss, so it is a full rewrite
+    prompts = []
+    real = claude.RUNNER
+    monkeypatch.setattr(claude, "RUNNER", lambda p, timeout, web: (prompts.append(p), real(p, timeout, web))[1])
+    monkeypatch.setattr(script, "_fix_lines", lambda *a, **k: None)
+    vid = jobs.create(tid)
+    row = script.make(topics.topic(tid), vid, progress=lambda s: None)
+    assert row["status"] == "passed"
+    rewrites = [p for p in prompts if p.startswith("Write a YouTube Short script") and "failed review" in p]
+    assert rewrites and all("PASSED the originality check" in p for p in rewrites)
+
+
+def test_an_unoriginal_draft_is_not_told_to_keep_its_image(fakes, monkeypatch):  # noqa: F811
+    from studio import claude, script, topics
+    fc, tid = fakes
+    seen = []
+    real = claude.RUNNER
+    monkeypatch.setattr(claude, "RUNNER", lambda p, timeout, web: (seen.append(p), real(p, timeout, web))[1])
+    script.write(topics.topic(tid), ["originality 5/10: needs its own explanation (use a hiker)"], {"lines": []},
+                 keep_original=True)
+    assert "PASSED the originality check" not in seen[-1]
