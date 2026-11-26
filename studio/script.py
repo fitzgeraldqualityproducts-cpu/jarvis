@@ -200,7 +200,7 @@ def _drafts_wanted(feedback, previous):
     return max(1, min(3, n))
 
 
-def write(topic, feedback=None, previous=None):
+def write(topic, feedback=None, previous=None, only_originality=False):
     """A draft: {"hooks": [5], "lines": [{"text", "facts": [ids], "visual", "beat"}], "calcs": [...], "titles": [...]}.
     A first draft is written three ways at once (each built around a different everyday image); the code drops the
     ones that break a hard rule and a short judging call picks the strongest of the rest."""
@@ -233,6 +233,15 @@ def write(topic, feedback=None, previous=None):
                "Don't add any new claim while fixing:\n"
                + "\n".join(f"- {p}" for p in feedback) + idea + story_fix + "\n\nPrevious draft:\n"
                + json.dumps(previous)[:6000])
+        if only_originality:                      # the last, originality-only rewrite (Connor, 2026-11-26)
+            fix = ("\n\nYour previous draft failed review twice for the same reason: it reads like the standard "
+                   "explainer of this question. Its facts, numbers and maths were fine, so this rewrite is ONLY about "
+                   "originality. Keep every fact, number, calculation and the answer; keep each value said before the "
+                   "line that uses it. Change the everyday image, the way the viewer discovers the answer and the "
+                   "wording, so it is our own explanation from the hook to the loop."
+                   + (" Build it on the reviewer's own suggestion: " + tips[-1] if tips else "")
+                   + "\nThe review said:\n" + "\n".join(f"- {p}" for p in feedback)
+                   + "\n\nPrevious draft:\n" + json.dumps(previous)[:6000])
     story_first = STORY_FIRST if _narrative_on() else ""
     prompt = f"""Write a YouTube Short script. Channel: {d.get('name', '')}. Positioning: {plan.get('positioning', '')}.
 Audience: {plan.get('audience', 'curious US adults')}. Style: {plan.get('style', 'calm, clear, conversational')}.
@@ -275,6 +284,10 @@ Rules:
   a stadium, a phone) that carries the calculation from the hook to the last line, and say the result in a way a
   textbook wouldn't. Not the standard textbook analogy or diagram for this topic: that scores 5/10. Avoid stock explainer lines ("here's the thing", "it turns out",
   "scientists say", "mind-blowing").
+- If this question already has a famous explainer (a Space.com, NASA or Wikipedia page, a popular video), don't
+  retell that page's answer in its order with its example: the reviewer marks that "reads like the standard
+  explainer" (5/10). Ask it through the viewer's own world instead (their walk, their car, their kitchen) and let
+  the famous number be a step, not the whole Short.
 - Standard textbook science (a named law or formula such as Newton's laws, Kepler's third law, E = mc^2, or a
   well-known constant like g = 9.8 m/s^2 or the speed of light) may be used without a fact: mark that line's facts
   as ["general"]. Every number about THIS topic must still come from the facts above.
@@ -1054,9 +1067,14 @@ def _judged(draft, ans, video_id, rechecked=None, facts=None):
                 problems += [f"editor: {h[len('narrative: '):]}" for h in nar["hard"]]
             problems += [f"editor: story: {a}" for a in nar["advice"][:3]]
     hard = [p for p in problems if not p.startswith("editor: ")]
+    hold = originality_hold(orig, hard, loop, rehook, answered, nar, video_id)
+    if hold:                                      # an originality 5 that is otherwise excellent: Connor decides
+        problems = [f"editor: held for Connor's review: {p}" if p.startswith("originality ") else p for p in problems]
+        hard = [p for p in hard if not p.startswith("originality ")]
     return {"ok": not hard, "problems": problems, "hard_problems": hard, "claims": claims, "hook_ratings": ratings,
             "hook_index": hi, "hook_score": hs, "hook": hook, "body": body, "words": words, "calcs": calcs, "loop": loop, "rehook": rehook,
             "originality": orig, "inauthentic_risk": ans.get("inauthentic_risk"), "similar": [sim, sim_vid],
+            **({"originality_hold": hold} if hold else {}),
             "question": q or None, "answered": answered,
             **({"narrative": nar} if nar else {}),
             **({"rechecked": rechecked} if rechecked else {})}
@@ -1180,7 +1198,8 @@ def draft_step(topic, video_id=None, feedback=None, previous=None, draft=None):
                                  **({"picked": draft["picked"]} if draft.get("picked") else {}),
                                  **({"recheck": draft["recheck"]} if draft.get("recheck") else {}),
                                  **({"number_check": draft["number_check"]} if draft.get("number_check") else {}),
-                                 **({"story_fix": draft["story_fix"]} if draft.get("story_fix") else {})}),
+                                 **({"story_fix": draft["story_fix"]} if draft.get("story_fix") else {}),
+                                 **({"originality_fix": draft["originality_fix"]} if draft.get("originality_fix") else {})}),
                      "{}", "draft", time.time())
 
 
@@ -1273,7 +1292,7 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     rev = review(draft, topic, video_id, recheck=_saved_recheck(st, video_id))
     checks = {k: rev[k] for k in ("ok", "problems", "hard_problems", "claims", "hook_ratings", "hook_index",
                                   "hook_score", "words", "loop", "rehook", "originality", "inauthentic_risk", "similar",
-                                  "question", "answered", "narrative")
+                                  "question", "answered", "narrative", "originality_hold")
               if k in rev}
     if rev.get("rechecked"):
         checks["rechecked"] = rev["rechecked"]
@@ -1346,6 +1365,8 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     again = None if st.get("lookup_from") else _repeated(video_id, row["id"], rev["hard_problems"])
     if again and _story_repairable(rev["hard_problems"]) and not _story_fix_tried(video_id):
         again = None                              # the targeted story repair gets its one try before giving up
+    if again == "originality" and _originality_due(video_id, rev["hard_problems"]):
+        again = None                              # one originality-only rewrite with the checker's own idea first
     if again:                                     # the same kind of problem twice in a row: move on to the next idea
         _trial_outcome(topic, video_id, False)
         topics.set_status(topic["id"], script_status="failed")
@@ -1354,7 +1375,8 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
         _story_outcome(video_id, False)
         raise ScriptRejected(f"the same problem came back after a revision ({again.replace('_', ' ')}): "
                              + "; ".join(rev["hard_problems"][:3]))
-    if tries > max_revisions and not (_story_repairable(rev["hard_problems"]) and not _story_fix_tried(video_id)):
+    if tries > max_revisions and not (_story_repairable(rev["hard_problems"]) and not _story_fix_tried(video_id)) \
+            and not _originality_due(video_id, rev["hard_problems"]):
         _trial_outcome(topic, video_id, False)
         topics.set_status(topic["id"], script_status="failed")
         guard.audit("script.failed", True, {"topic": topic["id"], "video": video_id, "problems": rev["hard_problems"][:5]})
@@ -1629,6 +1651,10 @@ def revise_step(topic, video_id=None):
                 fixed["recheck"] = {"from": row["id"], "changed": sorted(plan["changed"]),
                                     "kept": {str(k): v for k, v in plan["kept"].items()}}
             return draft_step(topic, video_id, draft=fixed)
+    if _originality_due(video_id, hard):
+        fixed = write(topic, hard, _draft_of(row), only_originality=True)
+        fixed["originality_fix"] = {"from_version": row["version"], "problems": [p[:300] for p in hard[:4]]}
+        return draft_step(topic, video_id, draft=fixed)
     if _story_repairable(hard) and not _story_fix_tried(video_id):
         fixed = _fix_story(_draft_of(row), topic, hard)    # a story gap: add the missing set-up, keep the rest
         if fixed:
@@ -1647,6 +1673,69 @@ LENGTH_PROBLEM = re.compile(r"^\d+ words; it must be")
 def _story_repairable(hard):
     return bool(hard) and _narrative_on() and any(STORY_LINE.match(h) for h in hard) and \
         all(STORY_LINE.match(h) or LINE_PROBLEM.match(h) or LENGTH_PROBLEM.match(h) for h in hard)
+
+
+def _originality_due(video_id, hard):
+    """Connor's choice (2026-11-26): when "reads like the standard explainer" comes back after the normal rewrite,
+    the writer gets ONE more rewrite aimed only at originality (the checker's own suggestion), before the repeat
+    stop. Only when originality (plus at most a flagged line or the length) is what's left to fix."""
+    if not any(str(p).startswith("originality ") for p in hard or []):
+        return False
+    if not all(str(p).startswith("originality ") or LINE_PROBLEM.match(p) or LENGTH_PROBLEM.match(p) for p in hard):
+        return False
+    rows = list(db.q("SELECT checks, structure FROM scripts WHERE video_id IS ?", video_id))
+    if any(json.loads(r["structure"] or "{}").get("originality_fix") for r in rows):
+        return False
+    return sum(any(str(p).startswith("originality ") for p in json.loads(r["checks"] or "{}").get("hard_problems") or [])
+               for r in rows) >= 2
+
+
+HOLD_ORIGINALITY = 5           # the one originality score under the bar that may pass, held for Connor's review
+HOLD_STORY_MIN = 80            # story grade (0-100) it needs
+HOLD_SCORES_MIN = {"loop": 6, "rehook": 6, "answered": 7}
+
+
+def originality_hold_on():
+    try:
+        from studio import config
+        return config.general().get("originality_hold", True) is not False
+    except Exception:
+        return True
+
+
+def originality_hold(orig, hard, loop, rehook, answered, nar, video_id=None):
+    """Connor's middle ground (2026-11-26): an originality 5 passes only when it is the ONE thing wrong and
+    everything else scores high (clean fact-check, story grade 80+, loop, re-hook and payoff strong), and then the
+    Short is held for Connor's review and never goes out by itself. At most one Short is held at a time. 6 stays the
+    normal bar. Returns {"originality", "story", "why"} or None."""
+    if not originality_hold_on() or not isinstance(orig, (int, float)) or not HOLD_ORIGINALITY <= orig < 6:
+        return None
+    if [p for p in hard if not p.startswith("originality ")] or not nar or nar.get("hard"):
+        return None
+    story = nar.get("score")
+    if not isinstance(story, (int, float)) or story < HOLD_STORY_MIN:
+        return None
+    for k, v in (("loop", loop), ("rehook", rehook), ("answered", answered)):
+        if not isinstance(v, (int, float)) or v < HOLD_SCORES_MIN[k]:
+            return None
+    if any(held_for_review(r["id"]) for r in db.q("SELECT id FROM videos WHERE id IS NOT ? AND state NOT IN "
+                                                   "('published','failed','rejected')", video_id)):
+        return None                              # one waits for Connor already
+    why = next((p for p in hard if p.startswith("originality ")), "")
+    return {"originality": orig, "story": story, "why": why[:300]}
+
+
+def held_for_review(video_id):
+    """Why this Short is held for Connor (an originality-5 pass he hasn't approved yet), or None."""
+    row = latest(video_id, "passed")
+    hold = json.loads(row["checks"] or "{}").get("originality_hold") if row else None
+    if not hold:
+        return None
+    v = db.video(video_id) or {}
+    if json.loads(v.get("meta") or "{}").get("review_ok"):
+        return None
+    return (f"held for Connor's review: originality {hold.get('originality')}/10 (story {hold.get('story')}), "
+            f"so it never goes out by itself; approve with: studio approve --video {video_id}")
 
 
 def _story_fix_tried(video_id):

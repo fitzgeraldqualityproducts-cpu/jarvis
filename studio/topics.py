@@ -650,11 +650,17 @@ fact is a 5, and the script's fact-checker rejects anything under 6; a surprisin
 calculation few would think to do is an 8+), copyright_risk (0 = none, 10 = needs others' footage/music/characters).
 Also "avoid": true if it touches medical/financial advice, partisan politics or the niche's banned areas, and
 "note": one sentence on the main strength or problem.
+FAMOUS EXPLAINER: if this idea's answer is already a well-known explainer (a Space.com, NASA, Wikipedia or popular
+video page that asks and answers the same question, e.g. "how long to walk around the Moon", "how many Earths fit
+in the Sun"), set "famous" to that page in a few words (publisher: question), else "". For a famous one, "twist" is
+one sentence with our own angle the famous page doesn't do (a personal, everyday calculation a viewer would never
+find there, still using the same sourced facts), or "" if you can't think of a real one. Not famous: "twist": "".
 
 {lines}
 
 JSON object keyed by the number: {{"0": {{"relevance":..,"interest":..,"novelty":..,"curiosity":..,"value":..,
-"story":..,"feasibility":..,"originality":..,"copyright_risk":..,"avoid":false,"note":".."}}, ...}}"""
+"story":..,"feasibility":..,"originality":..,"copyright_risk":..,"avoid":false,"note":"..","famous":"",
+"twist":""}}, ...}}"""
     ans = claude.ask_json(prompt, timeout=300, web=False, purpose="rate topic ideas")
     out = {}
     if isinstance(ans, dict):
@@ -719,10 +725,31 @@ def gate(c, r, src_reliability, factors):
     if orig is not None and orig < ORIGINAL_AT:
         # the script review rejects an ordinary angle after spending 4-8 Claude calls on it; drop it here for free
         why.append(f"angle too ordinary (originality {orig:g}/10)")
+    famous, twist = famous_of(r)
+    if famous and not twist:
+        # Connor's choice (2026-11-26): 22 scripts failed at originality 4-5 as "reads like the standard explainer";
+        # an idea whose answer is already a famous page needs our own twist, or it isn't written at all
+        why.append(f"the answer is already a famous explainer ({famous}) and there's no twist of our own")
     good = _working(c.get("_checked", []))
     if len(good) < 2:
         why.append(f"only {len(good)} working source{'s' if len(good) != 1 else ''}")
     return why
+
+
+def famous_of(r):
+    """(famous explainer, our twist) from an idea's rating, each "" when absent."""
+    clip = lambda v: " ".join(str(v or "").split())[:200]
+    famous, twist = clip(r.get("famous")), clip(r.get("twist"))
+    if famous.lower() in ("", "none", "no", "n/a", "false"):
+        return "", ""
+    return famous, twist
+
+
+def with_twist(angle, famous, twist):
+    """The angle the writer gets for a famous idea: our twist first, and the page not to retell."""
+    if not (famous and twist):
+        return angle
+    return f"{twist} (Our own angle: don't retell {famous}.) {angle}".strip()
 
 
 def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
@@ -799,14 +826,16 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
             why = gate(c, r, rel, factors)
             now = time.time()
             status = "rejected" if why else "idea"
+            famous, twist = famous_of(r)
             scores = {"version": SCORING_VERSION, "factors": factors, "note": str(r.get("note", ""))[:300],
-                      "median_views": med, **({"wikipedia": wiki} if wiki else {})}
+                      "median_views": med, **({"wikipedia": wiki} if wiki else {}),
+                      **({"famous": famous, "twist": twist} if famous else {})}
             tid = db.insert(
                 "INSERT INTO topics(title, fingerprint, pillar, kind, sources, score, scores, status, discovered, updated, "
                 "angle, hook, why, keywords, origin, fresh_until, reject_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 str(c["title"])[:200], fingerprint(c["title"]),
                 name, c["kind"], json.dumps([s["url"] for s in c["_checked"]]), overall, json.dumps(scores), status, now, now,
-                str(c.get("angle", ""))[:600], str(c.get("hook", ""))[:300], str(c.get("why", ""))[:600],
+                with_twist(str(c.get("angle", "")), famous, twist)[:600], str(c.get("hook", ""))[:300], str(c.get("why", ""))[:600],
                 json.dumps([str(k) for k in c.get("keywords") or []][:8]), "claude+web" + ("+youtube" if comp else ""),
                 now + TRENDING_DAYS * 86400 if c["kind"] == "trending" else None, "; ".join(why) or None)
             for s in c["_checked"]:

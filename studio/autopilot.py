@@ -62,6 +62,12 @@ def failure_streak():
     return n
 
 
+def _ready_count():
+    """Finished Shorts waiting to go out, not counting one held for Connor's review (so it never stalls the line)."""
+    from studio import script
+    return sum(1 for r in db.q("SELECT id FROM videos WHERE state='ready'") if not script.held_for_review(r["id"]))
+
+
 def status(now=None):
     from studio import publish
     now = now or time.time()
@@ -71,7 +77,7 @@ def status(now=None):
                                   *states)["n"]
     return {"on": bool(g["autopilot"]), "halted": halted(), "mode": m,
             "making": count(MAKING), "writing": count(WRITING), "building": count(BUILDING),
-            "ready": db.one("SELECT COUNT(*) n FROM videos WHERE state='ready'")["n"],
+            "ready": _ready_count(),
             "buffer": g["manual_ready_buffer"] if m == "manual" else g["ready_buffer"],
             "started_today": int(db.get(f"autopilot_made_{_day(now)}", 0) or 0), "max_per_day": g["max_new_per_day"],
             "failure_streak": failure_streak()}

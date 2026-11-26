@@ -18,6 +18,8 @@
               (--topic <id> picks the idea; --no-voice skips narration)
   video       makes a finished test Short: the waiting narrated script (or a new one), visuals, captions,
               render, metadata and the QA gate (--video <id>); never uploads
+  approve     lets a Short held for your review (originality 5/10, everything else strong) go out like any
+              other (approve --video <id>); without it, a held Short never goes out by itself
   upload      uploads the newest finished Short as PRIVATE to the business channel, after you confirm
               (--video <id>); then checks YouTube processed it
   dashboard   opens the live dashboard (Jarvis's own page if Jarvis is running, else serves it itself)
@@ -280,6 +282,28 @@ def _upload(argv):
     return 0
 
 
+def _approve(argv):
+    from studio import db, guard, script
+    if "--video" not in argv:
+        held = [r["id"] for r in db.q("SELECT id FROM videos WHERE state NOT IN ('published','failed','rejected')")
+                if script.held_for_review(r["id"])]
+        print("Held for your review: " + (", ".join(f"video {i}" for i in held) if held else "none")
+              + ("\nApprove one with: studio approve --video <id>" if held else ""))
+        return 0
+    vid = int(argv[argv.index("--video") + 1])
+    why = script.held_for_review(vid)
+    if not why:
+        print(f"Video {vid} isn't held for review.")
+        return 0
+    v = db.video(vid)
+    meta = json.loads(v.get("meta") or "{}")
+    meta["review_ok"] = {"t": time.time()}
+    db.set_video(vid, meta=json.dumps(meta))
+    guard.audit("script.review_ok", True, {"video": vid})
+    print(f"Video {vid} approved: it goes out like any other finished Short.")
+    return 0
+
+
 def _publish_mode(argv):
     from studio import config, publish
     if len(argv) < 2:
@@ -485,6 +509,8 @@ def main(argv):
         return _video(argv)
     elif cmd == "upload":
         return _upload(argv)
+    elif cmd == "approve":
+        return _approve(argv)
     elif cmd == "experiment":
         from studio import experiments
         sub = argv[1] if len(argv) > 1 else "status"

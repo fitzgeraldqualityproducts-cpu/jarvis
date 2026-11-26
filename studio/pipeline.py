@@ -137,6 +137,9 @@ def validating(v, ctx):
 
 def ready(v, ctx):
     from studio import publish
+    held = script.held_for_review(v["id"])
+    if held:                                  # an originality-5 pass: never goes out until Connor approves it
+        raise jobs.Wait(held, time.time() + 6 * 3600)
     m = publish.mode()
     if m == "manual":
         raise jobs.Wait("ready; waiting for Connor (publish mode is manual)", time.time() + 6 * 3600)
