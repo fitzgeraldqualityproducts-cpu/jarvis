@@ -464,3 +464,21 @@ def test_moon_walk_false_alarms():
     assert any("pi" in h for h in hard(d))
     # a circumference the sources give needn't be derived on screen
     assert not [h for h in hard(d, facts=[{"claim": "The Moon's circumference is 10,916 km."}]) if "line 3" in h]
+
+
+def test_astronomy_units_and_formula_with_left_side():
+    """Test 29 (supernova brightness): light-years/parsecs unknown, 'm = ...' formula couldn't re-run,
+    and a negative magnitude said aloud counted as never told."""
+    from studio import narrative
+    assert narrative.parse_unit("light-years")[0] == {"L": 1}
+    assert narrative.parse_unit("light-years per parsec")[0] == {}
+    assert narrative.parse_unit("AU")[0] == {"L": 1}
+    m = {"question": "q", "premise": "p", "answer": "a",
+         "quantities": [{"name": "M", "means": "absolute magnitude", "value": -19.4, "unit": "", "from": "F1"},
+                        {"name": "d_pc", "means": "distance", "value": 15e6, "unit": "pc", "from": "F2"},
+                        {"name": "d0", "means": "reference distance", "value": 10, "unit": "pc", "from": "F3"}],
+         "formula": {"expr": "m = M + 5*log10(d_pc/d0)"}, "result": {"value": 11.5, "unit": ""}}
+    lines = [{"text": "Its absolute magnitude is minus 19.4, seen from 15 million parsecs instead of 10."}]
+    assert [p for p in narrative.model_check(m, lines) if p["hard"] or "re-run" in p["text"]] == []
+    m["result"]["value"] = 16.5
+    assert any(p["kind"] == "model_result" for p in narrative.model_check(m, lines))

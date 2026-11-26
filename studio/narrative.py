@@ -134,7 +134,10 @@ def _eval(node):
 
 
 def _parse(expr):
-    expr = str(expr).replace("^", "**").replace("×", "*").replace("÷", "/")
+    expr = str(expr)
+    if re.search(r"(?<![=<>!])=(?!=)", expr):            # "m = M + 5*log10(d/10)": the right-hand side is the formula
+        expr = re.split(r"(?<![=<>!])=(?!=)", expr)[-1].strip()
+    expr = expr.replace("^", "**").replace("×", "*").replace("÷", "/")
     expr = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", expr)
     expr = re.sub(r"(?<=\d)_(?=\d)", "", expr)
     return ast.parse(expr, mode="eval").body
@@ -259,6 +262,11 @@ for names, dims, f in [
         (("m", "meter", "metre"), {"L": 1}, 1.0),
         (("km", "kilometer", "kilometre"), {"L": 1}, 1e3),
         (("in", "inch", "inche"), {"L": 1}, 0.0254),
+        (("ly", "lightyear"), {"L": 1}, 9.4607e15),
+        (("pc", "parsec"), {"L": 1}, 3.0857e16),
+        (("kpc", "kiloparsec"), {"L": 1}, 3.0857e19),
+        (("mpc", "megaparsec"), {"L": 1}, 3.0857e22),
+        (("au", "astronomicalunit"), {"L": 1}, 1.495978707e11),
         (("ft", "foot", "feet"), {"L": 1}, 0.3048),
         (("yd", "yard"), {"L": 1}, 0.9144),
         (("mi", "mile"), {"L": 1}, 1609.344),
@@ -313,6 +321,8 @@ def parse_unit(u):
     None only when the string can't be read at all."""
     u = str(u or "").strip().lower().replace("·", "*").replace("²", "^2").replace("³", "^3").replace("per ", "/")
     u = re.sub(r"\([^)]*\)", " ", u).strip()           # "times dimmer (at least)": the note isn't the unit
+    u = re.sub(r"\blight[- ]years?\b", "ly", u)
+    u = re.sub(r"\bastronomical units?\b", "au", u)
     if _unit_word(u):
         return _unit_word(u)
     num, _, den = u.partition("/")
@@ -477,7 +487,7 @@ def model_check(model, lines):
         if src.startswith("calc") or src.startswith("result") or is_conversion(q):
             continue
         if val is not None and not (float(val).is_integer() and abs(val) <= SMALL) and \
-                not any(heard(val, s) for s in said_all):
+                not any(heard(val, s) or heard(abs(val), s) for s in said_all):     # "minus 19.4" is said as 19.4
             out.append({"hard": True, "kind": "assumption", "line": None,
                         "text": f"the starting value {q.get('means') or name} = {fmt(val)} {q.get('unit') or ''} is "
                                 "used in the formula but never told to the viewer"})
