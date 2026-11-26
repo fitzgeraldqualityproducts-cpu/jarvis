@@ -620,7 +620,9 @@ Never: {avoid or 'medical or financial advice'}; anything that needs film footag
 Use web search. Propose {n} topics: at least 2 "evergreen", at least 1 "trending" (a real development or
 discovery from the last 30 days, with its date) and at least 1 "question" (something people actually ask:
 search suggestions, forums, Q&A sites; say where). Each must work with diagrams, charts, maps or simple
-animation made in code, and must have a concrete number or calculation to show.{comp}
+animation made in code, and must have a concrete number or calculation to show. Prefer ONE surprising number and
+at most one calculation step (one multiply or divide a viewer can follow in 40 s); never an answer that needs a
+chain of worked-out numbers.{comp}
 
 Already covered (do NOT repeat or rephrase these):
 {taken}
@@ -659,12 +661,14 @@ NEWCOMER TERMS: "jargon" lists the terms a curious viewer with no science backgr
 calculation can't be done without (a specialist unit like parsecs or magnitudes, a named quantity like absolute
 magnitude, a log or exponent formula), each a few words; [] when everyday words carry it all. Everyday units
 (km, hours, degrees, kg, light-years) and ideas explained in one short phrase don't count.
+STEPS: "steps" is how many worked-out numbers the answer needs in a chain (each calculated from the facts or from
+an earlier result): 1 for "384,400 km at 100 km/h is 160 days", 3 for speed, then force, then the grip it needs.
 
 {lines}
 
 JSON object keyed by the number: {{"0": {{"relevance":..,"interest":..,"novelty":..,"curiosity":..,"value":..,
 "story":..,"feasibility":..,"originality":..,"copyright_risk":..,"avoid":false,"note":"..","famous":"",
-"twist":"","jargon":[]}}, ...}}"""
+"twist":"","jargon":[],"steps":1}}, ...}}"""
     ans = claude.ask_json(prompt, timeout=300, web=False, purpose="rate topic ideas")
     out = {}
     if isinstance(ans, dict):
@@ -739,10 +743,26 @@ def gate(c, r, src_reliability, factors):
         # test 29 (2026-11-26): a supernova distance-modulus Short stopped on 8 unexplained terms; 40 s can't teach
         # several new terms and the maths too, so such an idea is dropped before writing
         why.append("needs too many terms a viewer hasn't heard (" + ", ".join(terms[:4]) + ")")
+    steps = steps_of(r)
+    if steps is not None and steps >= STEPS_MAX:
+        # Connor's choice (2026-11-26): after 32 tests, multi-step physics was what the writer couldn't fit in 40 s
+        why.append(f"the answer needs a chain of {steps} worked-out numbers (one step fits a Short)")
     good = _working(c.get("_checked", []))
     if len(good) < 2:
         why.append(f"only {len(good)} working source{'s' if len(good) != 1 else ''}")
     return why
+
+
+STEPS_MAX = 3                  # an idea whose answer chains this many worked-out numbers is dropped before writing
+
+
+def steps_of(r):
+    """How many chained worked-out numbers an idea's answer needs, from its rating, or None."""
+    try:
+        n = int(float(r.get("steps")))
+    except (TypeError, ValueError):
+        return None
+    return n if 0 <= n <= 20 else None
 
 
 JARGON_MAX = 2                 # an idea whose maths needs this many unfamiliar terms is dropped before writing
@@ -853,7 +873,8 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
             scores = {"version": SCORING_VERSION, "factors": factors, "note": str(r.get("note", ""))[:300],
                       "median_views": med, **({"wikipedia": wiki} if wiki else {}),
                       **({"famous": famous, "twist": twist} if famous else {}),
-                      **({"jargon": jargon_of(r)} if jargon_of(r) else {})}
+                      **({"jargon": jargon_of(r)} if jargon_of(r) else {}),
+                      **({"steps": steps_of(r)} if steps_of(r) is not None else {})}
             tid = db.insert(
                 "INSERT INTO topics(title, fingerprint, pillar, kind, sources, score, scores, status, discovered, updated, "
                 "angle, hook, why, keywords, origin, fresh_until, reject_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -874,7 +895,9 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
         guard.audit("topics.discover", True, {"pillar": name, "added": len(added), "rejected": len(rejected)})
         famous_n = sum(any("famous explainer" in w for w in r["why"]) for r in rejected)
         jargon_n = sum(any("terms a viewer hasn't heard" in w for w in r["why"]) for r in rejected)
-        note = f"{name}: kept {len(added)}, rejected {len(rejected)} (famous explainer {famous_n}, jargon {jargon_n})"
+        steps_n = sum(any("worked-out numbers" in w for w in r["why"]) for r in rejected)
+        note = (f"{name}: kept {len(added)}, rejected {len(rejected)} (famous explainer {famous_n}, jargon {jargon_n}, "
+                f"too many steps {steps_n})")
         progress(note)
         print(f"[studio] ideas {note}")                  # in jarvis.log too, even when discovery runs in the background
         summary["added"] += added
