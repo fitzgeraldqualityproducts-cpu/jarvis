@@ -482,3 +482,20 @@ def test_astronomy_units_and_formula_with_left_side():
     assert [p for p in narrative.model_check(m, lines) if p["hard"] or "re-run" in p["text"]] == []
     m["result"]["value"] = 16.5
     assert any(p["kind"] == "model_result" for p in narrative.model_check(m, lines))
+
+
+def test_short_symbol_in_formula_is_bound_or_a_note():
+    """Test 30 (noise cancelling): 'f' in lag/(1000/f) meant the sound frequency quantity; an unknown
+    symbol is never a stop on its own (the calculations are re-run separately)."""
+    from studio import narrative
+    m = {"question": "q", "premise": "p", "answer": "a",
+         "quantities": [{"name": "sound_frequency", "means": "pitch of the hum", "value": 1000, "unit": "Hz",
+                         "from": "F1"},
+                        {"name": "lag", "means": "processing delay", "value": 0.5, "unit": "ms", "from": "F2"}],
+         "formula": {"expr": "lag*f"}, "result": {"value": 0.5, "unit": ""}}
+    lines = [{"text": "A 1,000 hertz hum, and a delay of 0.5 milliseconds."}]
+    probs = narrative.model_check(m, lines)
+    assert not [p for p in probs if p["hard"]], probs
+    m["formula"] = {"expr": "lag*zeta"}
+    probs = narrative.model_check(m, lines)
+    assert not [p for p in probs if p["hard"]] and any("re-run" in p["text"] for p in probs)
