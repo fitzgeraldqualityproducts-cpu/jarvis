@@ -385,3 +385,27 @@ def test_a_story_gap_is_repaired_by_adding_a_set_up_line(studio_home, monkeypatc
     assert FIXED["lines"][4]["text"] not in texts                       # the teaser line made room
     assert texts[:3] == [ln["text"] for ln in FIXED["lines"][:3]] and texts[-1] == FIXED["lines"][-1]["text"]
     assert "word for word" in asked[0] and "never a new number" in asked[0]
+
+
+def test_loop_line_is_never_unsupported_and_repair_runs_before_the_repeat_stop(studio_home):  # noqa: F811
+    """Test 24: the loop line ("...") was called unsupported, and the repeat stop fired before the story repair
+    ever ran."""
+    from studio import db, script
+    d = dict(FIXED, lines=[dict(ln) for ln in FIXED["lines"]])
+    ans = {"claims": [{"line": 2, "verdict": "supported", "fact": "F1"},
+                      {"line": 9, "verdict": "unsupported", "note": "unfinished by design as a loop line"}],
+           "hooks": {"0": {"curiosity": 9, "clarity": 9, "specificity": 9, "honesty": 9, "speed": 9}},
+           "loop": 8, "rehook": 8, "answered": 8, "originality": 8, "inauthentic_risk": "low", "problems": []}
+    d["lines"][8] = L("And that's why every fold", "loop")
+    assert not any("line 9" in p for p in script._judged(d, ans, None)["hard_problems"])
+    hard = ["line 8 is wrong: the parcel floats because it's warmer",
+            "narrative: line 8 leans on something never established (why moist air is lighter)",
+            "narrative: the conclusion doesn't follow from the explanation"]
+    assert script._story_repairable(hard)
+    assert not script._story_repairable(hard[:1])                        # nothing story-shaped: the usual paths
+    assert not script._story_repairable(hard + ["originality 4/10: generic"])
+    db.conn()
+    assert not script._story_fix_tried(7)
+    db.insert("INSERT INTO scripts(video_id, version, hooks, hook, body, structure, checks, status, created) "
+              "VALUES(?,?,?,?,?,?,?,?,?)", 7, 1, "[]", "", "", json.dumps({"story_fix": {"edits": 1}}), "{}", "draft", 0)
+    assert script._story_fix_tried(7)
