@@ -482,3 +482,42 @@ def test_astronomy_units_and_formula_with_left_side():
     assert [p for p in narrative.model_check(m, lines) if p["hard"] or "re-run" in p["text"]] == []
     m["result"]["value"] = 16.5
     assert any(p["kind"] == "model_result" for p in narrative.model_check(m, lines))
+
+
+def test_short_symbol_in_formula_is_bound_or_a_note():
+    """Test 30 (noise cancelling): 'f' in lag/(1000/f) meant the sound frequency quantity; an unknown
+    symbol is never a stop on its own (the calculations are re-run separately)."""
+    from studio import narrative
+    m = {"question": "q", "premise": "p", "answer": "a",
+         "quantities": [{"name": "sound_frequency", "means": "pitch of the hum", "value": 1000, "unit": "Hz",
+                         "from": "F1"},
+                        {"name": "lag", "means": "processing delay", "value": 0.5, "unit": "ms", "from": "F2"}],
+         "formula": {"expr": "lag*f"}, "result": {"value": 0.5, "unit": ""}}
+    lines = [{"text": "A 1,000 hertz hum, and a delay of 0.5 milliseconds."}]
+    probs = narrative.model_check(m, lines)
+    assert not [p for p in probs if p["hard"]], probs
+    m["formula"] = {"expr": "lag*zeta"}
+    probs = narrative.model_check(m, lines)
+    assert not [p for p in probs if p["hard"]] and any("re-run" in p["text"] for p in probs)
+
+
+def test_story_repair_keeps_the_image(studio_home, monkeypatch):  # noqa: F811
+    """Test 31: the repair swapped the image line for a bare number and originality fell 6 -> 5. A rewording
+    that drops most of a line's own words is ignored; one that adds the value into the picture is kept."""
+    from studio import claude, db, script, topics
+    db.put("niche_decision", {"niche": "science", "name": "Science explained", "plan": {}})
+    tid = db.insert("INSERT INTO topics(title, fingerprint, pillar, kind, score, status, angle) VALUES(?,?,?,?,?,?,?)",
+                    "Paper folding", "fold paper", "Run It Yourself", "question", 70, "idea", "fold limit")
+    old4, old6 = FIXED["lines"][3]["text"], FIXED["lines"][5]["text"]
+    monkeypatch.setattr(claude, "RUNNER", lambda prompt, timeout, web: json.dumps({"edits": [
+        {"op": "replace", "line": 4, "text": "Divide 2,798,250 by 6."},
+        {"op": "replace", "line": 6, "text": old6.rstrip(".") + ", about 12 folds."}]}))
+    probs = ["narrative: line 4 leans on something never established (x)",
+             "narrative: line 6 leans on something never established (y)"]
+    fixed = script._fix_story(dict(FIXED), topics.topic(tid), probs)
+    texts = [ln["text"] for ln in fixed["lines"]]
+    assert texts[3] == old4 and texts[5].endswith("about 12 folds.")
+    assert script._keeps_image("One more floor: the Sun's center.",
+                               "One more floor: the Sun's center, about 15.7 million kelvin.")
+    assert not script._keeps_image("One more floor: the Sun's center.",
+                                   "The Sun's core is about 15,710,000 kelvin; divide by 5,772.")
