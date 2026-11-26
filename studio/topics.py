@@ -872,7 +872,11 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
                   "VALUES(?,?,?,?,?,?,?,?,?)", t0, name, len(cands) + dups, len(added), dups, len(rejected), calls, searches,
                   json.dumps({"seconds": round(time.time() - t0)}))
         guard.audit("topics.discover", True, {"pillar": name, "added": len(added), "rejected": len(rejected)})
-        progress(f"{name}: kept {len(added)}, rejected {len(rejected)}")
+        famous_n = sum(any("famous explainer" in w for w in r["why"]) for r in rejected)
+        jargon_n = sum(any("terms a viewer hasn't heard" in w for w in r["why"]) for r in rejected)
+        note = f"{name}: kept {len(added)}, rejected {len(rejected)} (famous explainer {famous_n}, jargon {jargon_n})"
+        progress(note)
+        print(f"[studio] ideas {note}")                  # in jarvis.log too, even when discovery runs in the background
         summary["added"] += added
         summary["rejected"] += rejected
         summary["duplicates"] += dups
