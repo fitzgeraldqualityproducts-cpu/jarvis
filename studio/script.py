@@ -1751,6 +1751,18 @@ def _story_fix_tried(video_id):
                for r in db.q("SELECT structure FROM scripts WHERE video_id IS ?", video_id))
 
 
+def _content_words(t):
+    return {w for w in re.findall(r"[a-z']+", str(t or "").lower()) if len(w) > 3}
+
+
+def _keeps_image(old, new):
+    """A story-repair rewording must keep most of the line's own words (its picture): test 31's repair swapped
+    "One more floor: the Sun's center" for a bare division and the hook's question for a statement, and the
+    originality score fell. A rewording that keeps under half the old words is dropped (the line stays)."""
+    a = _content_words(old)
+    return not a or len(a & _content_words(new)) / len(a) >= 0.5
+
+
 def _fix_story(draft, topic, problems):
     """Repairs story gaps the way an editor would: a short set-up line ADDED before the line that needs it (what
     a term means, a value with its unit, why an assumption is fair), or the line reworded in plain words, with
@@ -1763,7 +1775,10 @@ def _fix_story(draft, topic, problems):
                       for i, ln in enumerate(draft["lines"]))
     n = len(text_of(draft, draft["hooks"][0] if draft.get("hooks") else None).split())
     ans = claude.ask_json(f"""A story editor found places in this Short script where a first-time viewer gets lost. Fix ONLY those
-places, every one of them: each problem below needs its own edit on (or just before) the line it names. For each:
+places, every one of them: each problem below needs its own edit on (or just before) the line it names. Keep the Short's image: a reworded line keeps its picture words (the elevator, the floor,
+the everyday object) and adds the missing value INTO that picture ("One more floor: the Sun's center, about 15.7
+million kelvin"), never swaps the picture for a bare number. The hook (line 1) only ever gains a missing value
+or unit; its question and picture stay. For each:
 either add ONE short set-up line (under 14 words) just before the flagged line that gives what is
 missing in plain words (what a term means, a value with its unit, why an assumption is fair, a step the viewer
 would otherwise have to work out, like "two steps up means 32 times 32"; when the problem says what is missing,
@@ -1796,6 +1811,7 @@ JSON only: {"edits": [{"op": "insert_before|replace|delete", "line": 5, "text": 
     by = {}
     for e in edits:
         by.setdefault(int(e["line"]), []).append(e)
+    wrong = {int(m.group(1)) for p in problems for m in [LINE_PROBLEM.match(p)] if m}
     out = []
     for i, ln in enumerate(draft["lines"], 1):
         keep = dict(ln)
@@ -1804,7 +1820,7 @@ JSON only: {"edits": [{"op": "insert_before|replace|delete", "line": 5, "text": 
             if e["op"] == "insert_before" and text and i > 1:
                 out.append({"text": text, "facts": [str(f) for f in e.get("facts") or []] or ["none"],
                             "beat": str(e.get("beat") or "setup"), "visual": "", "learn": "the missing set-up"})
-            elif e["op"] == "replace" and text:
+            elif e["op"] == "replace" and text and (i in wrong or _keeps_image(ln.get("text"), text)):
                 keep = dict(keep, text=text, **({"facts": [str(f) for f in e["facts"]]} if e.get("facts") else {}))
             elif e["op"] == "delete" and str(ln.get("beat")) not in PRUNE_KEEP_BEATS and i > 1:
                 keep = None
