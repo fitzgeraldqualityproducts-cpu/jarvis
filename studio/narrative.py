@@ -534,6 +534,12 @@ def model_check(model, lines):
     f = model.get("formula") if isinstance(model.get("formula"), dict) else {"expr": model.get("formula")}
     expr = str((f or {}).get("expr") or "").strip()
     res = model.get("result") if isinstance(model.get("result"), dict) else {}
+    lhs = re.split(r"(?<![=<>!])=(?!=)", expr)[0].strip() if re.search(r"(?<![=<>!])=(?!=)", expr) else ""
+    if lhs:                  # "mu = g*r/v**2": the formula gives mu; the model's answer may be another quantity (a speed)
+        named = [q for q in qs if re.sub(r"\W", "_", str(q["name"]).strip()) == re.sub(r"\W", "_", lhs)]
+        if named:
+            res = {"value": named[0].get("value"), "unit": named[0].get("unit")}
+    other = bool(lhs) and not named      # the formula gives something other than the answer: a mismatch is a note
     if expr:
         try:
             node = _parse(expr)
@@ -557,11 +563,11 @@ def model_check(model, lines):
                                         f"the {fmt(rv)} {res.get('unit') or ''} the model says; write its numbers "
                                         "as named quantities with units"})
             elif ru is not None and ru[0] != dims and not any(k.startswith("?") for k in dims):
-                out.append({"hard": True, "kind": "units", "line": None,
+                out.append({"hard": not other, "kind": "units", "line": None,
                             "text": f"the formula {expr} gives {_dims_txt(dims)}, but the answer is in "
                                     f"{res.get('unit')} ({_dims_txt(ru[0])})"})
             elif rv is not None and ru is not None and not _close(val, rv * ru[1], 0.05):
-                out.append({"hard": True, "kind": "model_result", "line": None,
+                out.append({"hard": not other, "kind": "model_result", "line": None,
                             "text": f"the formula {expr} works out to {fmt(val / ru[1])} {res.get('unit')}, not the "
                                     f"{fmt(rv)} {res.get('unit')} the script says"})
         except DimError as e:
