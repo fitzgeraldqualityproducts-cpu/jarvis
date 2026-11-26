@@ -289,7 +289,9 @@ def _unit_word(w):
 
 
 def parse_unit(u):
-    """(dims, factor) for a unit string like "mm", "m/s", "kg*m/s^2", "layers"; None when unknown."""
+    """(dims, factor) for a unit string like "mm", "m/s", "kg*m/s^2", "switches per mm^2". Words that aren't units
+    of length, mass or time are things being counted (switches, squares, layers) and count as plain numbers.
+    None only when the string can't be read at all."""
     u = str(u or "").strip().lower().replace("·", "*").replace("²", "^2").replace("³", "^3").replace("per ", "/")
     if _unit_word(u):
         return _unit_word(u)
@@ -302,9 +304,7 @@ def parse_unit(u):
             m = re.fullmatch(r"([a-zµ%]+)(?:\^?(-?\d+))?", tok)
             if not m:
                 return None
-            got = _unit_word(m.group(1))
-            if got is None:
-                return None
+            got = _unit_word(m.group(1)) or ({}, 1.0)    # a count noun (switches, squares, transistors): a plain number
             p = int(m.group(2) or 1) * sign
             for k, v in got[0].items():
                 dims[k] = dims.get(k, 0) + v * p
@@ -342,11 +342,17 @@ class DimError(ValueError):
     pass
 
 
-def _dim_eval(node, env):
-    """(SI value, dims) of a formula over named quantities, raising DimError when it adds unlike units."""
+def _dim_eval(node, env, bare=None):
+    """(SI value, dims) of a formula over named quantities, raising DimError when it adds unlike units. A plain
+    number written into the formula (not a named quantity, not 2 or a power of ten) has no unit Jarvis can know:
+    it is added to `bare`, and then the formula's units can't be judged."""
     from studio import script
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        return float(node.value), {}
+        v = float(node.value)
+        if bare is not None and not (any(_close(v, t, 1e-9) for t in TRIVIAL) or v == 0 or
+                                     v.is_integer() and abs(v) <= SMALL):
+            bare.append(v)
+        return v, {}
     if isinstance(node, ast.Name):
         if node.id in env:
             return env[node.id]
@@ -354,11 +360,11 @@ def _dim_eval(node, env):
             return float(script._CONSTS[node.id]), {"g": {"L": 1, "T": -2}, "c": {"L": 1, "T": -1}}.get(node.id, {})
         raise DimError(f"\"{node.id}\" isn't one of the model's quantities")
     if isinstance(node, ast.UnaryOp):
-        v, d = _dim_eval(node.operand, env)
+        v, d = _dim_eval(node.operand, env, bare)
         return (-v if isinstance(node.op, ast.USub) else v), d
     if isinstance(node, ast.BinOp):
-        a, da = _dim_eval(node.left, env)
-        b, db = _dim_eval(node.right, env)
+        a, da = _dim_eval(node.left, env, bare)
+        b, db = _dim_eval(node.right, env, bare)
         if isinstance(node.op, (ast.Add, ast.Sub)):
             if da != db:
                 raise DimError(f"it adds or subtracts unlike things ({_dims_txt(da)} and {_dims_txt(db)})")
@@ -374,7 +380,7 @@ def _dim_eval(node, env):
                 raise DimError("exponent too large")
             return a ** b, {k: v * b for k, v in da.items()}
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-        args = [_dim_eval(x, env) for x in node.args]
+        args = [_dim_eval(x, env, bare) for x in node.args]
         f = node.func.id
         if f == "sqrt" and args:
             return math.sqrt(args[0][0]), {k: v / 2 for k, v in args[0][1].items()}
@@ -408,6 +414,20 @@ def _num(v):
         return None
 
 
+def is_conversion(q):
+    """A model "quantity" that is only a change of unit (1e12 nm^2 per mm^2, 1000 m per km): nothing about the
+    topic, so the narrator needn't say it (the converted value is what gets said)."""
+    unit = str(q.get("unit") or "").lower()
+    val = _num(q.get("value"))
+    words = f"{q.get('means') or ''} {q.get('name') or ''}".lower()
+    if re.search(r"\bconver|\bper (milli|centi|kilo|nano|micro)|in a (metre|meter|kilo|milli)", words):
+        return True
+    pu = parse_unit(unit) if ("/" in unit or " per " in f" {unit} ") else None
+    if pu is not None and pu[0] == {} and pu[1] != 1.0 and val is not None and _close(val * pu[1], 1.0, 0.01):
+        return True                                  # nm^2 per mm^2 with value 1e12: exactly one unit in the other
+    return False
+
+
 def model_check(model, lines):
     """Hard and soft problems with the writer's model: [{"hard", "kind", "text", "line"}]."""
     out = []
@@ -434,7 +454,7 @@ def model_check(model, lines):
             pu = ({"?" + str(q.get("unit")): 1}, 1.0)
         env[name] = (val * pu[1], pu[0])
         src = str(q.get("from") or "").lower()
-        if src.startswith("calc") or src.startswith("result"):
+        if src.startswith("calc") or src.startswith("result") or is_conversion(q):
             continue
         if val is not None and not (float(val).is_integer() and abs(val) <= SMALL) and \
                 not any(heard(val, s) for s in said_all):
@@ -458,9 +478,25 @@ def model_check(model, lines):
     if expr:
         try:
             node = _parse(expr)
-            val, dims = _dim_eval(node, env)
+            bare = []
+            val, dims = _dim_eval(node, env, bare)
             rv, ru = _num(res.get("value")), parse_unit(res.get("unit"))
-            if ru is not None and ru[0] != dims and not any(k.startswith("?") for k in dims):
+            if bare:                       # numbers typed into the formula: their units are unknown, so only the
+                raw = None                 # value is compared, as written, and a mismatch is a note, not a stop
+                try:
+                    raw, _ = _dim_eval(node, {k: (_num(q.get("value")), {}) for k, q in
+                                              ((re.sub(r"\W", "_", str(q["name"]).strip()), q) for q in qs)
+                                              if _num(q.get("value")) is not None})
+                except Exception:
+                    pass
+                ok = rv is None or any(x is not None and _close(x, c, 0.05) for x in (raw, val)
+                                       for c in (rv, rv * (ru[1] if ru else 1.0)))
+                if not ok:
+                    out.append({"hard": False, "kind": "model_result", "line": None,
+                                "text": f"the formula {expr} works out to {fmt(raw if raw is not None else val)}, not "
+                                        f"the {fmt(rv)} {res.get('unit') or ''} the model says; write its numbers "
+                                        "as named quantities with units"})
+            elif ru is not None and ru[0] != dims and not any(k.startswith("?") for k in dims):
                 out.append({"hard": True, "kind": "units", "line": None,
                             "text": f"the formula {expr} gives {_dims_txt(dims)}, but the answer is in "
                                     f"{res.get('unit')} ({_dims_txt(ru[0])})"})
@@ -524,7 +560,7 @@ def storyboard_check(lines, model):
             val = _num(q.get("value"))
             if val is None or float(val).is_integer() and abs(val) <= SMALL:
                 continue
-            if str(q.get("from") or "").lower().startswith(("calc", "result")):
+            if str(q.get("from") or "").lower().startswith(("calc", "result")) or is_conversion(q):
                 continue
             if any(heard(val, s) for s in said[:i]):
                 continue
