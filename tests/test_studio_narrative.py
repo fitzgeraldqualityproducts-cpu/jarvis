@@ -339,3 +339,49 @@ def test_a_length_fix_that_breaks_the_story_is_not_used():
     assert script._kept_story(FIXED, broken) is FIXED
     assert script._kept_story(FIXED, None) is FIXED
     assert script._kept_story(VIDEO_20, FIXED) is FIXED
+
+
+def test_a_question_line_is_never_unsupported():
+    """Test 23 was stopped twice on "line 5 is unsupported" for a line that only asked a question."""
+    from studio import script
+    assert script.plain_question("So what does infrared actually do to your skin?")
+    assert not script.plain_question("Why is the Sun's surface 5,500 C?")
+    assert not script.plain_question("Infrared is heat. So why can't you see it?")
+    assert not script.plain_question("Infrared carries half the Sun's energy.")
+    d = dict(FIXED, lines=[dict(ln) for ln in FIXED["lines"]])
+    d["lines"][4] = L("So why does each fold cost more?", "rehook")
+    ans = {"claims": [{"line": 2, "verdict": "supported", "fact": "F1"},
+                      {"line": 5, "verdict": "unsupported", "note": "a question, closer to a transition"}],
+           "hooks": {"0": {"curiosity": 9, "clarity": 9, "specificity": 9, "honesty": 9, "speed": 9}},
+           "loop": 8, "rehook": 8, "answered": 8, "originality": 8, "inauthentic_risk": "low", "problems": []}
+    rev = script._judged(d, ans, None)
+    assert not any("line 5" in p for p in rev["hard_problems"])
+    d["lines"][4] = L("Infrared is half of sunlight.", "rehook")
+    assert any("line 5 is unsupported" in p for p in script._judged(d, ans, None)["hard_problems"])
+
+
+def test_a_story_gap_is_repaired_by_adding_a_set_up_line(studio_home, monkeypatch):  # noqa: F811
+    """Tests 21-23: whole rewrites fixed none of 25 story stops. A gap tied to one line now gets a set-up line
+    added before it, with every other line kept word for word."""
+    from studio import claude, db, script, topics
+    db.put("niche_decision", {"niche": "science", "name": "Science explained", "plan": {}})
+    tid = db.insert("INSERT INTO topics(title, fingerprint, pillar, kind, score, status, angle) VALUES(?,?,?,?,?,?,?)",
+                    "Paper folding", "fold paper", "Run It Yourself", "question", 70, "idea", "fold limit")
+    db.insert("INSERT INTO sources(topic_id, claim, url, verdict, tier, http_status, domain) VALUES(?,?,?,?,?,?,?)",
+              tid, "Gallivan folded 1,219 m 12 times", "https://www.example.edu/f", "reachable", 3, 200, "example.edu")
+    asked = []
+
+    def runner(prompt, timeout, web):
+        asked.append(prompt)
+        return json.dumps({"edits": [{"op": "insert_before", "line": 4, "text": "Picture each fold as a hairpin bend.",
+                                      "facts": ["general"]},
+                                     {"op": "delete", "line": 5}]})
+    monkeypatch.setattr(claude, "RUNNER", runner)
+    probs = ["narrative: line 4 leans on something never established (what a bend looks like)"]
+    assert script.STORY_LINE.match(probs[0])
+    fixed = script._fix_story(dict(FIXED), topics.topic(tid), probs)
+    texts = [ln["text"] for ln in fixed["lines"]]
+    assert texts[3] == "Picture each fold as a hairpin bend." and texts[4] == FIXED["lines"][3]["text"]
+    assert FIXED["lines"][4]["text"] not in texts                       # the teaser line made room
+    assert texts[:3] == [ln["text"] for ln in FIXED["lines"][:3]] and texts[-1] == FIXED["lines"][-1]["text"]
+    assert "word for word" in asked[0] and "never a new number" in asked[0]

@@ -293,6 +293,7 @@ def parse_unit(u):
     of length, mass or time are things being counted (switches, squares, layers) and count as plain numbers.
     None only when the string can't be read at all."""
     u = str(u or "").strip().lower().replace("·", "*").replace("²", "^2").replace("³", "^3").replace("per ", "/")
+    u = re.sub(r"\([^)]*\)", " ", u).strip()           # "times dimmer (at least)": the note isn't the unit
     if _unit_word(u):
         return _unit_word(u)
     num, _, den = u.partition("/")
