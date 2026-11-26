@@ -388,7 +388,7 @@ def _dim_eval(node, env, bare=None):
             return env[node.id]
         if node.id in script._CONSTS:
             return float(script._CONSTS[node.id]), {"g": {"L": 1, "T": -2}, "c": {"L": 1, "T": -1}}.get(node.id, {})
-        raise DimError(f"\"{node.id}\" isn't one of the model's quantities")
+        raise UnknownName(f"\"{node.id}\" isn't one of the model's quantities")
     if isinstance(node, ast.UnaryOp):
         v, d = _dim_eval(node.operand, env, bare)
         return (-v if isinstance(node.op, ast.USub) else v), d
@@ -458,6 +458,35 @@ def is_conversion(q):
     return False
 
 
+class UnknownName(ValueError):
+    """A formula symbol that isn't one of the model's named quantities: Jarvis can't re-run it (a note, not a
+    stop: the calculations themselves are re-run separately)."""
+
+
+# short physics symbols -> (words in a quantity's name or meaning, its usual dimensions)
+SYMBOLS = {"f": (r"freq|pitch|hz|hertz", {"T": -1}), "t": (r"time|duration|delay|lag|period", {"T": 1}),
+           "T": (r"period|time|temperature", {"T": 1}), "v": (r"speed|velocity", {"L": 1, "T": -1}),
+           "lam": (r"wavelength|wave length", {"L": 1}), "λ": (r"wavelength", {"L": 1}),
+           "d": (r"distance|length|depth|diameter", {"L": 1}), "r": (r"radius", {"L": 1}),
+           "m": (r"mass", {"M": 1}), "a": (r"acceleration", {"L": 1, "T": -2}), "F": (r"force|thrust", {"M": 1, "L": 1, "T": -2}),
+           "h": (r"height", {"L": 1}), "L": (r"length", {"L": 1})}
+
+
+def _alias(names, qs, env):
+    """Binds formula symbols the model didn't name (f for "sound frequency") to the one quantity they mean."""
+    for sym in names:
+        if sym in env or sym not in SYMBOLS:
+            continue
+        words, dims = SYMBOLS[sym]
+        hits = [q for q in qs if re.search(words, f"{q.get('name')} {q.get('means')} {q.get('unit')}", re.I)]
+        if len(hits) != 1:
+            hits = [q for q in qs if (parse_unit(q.get("unit")) or ({"?": 1}, 1))[0] == dims]
+        if len(hits) == 1:
+            key = re.sub(r"\W", "_", str(hits[0]["name"]).strip())
+            if key in env:
+                env[sym] = env[key]
+
+
 def model_check(model, lines):
     """Hard and soft problems with the writer's model: [{"hard", "kind", "text", "line"}]."""
     out = []
@@ -508,6 +537,7 @@ def model_check(model, lines):
     if expr:
         try:
             node = _parse(expr)
+            _alias({n.id for n in ast.walk(node) if isinstance(n, ast.Name)}, qs, env)
             bare = []
             val, dims = _dim_eval(node, env, bare)
             rv, ru = _num(res.get("value")), parse_unit(res.get("unit"))
@@ -536,7 +566,7 @@ def model_check(model, lines):
                                     f"{fmt(rv)} {res.get('unit')} the script says"})
         except DimError as e:
             out.append({"hard": True, "kind": "units", "line": None, "text": f"the formula {expr} doesn't work: {e}"})
-        except (SyntaxError, ValueError, ZeroDivisionError, OverflowError, TypeError) as e:
+        except (SyntaxError, ValueError, ZeroDivisionError, OverflowError, TypeError) as e:   # incl. UnknownName
             out.append({"hard": False, "kind": "model_gap", "line": None,
                         "text": f"couldn't re-run the model's formula {expr!r} ({str(e)[:60]})"})
     elif qs:
