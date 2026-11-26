@@ -168,14 +168,26 @@ def test_deliberate_failure_conclusion_contradicts_premise_or_misses_the_questio
 
 
 def test_deliberate_failure_undefined_term_and_correct_equation_wrong_model():
-    got = hard(FIXED, dict(GOOD_STORY, continuity=[{"line": 7, "missing": "what 'Gallivan number' means"}],
+    got = hard(FIXED, dict(GOOD_STORY, continuity=[{"line": 8, "missing": "what 'Gallivan number' means"}],
                            model_valid=False, model_problem="uses a full circle where the bend is a half circle"))
-    assert any("line 7 leans on something never established" in h for h in got)
+    assert any("line 8 leans on something never established" in h for h in got)      # payoff gap stops
     assert any("physics model is wrong" in h and "half circle" in h for h in got)
-    # a gap on an ordinary setup line is a note, not a stop
+
+
+def test_small_gaps_warn_big_gaps_stop():
+    """Connor's rule: 1-2 small gaps warn; 3+ gaps, or a gap in the opening or payoff, stop."""
     from studio import narrative
-    r = narrative.evaluate(FIXED, dict(GOOD_STORY, continuity=[{"line": 2, "missing": "who the student was"}]))
-    assert r["hard"] == [] and any("line 2" in a for a in r["advice"])
+
+    def ev(*lines):
+        return narrative.evaluate(FIXED, dict(GOOD_STORY, continuity=[{"line": n, "missing": f"thing {n}"}
+                                                                      for n in lines]))
+    r = ev(6, 7)                                     # two gaps in the maths steps: warnings only
+    assert r["hard"] == [] and sum("leans on" in a for a in r["advice"]) == 2
+    assert len([h for h in ev(3, 6, 7)["hard"] if "leans on" in h]) == 3     # three gaps: all stop
+    assert any("line 2" in h for h in ev(2)["hard"])                         # the opening
+    assert any("line 8" in h for h in ev(8)["hard"])                         # the payoff
+    assert ev(9)["hard"] == []                                               # the loop line may end open
+    assert ev(4, 6, 9)["hard"] == []                 # the loop line doesn't count toward three
 
 
 def test_pi_needs_a_circle_first_and_storyboard_order():
@@ -433,3 +445,22 @@ def test_stopped_story_keeps_real_grade():
     from studio import narrative
     nar = {"hard": ["narrative: x"], "score": 49.0, "grade": 82.5}
     assert "graded 82.5" in narrative.summary(nar)
+
+
+def test_moon_walk_false_alarms():
+    """Test 27: pi typed in as 3.14159, '7' as days in a week, and a sourced circumference."""
+    d = {"hooks": ["Could you walk around the Moon?"],
+         "lines": [L("Could you walk around the Moon?", "hook"),
+                   L("The Moon's radius is 1,737.4 km, and a circle's circumference is 2 times pi times the radius.",
+                     "setup"),
+                   L("So the Moon is 10,916 km around.", "math"),
+                   L("At 5 km an hour for 4 hours a day, that's 546 days, or 78 weeks.", "math"),
+                   L("So yes: about a year and a half of walking.", "payoff"), L("Which way would you go?", "loop")],
+         "calcs": [{"expr": "2*3.14159265*1737.4", "result": 10916, "unit": "km"},
+                   {"expr": "10916/(5*4)", "result": 546, "unit": "days"},
+                   {"expr": "546/7", "result": 78, "unit": "weeks"}]}
+    assert not [h for h in hard(d) if "unexplained" in h or "before the viewer" in h]
+    d["lines"][1] = L("The Moon's radius is 1,737.4 km.", "setup")          # pi never said: still stopped
+    assert any("pi" in h for h in hard(d))
+    # a circumference the sources give needn't be derived on screen
+    assert not [h for h in hard(d, facts=[{"claim": "The Moon's circumference is 10,916 km."}]) if "line 3" in h]
