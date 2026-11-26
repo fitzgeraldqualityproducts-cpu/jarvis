@@ -187,3 +187,23 @@ def test_rating_asks_for_newcomer_terms(fakes, monkeypatch):  # noqa: F811
     monkeypatch.setattr(claude, "RUNNER", lambda p, timeout, web: (seen.append(p), "{}")[1])
     topics.rate([{"title": "x", "angle": "y", "facts": []}])
     assert '"jargon"' in seen[-1] and "NEWCOMER TERMS" in seen[-1]
+
+
+def test_ideas_needing_a_chain_of_steps_are_dropped_and_the_writer_keeps_to_one(fakes, monkeypatch):  # noqa: F811
+    from studio import claude, script, topics
+    fc, tid = fakes
+    c = {"title": "Run sideways on the Moon", "angle": "speed, then force, then grip",
+         "_checked": [{"http_status": 200, "url": "https://nasa.gov/a"}, {"http_status": 200, "url": "https://esa.int/b"}]}
+    chain = _rating(steps=3)
+    _, f = topics.score_one(chain, 8)
+    assert any("chain of 3 worked-out numbers" in w for w in topics.gate(c, chain, 8, f))
+    for ok in (_rating(steps=1), _rating(steps=2), _rating(steps="n/a"), _rating()):
+        assert not any("worked-out" in w for w in topics.gate(c, ok, 8, f))
+    seen = []
+    real = claude.RUNNER
+    monkeypatch.setattr(claude, "RUNNER", lambda p, timeout, web: (seen.append(p), real(p, timeout, web))[1])
+    script.write(topics.topic(tid))
+    assert "ONE STEP" in seen[0]
+    monkeypatch.setattr(claude, "RUNNER", lambda p, timeout, web: (seen.append(p), "{}")[1])
+    topics.rate([{"title": "x", "angle": "y", "facts": []}])
+    assert '"steps"' in seen[-1]

@@ -264,6 +264,9 @@ Rules:
   step with real numbers, the payoff, and a LOOP ending: the last line must lead straight back into the first line,
   so when the Short repeats it plays as one continuous thought (for example the last line sets up the hook's
   question again, or ends mid-thought that the hook completes). No outro, no "like and subscribe".
+- ONE STEP (Connor, 2026-11-26): one surprising number and at most ONE calculation from numbers the viewer has
+  just heard (one multiply or divide, then what it means). Never a chain where a worked-out number feeds the next
+  calculation: in 40 seconds a viewer can't follow it. If the angle needs more, keep only its most surprising step.
 - ONE QUESTION: the whole Short answers one clear question that the hook raises (asked out loud or plainly
   implied). Every line moves toward the answer, and the payoff answers it in plain words, so a viewer can say the
   answer back after one watch. Nothing that belongs to a different question.
