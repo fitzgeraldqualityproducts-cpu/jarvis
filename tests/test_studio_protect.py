@@ -287,7 +287,7 @@ def test_quality_score_is_weighted_and_never_guesses():
     from studio import qa
     best = qa.quality({"lufs": -14, "loop_diff": 0, "timing": 1.0, "speech_start": 0, "hook": 100, "originality": 10,
                        "confidence": 1.0})
-    assert best["score"] == 100.0 and not best["missing"]
+    assert best["score"] == 100.0 and set(best["missing"]) == {"story", "visual_purpose"}   # not measured: left out
     mid = qa.quality({"lufs": -16, "loop_diff": 7, "timing": 0.925, "speech_start": 0.175, "hook": 50,
                       "originality": 7.5, "confidence": 0.5})
     assert mid["score"] == 50.0

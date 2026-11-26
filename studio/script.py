@@ -155,6 +155,35 @@ DRAFTS = 3                              # first drafts written side by side; the
 BEATS = ("hook", "setup", "math", "rehook", "payoff", "loop")
 STOCK_REHOOKS = ("here's the thing", "here's the weird part", "but wait", "wait for it", "it turns out", "plot twist")
 
+# Connor's Video 20 audit (2026-11-25): the story must be scientifically defensible BEFORE it is made exciting.
+STORY_FIRST = """
+
+WORK IN THIS ORDER (the story must make sense before it is made exciting; never write a hook first and invent the
+explanation afterwards):
+1. The central question: one plain question a curious viewer would ask.
+2. The physical model: what object, what happens to it, what is measured, and the assumptions (each with why it is
+   fair). Check that the formula really describes THIS situation (a half-circle bend is not a full circle; a minimum
+   length needed is not a length "lost"); arithmetic being right is not enough.
+3. The maths: starting values with units and where each comes from (a fact id, "example" for your own labelled
+   pick, "standard" for textbook science), the formula, the substitution, the result, and what it means.
+4. Only then the narration. Every beat depends only on what the viewer was already told: never use a number,
+   term, multiplier or assumption before the line that introduces it. Every multiplier is derived out loud before
+   it is used ("4,096 layers, plus 4, times 4,096 minus 1, over 6" before "that's 2,798,250"). Every unit
+   conversion is said. Two different quantities (a sheet's length and a street's, material used and material
+   left) never share a number or a word. The last line's answer follows from the lines before it and answers the
+   opening question, not a different one.
+Write the model ONCE as "model" (before the drafts), and for every line say "learn" (what the viewer learns there,
+under 12 words) and "uses" (the model quantity names that line relies on)."""
+MODEL_SHAPE = ('"model": {"question": "...", "premise": "what physically happens, to what", "assumptions": [{"what": '
+               '"...", "why": "..."}], "quantities": [{"name": "t", "means": "tissue thickness", "value": 0.1, "unit": '
+               '"mm", "from": "F2|example|standard|calc"}], "formula": {"expr": "pi*t*(2**n+4)*(2**n-1)/6", '
+               '"means": "...", "applies_because": "..."}, "result": {"value": 879, "unit": "m"}, "answer": "..."},\n')
+
+
+def _narrative_on():
+    from studio import narrative
+    return narrative.mode() != "off"
+
 
 def _drafts_wanted(feedback, previous):
     if feedback or previous:
@@ -189,6 +218,7 @@ def write(topic, feedback=None, previous=None):
         fix = ("\n\nYour previous draft failed review. Fix EVERY problem below and change nothing else that was fine. "
                "Don't add any new claim while fixing:\n"
                + "\n".join(f"- {p}" for p in feedback) + idea + "\n\nPrevious draft:\n" + json.dumps(previous)[:6000])
+    story_first = STORY_FIRST if _narrative_on() else ""
     prompt = f"""Write a YouTube Short script. Channel: {d.get('name', '')}. Positioning: {plan.get('positioning', '')}.
 Audience: {plan.get('audience', 'curious US adults')}. Style: {plan.get('style', 'calm, clear, conversational')}.
 Topic: {topic['title']}
@@ -251,10 +281,13 @@ Rules:
   line that lands the surprising result; exactly one) or "loop" (the last line). The beats drive the edit: the
   payoff gets the big on-screen moment and the narrator leans on it.
 - "visual" says what the screen shows for that line (diagram, chart, number, map, simple animation; no footage).
-Also write 5 different hooks (each could replace line 1) and 3 title options (under 60 characters, honest).{learned}{fix}
+Also write 5 different hooks (each could replace line 1) and 3 title options (under 60 characters, honest).{story_first}{learned}{fix}
 
 {{shape}}"""
-    one = ('JSON only: {"hooks": ["..." x5], "lines": [{"text": "...", "facts": ["F1"], "visual": "...", "beat": "setup"}],\n'
+    model_shape = MODEL_SHAPE if story_first else ""
+    line_extra = ', "learn": "...", "uses": ["t"]' if story_first else ""
+    one = ('JSON only: {' + model_shape + '"hooks": ["..." x5], "lines": [{"text": "...", "facts": ["F1"], "visual": "...", '
+           '"beat": "setup"' + line_extra + '}],\n'
            '"calcs": [{"expr": "...", "result": 0.0, "unit": "...", "says": "what it shows"}], "titles": ["..." x3],\n'
            '"needs": [{"line": 4, "what": "the wavelength of red light", "value": "700 nm"}]} ("needs" is usually empty)')
     n = _drafts_wanted(feedback, previous)
@@ -267,15 +300,19 @@ Also write 5 different hooks (each could replace line 1) and 3 title options (un
     if ans is None:
         many = (f"Write {n} COMPLETE drafts that follow every rule above. Each is built around a DIFFERENT everyday image "
                 "or angle (say which in \"angle\"), so they are real alternatives, not rewordings. Same facts, same "
-                "honesty rules.\n\n"
-                'JSON only: {"drafts": [{"angle": "...", "hooks": ["..." x5], "lines": [{"text": "...", "facts": ["F1"], '
-                '"visual": "...", "beat": "setup"}], "calcs": [{"expr": "...", "result": 0.0, "unit": "...", "says": '
+                "honesty rules" + (", and all of them tell the SAME model (one model, written once, first)" if story_first
+                                   else "") + ".\n\n"
+                'JSON only: {' + model_shape + '"drafts": [{"angle": "...", "hooks": ["..." x5], "lines": [{"text": "...", '
+                '"facts": ["F1"], "visual": "...", "beat": "setup"' + line_extra + '}], "calcs": [{"expr": "...", '
+                '"result": 0.0, "unit": "...", "says": '
                 f'"..."}}], "titles": ["..." x3], "needs": []}} x{n}]}}')
         raw = claude.ask_json(prompt.replace("{shape}", many), timeout=900, web=False,
                               purpose=f"script ({n} drafts): {topic['title']}")
         ans = pick_draft(raw, topic)
     if not isinstance(ans, dict) or not ans.get("lines"):
         raise ScriptRejected("Claude didn't return a script")
+    if feedback and previous and isinstance(previous.get("model"), dict) and not isinstance(ans.get("model"), dict):
+        ans["model"] = previous["model"]          # a rewrite keeps the model unless it fixed it
     ans = _clean(ans)
     if number_check_on():
         ans, rep = tag_numbers(ans, topic)
@@ -322,6 +359,12 @@ def _screen(d):
         problems.append(f"{n} words; it must be {WORDS_MIN}-{WORDS_MAX}: " + ("cut" if n > WORDS_MAX else "add"))
     low = " ".join(str(ln["text"]).lower() for ln in d.get("lines") or [])
     problems += [f"stock phrase \"{p}\"" for p in STOCK_REHOOKS if p in low]
+    if _narrative_on():                         # free: an unexplained number or unit slip drops a draft before judging
+        from studio import narrative
+        try:
+            problems += narrative.evaluate(dict(d, hook=hooks[0] if hooks else None))["hard"][:3]
+        except Exception as e:
+            print(f"(story check skipped: {str(e)[:120]})")
     return problems
 
 
@@ -401,6 +444,8 @@ def pick_draft(raw, topic):
     drafts = [_clean(d) for d in drafts if isinstance(d, dict) and d.get("lines")]
     if not drafts:
         return None
+    if isinstance(raw, dict) and isinstance(raw.get("model"), dict):
+        drafts = [d if isinstance(d.get("model"), dict) else dict(d, model=raw["model"]) for d in drafts]
     good = [(i, d) for i, d in enumerate(drafts) if not _screen(d)]
     pool = good or [(i, d) for i, d in enumerate(drafts)]
     scores, why, notes = {}, "", {}
@@ -414,6 +459,8 @@ def pick_draft(raw, topic):
         _learn_from_drafts(topic, drafts, good, scores, notes, best)
     chosen = dict(pool[best][1])
     chosen.pop("angle", None)
+    if isinstance(raw, dict) and isinstance(raw.get("model"), dict) and not isinstance(chosen.get("model"), dict):
+        chosen["model"] = raw["model"]
     chosen["picked"] = {"of": len(drafts), "passed_screen": len(good), "angle": str(pool[best][1].get("angle") or "")[:160],
                         "score": judge_score(scores.get(best)) if scores else None, "why": why,
                         "dropped": {str(i): _screen(d)[:3] for i, d in enumerate(drafts) if (i, d) not in good}}
@@ -803,7 +850,14 @@ def review(draft, topic, video_id=None, recheck=None):
     if recheck:
         ans = _recheck(draft, topic, fact_list, lines, recheck)
         if ans is not None:
-            return _judged(draft, ans, video_id, rechecked=sorted(recheck["changed"]))
+            return _judged(draft, ans, video_id, rechecked=sorted(recheck["changed"]), facts=facts)
+    story_ask = story_shape = model_txt = ""
+    if _narrative_on():
+        from studio import narrative
+        story_ask, story_shape = narrative.REVIEW_ASK, narrative.REVIEW_SHAPE
+        m = draft.get("model") if isinstance(draft.get("model"), dict) else None
+        model_txt = ("\nThe writer's model (the physics and maths the story rests on):\n" + json.dumps(m)[:2500] + "\n"
+                     if m else "\nThe writer gave no model: judge the physics from the narration.\n")
     from studio import packaging
     best = packaging.best_openings()
     proven_txt = proven_key = ""
@@ -822,7 +876,7 @@ Sources:
 
 Script lines:
 {lines}
-
+{model_txt}
 Hooks:
 {hooks}
 
@@ -849,6 +903,7 @@ picture, e.g. ["127 C"]; [] if none), "originality" 0-10 (own explanation and wo
 sentence naming what reads generic and a concrete idea to make it the channel's own), "inauthentic_risk"
 "low/medium/high" (does it read like mass-produced template content?), and "problems": anything else a careful
 editor would fix (confusing step, misleading simplification, unit mistake).
+{story_ask}
 
 For each "supported" or "wrong" claim also give "quote": the source's own words that settle it (at most 25 words,
 copied exactly), "confidence": 0.0-1.0 (how sure you are of the verdict), and "source_date": the page's
@@ -859,13 +914,13 @@ published or updated date if it shows one (YYYY-MM-DD), else "". Give "note" onl
 JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|wrong", "fact": "F1",
 "quote": "...", "confidence": 0.9, "source_date": ""}}, {{"line": 2, "verdict": "unsupported", "note": "..."}}],
 "hooks": {{"0": {{"curiosity": 0, "clarity": 0, "specificity": 0, "honesty": 0, "speed": 0{proven_key}}}}},
-"loop": 0, "rehook": 0, "question": "...", "answered": 0, "bare_numbers": [], "originality": 0, "originality_fix": "...", "inauthentic_risk": "low", "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
+"loop": 0, "rehook": 0, "question": "...", "answered": 0, "bare_numbers": [], "originality": 0, "originality_fix": "...", "inauthentic_risk": "low", "problems": ["..."]{story_shape}}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
     if not isinstance(ans, dict):
         raise ScriptRejected("the fact-check didn't return a result")
-    return _judged(draft, ans, video_id)
+    return _judged(draft, ans, video_id, facts=facts)
 
 
-def _judged(draft, ans, video_id, rechecked=None):
+def _judged(draft, ans, video_id, rechecked=None, facts=None):
     """The code's half of the review: the checker's answer plus the hard rules the code checks itself."""
     problems = []
     claims = [c for c in ans.get("claims") or [] if isinstance(c, dict)]
@@ -930,11 +985,26 @@ def _judged(draft, ans, video_id, rechecked=None):
     if sim >= SIMILAR_SCRIPT:
         problems.append(f"too close to the script of video {sim_vid} ({sim:.0%} word overlap)")
     problems += [f"editor: {p}" for p in ans.get("problems") or [] if isinstance(p, str) and p.strip()][:5]
+    nar = None
+    if _narrative_on():                           # the Narrative Integrity Engine (studio/narrative.py)
+        from studio import narrative
+        try:
+            nar = narrative.evaluate(dict(draft, hook=hook), ans.get("story"), facts)
+        except Exception as e:
+            print(f"(story check skipped: {str(e)[:120]})")
+        if nar:
+            nar["story"] = ans.get("story") if isinstance(ans.get("story"), dict) else None
+            if narrative.mode() == "block":
+                problems += nar["hard"]
+            else:
+                problems += [f"editor: {h[len('narrative: '):]}" for h in nar["hard"]]
+            problems += [f"editor: story: {a}" for a in nar["advice"][:3]]
     hard = [p for p in problems if not p.startswith("editor: ")]
     return {"ok": not hard, "problems": problems, "hard_problems": hard, "claims": claims, "hook_ratings": ratings,
             "hook_index": hi, "hook_score": hs, "hook": hook, "body": body, "words": words, "calcs": calcs, "loop": loop, "rehook": rehook,
             "originality": orig, "inauthentic_risk": ans.get("inauthentic_risk"), "similar": [sim, sim_vid],
             "question": q or None, "answered": answered,
+            **({"narrative": nar} if nar else {}),
             **({"rechecked": rechecked} if rechecked else {})}
 
 
@@ -1022,6 +1092,7 @@ JSON only: {{"claims": [{{"line": 3, "verdict": "supported", "fact": "F1", "quot
             "loop": prior.get("loop"), "rehook": prior.get("rehook"), "originality": prior.get("originality"),
             "question": prior.get("question"), "answered": prior.get("answered"),
             "inauthentic_risk": prior.get("inauthentic_risk"),
+            "story": (prior.get("narrative") or {}).get("story"),
             "problems": (editor + [p for p in ans.get("problems") or [] if isinstance(p, str)])[:5]}
 
 
@@ -1051,6 +1122,7 @@ def draft_step(topic, video_id=None, feedback=None, previous=None, draft=None):
                      "VALUES(?,?,?,?,?,?,?,?,?)", video_id, v + 1, json.dumps(draft["hooks"]), hook, text_of(draft),
                      json.dumps({"lines": draft["lines"], "calcs": draft.get("calcs") or [], "titles": draft.get("titles") or [],
                                  "by": draft.get("by") or "claude",
+                                 **({"model": draft["model"]} if isinstance(draft.get("model"), dict) else {}),
                                  **({"picked": draft["picked"]} if draft.get("picked") else {}),
                                  **({"recheck": draft["recheck"]} if draft.get("recheck") else {}),
                                  **({"number_check": draft["number_check"]} if draft.get("number_check") else {})}),
@@ -1079,8 +1151,11 @@ def _saved_recheck(st, video_id):
 
 def _draft_of(row):
     st = json.loads(row["structure"] or "{}")
-    return {"hooks": json.loads(row["hooks"] or "[]"), "lines": st.get("lines") or [], "calcs": st.get("calcs") or [],
-            "titles": st.get("titles") or []}
+    d = {"hooks": json.loads(row["hooks"] or "[]"), "lines": st.get("lines") or [], "calcs": st.get("calcs") or [],
+         "titles": st.get("titles") or []}
+    if isinstance(st.get("model"), dict):
+        d["model"] = st["model"]
+    return d
 
 
 def lookup_on():
@@ -1120,7 +1195,8 @@ def _look_up_flagged(topic, video_id, row, draft, st, rev, checks):
              if i in found else ln for i, ln in enumerate(draft["lines"], 1)]
     new = dict(draft, lines=lines)
     st2 = {"lines": lines, "calcs": st.get("calcs") or [], "titles": st.get("titles") or [], "by": st.get("by") or "claude",
-           "lookup_from": row["id"], "looked_up": {str(i): f for i, f in found.items()}}
+           "lookup_from": row["id"], "looked_up": {str(i): f for i, f in found.items()},
+           **({"model": st["model"]} if isinstance(st.get("model"), dict) else {})}
     plan = recheck_plan(draft, new, {i: i for i in range(1, len(lines) + 1)}, checks) if partial_recheck_on() else None
     if plan:
         st2["recheck"] = {"from": row["id"], "changed": sorted(plan["changed"]),
@@ -1142,7 +1218,7 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     rev = review(draft, topic, video_id, recheck=_saved_recheck(st, video_id))
     checks = {k: rev[k] for k in ("ok", "problems", "hard_problems", "claims", "hook_ratings", "hook_index",
                                   "hook_score", "words", "loop", "rehook", "originality", "inauthentic_risk", "similar",
-                                  "question", "answered")
+                                  "question", "answered", "narrative")
               if k in rev}
     if rev.get("rechecked"):
         checks["rechecked"] = rev["rechecked"]
@@ -1166,6 +1242,7 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     db.run("UPDATE scripts SET hook=?, body=?, structure=?, checks=?, status=? WHERE id=?", rev["hook"], rev["body"],
            json.dumps(st), json.dumps(checks), "passed" if rev["ok"] else "failed", row["id"])
     row = dict(db.one("SELECT * FROM scripts WHERE id=?", row["id"]))
+    _story_memory(topic, video_id, row, rev)
     if rev["ok"]:
         _trial_outcome(topic, video_id, True)
         _record_claims(topic, video_id, rev, draft["lines"])
@@ -1217,12 +1294,14 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
         topics.set_status(topic["id"], script_status="failed")
         guard.audit("script.failed", True, {"topic": topic["id"], "video": video_id, "repeated": again,
                                             "problems": rev["hard_problems"][:5]})
+        _story_outcome(video_id, False)
         raise ScriptRejected(f"the same problem came back after a revision ({again.replace('_', ' ')}): "
                              + "; ".join(rev["hard_problems"][:3]))
     if tries > max_revisions:
         _trial_outcome(topic, video_id, False)
         topics.set_status(topic["id"], script_status="failed")
         guard.audit("script.failed", True, {"topic": topic["id"], "video": video_id, "problems": rev["hard_problems"][:5]})
+        _story_outcome(video_id, False)
         raise ScriptRejected("the script still failed the fact-check: " + "; ".join(rev["hard_problems"][:4]))
     return "revise", row
 
@@ -1387,10 +1466,17 @@ def _prune(draft, rev):
     words = len(text_of(out, rev.get("hook")).split())
     if not WORDS_MIN <= words <= WORDS_MAX:
         return None
+    if _narrative_on():                     # a cut line may have been a step of the explanation
+        from studio import narrative
+        try:
+            if narrative.evaluate(dict(out, hook=rev.get("hook")))["hard"]:
+                return None
+        except Exception:
+            return None
     return out, sorted(flagged.items()), {old: new for new, old in enumerate(keep, 1)}
 
 
-REPEAT_STOPS = ("unsupported", "wrong_fact", "originality", "missing_value")
+REPEAT_STOPS = ("unsupported", "wrong_fact", "originality", "missing_value", "story_math")
 
 
 def _repeated(video_id, row_id, problems):
@@ -1503,6 +1589,28 @@ def make(topic, video_id=None, progress=print, max_revisions=MAX_REVISIONS):
         revise_step(topic, video_id)
 
 
+def _story_outcome(video_id, worked):
+    try:
+        from studio import storymemory
+        storymemory.outcome(video_id, worked)
+    except Exception:
+        pass
+
+
+def _story_memory(topic, video_id, row, rev):
+    """Story failures go to the narrative_failures table (exact line, what was missing, root cause, prevention
+    rule); a pass marks this Short's earlier failures as fixed. Never stops a script."""
+    try:
+        from studio import storymemory
+        nar = rev.get("narrative") or {}
+        if rev["ok"]:
+            storymemory.outcome(video_id, True)
+        elif nar.get("issues"):
+            storymemory.record(nar["issues"], topic, video_id, row.get("version") if hasattr(row, "get") else row["version"])
+    except Exception as e:
+        print(f"(couldn't save the story lesson: {str(e)[:120]})")
+
+
 def _confidence(v):
     try:
         return max(0.0, min(1.0, float(v)))
@@ -1560,6 +1668,16 @@ def report(video_id):
         lines.append(f"- line {c.get('line')}: **{c.get('verdict')}** {c.get('note', '')}{extra}")
     lines += ["", "## Title ideas", ""] + [f"- {t}" for t in st.get("titles") or []]
     lines += ["", "## Other hooks", ""] + [f"- {h}" for h in json.loads(row["hooks"]) if h != row["hook"]]
+    nar = ck.get("narrative")
+    if nar:
+        from studio import narrative
+        lines += ["", "## Story check", "", narrative.summary(nar) + "."]
+        m = st.get("model") or {}
+        if m:
+            lines += [f"- Question: {m.get('question', '')}", f"- What happens: {m.get('premise', '')}",
+                      f"- Formula: `{(m.get('formula') or {}).get('expr', '') if isinstance(m.get('formula'), dict) else m.get('formula')}`",
+                      f"- Answer: {m.get('answer', '')}"]
+        lines += [f"- {a}" for a in nar.get("advice") or []]
     if ck.get("problems"):
         lines += ["", "## Editor notes", ""] + [f"- {p}" for p in ck["problems"]]
     return "\n".join(lines) + "\n"
