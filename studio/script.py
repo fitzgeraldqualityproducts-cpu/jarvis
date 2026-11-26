@@ -1641,9 +1641,12 @@ STORY_LINE = re.compile(r"^narrative: (line \d+ (leans on|relies on|says .* befo
                         r"unexplained number: line \d+|the conclusion doesn't follow)")
 
 
+LENGTH_PROBLEM = re.compile(r"^\d+ words; it must be")
+
+
 def _story_repairable(hard):
     return bool(hard) and _narrative_on() and any(STORY_LINE.match(h) for h in hard) and \
-        all(STORY_LINE.match(h) or LINE_PROBLEM.match(h) for h in hard)
+        all(STORY_LINE.match(h) or LINE_PROBLEM.match(h) or LENGTH_PROBLEM.match(h) for h in hard)
 
 
 def _story_fix_tried(video_id):
@@ -1669,7 +1672,8 @@ flagged line so it no longer needs it (plain words instead of jargon like a band
 line the fact-checker marked wrong is reworded to its correction. If the conclusion doesn't follow, reword the
 payoff line (the line before the last) so it answers the opening question plainly from the lines before it. A
 value you add must come from the facts below; never a new number. Every other line stays exactly as it is,
-word for word. The script is {n} words and must stay {WORDS_MIN}-{WORDS_MAX}: if an added line would push it over,
+word for word. The script is {n} words; when you are done it must be {WORDS_MIN + 10}-{WORDS_MAX - 8} words
+(count them, the hook included: a script over {WORDS_MAX} is stopped). If an added line would push it over,
 shorten or delete a line that explains nothing (a teaser or a restatement), never a step of the explanation,
 the payoff or the last line.
 

@@ -409,3 +409,21 @@ def test_loop_line_is_never_unsupported_and_repair_runs_before_the_repeat_stop(s
     db.insert("INSERT INTO scripts(video_id, version, hooks, hook, body, structure, checks, status, created) "
               "VALUES(?,?,?,?,?,?,?,?,?)", 7, 1, "[]", "", "", json.dumps({"story_fix": {"edits": 1}}), "{}", "draft", 0)
     assert script._story_fix_tried(7)
+
+
+def test_derived_si_units_known():
+    from studio import narrative
+    m = {"question": "q", "premise": "p", "answer": "a",
+         "quantities": [{"name": "F", "means": "thrust", "value": 2279, "unit": "kN", "from": "F1"},
+                        {"name": "v", "means": "exhaust speed", "value": 4436, "unit": "m/s", "from": "F2"}],
+         "formula": {"expr": "F/v"}, "result": {"value": 514, "unit": "kg/s"}}
+    hard = [p for p in narrative.model_check(m, [{"text": "2,279 kN of thrust at 4,436 m/s"}]) if p["hard"]]
+    assert hard == []
+
+
+def test_story_repair_allowed_with_length_problem():
+    from studio import script
+    hard = ["107 words; it must be 60-105", "narrative: unexplained number: line 5 says 452.3 (fix: say it first)"]
+    assert script.STORY_LINE.match(hard[1])
+    assert script._story_repairable(hard)
+    assert not script._story_repairable(["107 words; it must be 60-105"])
