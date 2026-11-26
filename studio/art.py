@@ -15,6 +15,7 @@ STYLE = {"diagram": ("stylised digital illustration, clean shapes, soft lighting
          "hud": ("stylised 3D render, simple low-poly shapes, first-person view, bright natural daylight, soft "
                  "shadows, vivid sky, wide angle, vertical composition, no text")}
 GEN_W, GEN_H = 512, 896          # SDXL-Turbo's sweet spot, portrait; scaled up to 1080x1920
+HD_W, HD_H = 768, 1344           # config art_size "hd" (OFF until Connor OKs a PC sample): 1.5x more detail per side
 DIM = 0.45                       # brightness kept: the numbers on top must stay the brightest thing
 LICENCE = "AI illustration made with SDXL-Turbo (Stability AI Community License; commercial use allowed under $1M revenue)"
 
@@ -39,8 +40,22 @@ def prompt(scene, line, look="diagram"):
     return f"{_with_look(subject(scene, line), scene)}, {STYLE.get(look, STYLE['diagram'])}{tail}"
 
 
+def gen_size():
+    """(width, height) the AI pictures are painted at. Config "art_size": "hd" paints them at 768x1344 so less is
+    invented when they are enlarged to 1080x1920 (the text and diagrams are always drawn at full size); the
+    default stays 512x896 until a sample on the PC shows the RTX 2060 handles it well."""
+    try:
+        from studio import config
+        if str(config.general().get("art_size") or "").lower() == "hd":
+            return HD_W, HD_H
+    except Exception:
+        pass
+    return GEN_W, GEN_H
+
+
 def _key(p, seed):
-    return hashlib.sha1(f"{p}|{seed}|{GEN_W}x{GEN_H}".encode()).hexdigest()[:12]
+    w, h = gen_size()
+    return hashlib.sha1(f"{p}|{seed}|{w}x{h}".encode()).hexdigest()[:12]
 
 
 def raw_pictures(video_id, scenes, lines, look="diagram"):
@@ -57,8 +72,8 @@ def raw_pictures(video_id, scenes, lines, look="diagram"):
             want.append((i, {"prompt": p, "out": str(out), "seed": seed}))
     if want:
         with engines.heavy("AI pictures (SDXL-Turbo)"):
-            ans = engines.run("sdxl", "sdxl_worker", {"images": [w for _, w in want], "width": GEN_W,
-                                                      "height": GEN_H, "steps": 4})
+            ans = engines.run("sdxl", "sdxl_worker", {"images": [w for _, w in want], "width": gen_size()[0],
+                                                      "height": gen_size()[1], "steps": 4})
         errors = []
         for (i, w), r in zip(want, ans.get("images") or []):
             if r.get("ok") and Path(w["out"]).exists():
@@ -116,7 +131,7 @@ def shot_pictures(video_id, scenes, look="diagram"):
     if want:
         try:
             with engines.heavy("more AI pictures for the shots (SDXL-Turbo)"):
-                engines.run("sdxl", "sdxl_worker", {"images": [w for _, w in want], "width": GEN_W, "height": GEN_H,
+                engines.run("sdxl", "sdxl_worker", {"images": [w for _, w in want], "width": gen_size()[0], "height": gen_size()[1],
                                                     "steps": 4})
         except Exception:
             pass
@@ -216,7 +231,7 @@ def fit(video_id, scenes, lines, raws, look="diagram"):
         todo = [w for _, out, w in want if not out.exists()]
         if todo:
             with engines.heavy("more AI pictures (SDXL-Turbo)"):
-                engines.run("sdxl", "sdxl_worker", {"images": todo, "width": GEN_W, "height": GEN_H, "steps": 4})
+                engines.run("sdxl", "sdxl_worker", {"images": todo, "width": gen_size()[0], "height": gen_size()[1], "steps": 4})
         takes = [(i, out) for i, out, _ in want if out.exists()]
         if takes:
             s2 = clip_scores([o for _, o in takes], [texts[order.index(i)] for i, _ in takes])

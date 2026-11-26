@@ -136,6 +136,15 @@ MIGRATIONS = [
     ALTER TABLE sources ADD COLUMN confidence REAL;
     ALTER TABLE sources ADD COLUMN source_date TEXT
     """,
+    # 6: story failures (Video 20 audit): the exact line that lost the viewer, why, and the rule that prevents it
+    """
+    CREATE TABLE narrative_failures (
+        id INTEGER PRIMARY KEY, t REAL, video_id INTEGER, topic_id INTEGER, topic TEXT, script_version INTEGER,
+        kind TEXT, beat TEXT, line_no INTEGER, sentence TEXT, missing TEXT, math_issue TEXT, root_cause TEXT,
+        fix TEXT, worked INTEGER);
+    CREATE INDEX narrative_failures_t ON narrative_failures(t);
+    CREATE INDEX narrative_failures_video ON narrative_failures(video_id)
+    """,
 ]
 
 _conns = {}

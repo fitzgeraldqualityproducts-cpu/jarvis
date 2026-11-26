@@ -263,6 +263,12 @@ when nothing is measurable. A value that depends on an assumption (the standard 
 is labelled as such ("≈", "standard atmosphere"). Two different numbers for the same kind of thing (two
 altitudes, two dates) must say in their labels how they differ (e.g. "record flight" vs "cruise target"), never
 look like the same thing. Writer's visual notes are hints only.
+Every visual explains the exact thing its line says, never attractive but unrelated footage: a line deriving a
+multiplier gets equation (built term by term, so the viewer sees where it comes from); a thickness or size gets
+measure or scale against something familiar; a bend or curve gets the shape drawn; a line about what is left of
+something gets compare with the whole, the used part and the rest as three separate labelled bars; a city or
+street comparison labels which length is the street and which is the material. Never let one number stand for
+two different things on screen.
 Also give every scene "art": 5-12 words describing a picture of the scene's real-world subject as a place or
 objects seen from a person's point of view (e.g. "a crowded beach at Waikiki seen from the sand"); no text,
 numbers, diagrams, faces or famous people. The picture maker cannot write: never ask for a sign, label, screen,
@@ -1240,7 +1246,7 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                 n_hd = sum(1 for k in raws if enh.get(k, {}).get("hd"))
                 used["sharpen"] = (f"Real-ESRGAN: {n_hd} of {len(raws)} pictures" if sharpen else "off") + \
                     (f" ({enh['_note'][:160]})" if enh.get("_note") else "")
-            used["detail"] = (f"pictures made at {art.GEN_W}x{art.GEN_H}" +
+            used["detail"] = (f"pictures made at {art.gen_size()[0]}x{art.gen_size()[1]}" +
                               (", enlarged 4x by Real-ESRGAN" if sharpen else ", enlarged without the sharpener") +
                               "; text, captions and diagrams drawn natively at 1080x1920")
             for k, rp in sorted(raws.items()):

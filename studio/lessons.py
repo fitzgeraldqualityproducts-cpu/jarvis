@@ -35,6 +35,18 @@ RULES = [
      "first, and make the payoff answer it in plain words."),
     ("viewer_lost", "script", r"^clarity: a first-time viewer",
      "A first-time viewer got lost {n} time(s): one step per line, no skipped step, and tie every line to the main point."),
+    ("story_math", "script", r"^narrative: (unexplained number|line \d+ says .* before the viewer|line \d+ relies on|"
+                             r"line \d+ says .*no fact, calculation)|^narrative: the starting value",
+     "Stories used numbers the viewer couldn't trace {n} time(s): say every input before a worked-out number, derive "
+     "every multiplier out loud, and introduce each starting value (with its unit) before the line that uses it."),
+    ("story_units", "script", r"^narrative: (unit slip|the formula .* (doesn't work|gives|works out))",
+     "Units or formulas didn't add up {n} time(s): give every value its unit and say each conversion in one step."),
+    ("story_model", "script", r"^narrative: the physics model",
+     "The physics model was wrong for the situation {n} time(s): establish what physically happens before choosing "
+     "the formula, and check the formula describes THAT situation."),
+    ("story_logic", "script", r"^narrative: (line \d+ leans on|the conclusion|unclear premise|explain-it-to-a-stranger)",
+     "Stories didn't follow from line to line {n} time(s): open with what physically happens and the one question, "
+     "make every line follow from the one before, and end on the answer to that question."),
     ("stock_phrase", "script", r"stock phrase",
      "Drafts were dropped {n} time(s) for stock explainer phrases: say the re-hook and transitions in your own words."),
     ("too_long", "script", r"\d+ words; it must be .*cut|words; it must be \d+-\d+.*cut",
@@ -132,6 +144,14 @@ def advice(area, now=None):
             lines.append("Recent judge notes on drafts that lost: " + " / ".join(f"\"{n[:160]}\"" for n in notes))
     if area == "script":
         try:
+            from studio import storymemory
+            story = storymemory.advice(now=now)
+        except Exception:
+            story = ""
+        if story:
+            lines.append(story)
+    if area == "script":
+        try:
             from studio import retention
             real = retention.advice()
         except Exception:
@@ -188,6 +208,8 @@ def summary(now=None):
              "thin_sources": "thin sources", "stock_phrase": "stock phrases in drafts",
              **{f"weak_{k}": f"drafts that lost on {k}" for k in JUDGE_ADVICE}, "qa": "failed video checks", "youtube": "YouTube rejections",
              "retention": "lines where real viewers left fastest",
+             "story_math": "numbers the viewer couldn't trace", "story_units": "unit or formula slips",
+             "story_model": "the wrong physics model", "story_logic": "stories that didn't follow",
              "other": "other problems"}
     parts = [f"{names.get(k, k)} {v}" for k, v in sorted(c.items(), key=lambda kv: -kv[1])]
     return (f"In the last 30 days the checks stopped work {total} time(s): " + ", ".join(parts) +

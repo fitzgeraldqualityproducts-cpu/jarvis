@@ -309,6 +309,25 @@ def check(video_id):
         _add(checks, "on-screen numbers match the script", not bad,
              "; ".join(f"scene {k} {f}: {v:g} isn't in the checked script" for k, f, v in bad[:4]) or
              f"{len(screen_numbers(meta['scenes']))} numbers checked")
+    vp = None
+    if row:
+        from studio import narrative
+        nar = (json.loads(row["checks"] or "{}") or {}).get("narrative")
+        if narrative.mode() != "off":
+            if nar is None:
+                _add(checks, "story makes sense", True, "not checked (script written before the story check)")
+            else:                                  # a high visual score never makes up for a failed story
+                _add(checks, "story makes sense", not nar.get("hard") or narrative.mode() == "advise",
+                     "; ".join(h[len("narrative: "):] for h in (nar.get("hard") or [])[:3])
+                     or f"story score {nar.get('score')}")
+        if meta.get("scenes"):
+            st = json.loads(row["structure"] or "{}")
+            vp = narrative.visual_purpose(meta["scenes"], st.get("lines") or [])
+            if vp["score"] is not None:
+                vm2 = visual_mode()
+                _add(checks, "visuals explain the story", not vp["problems"] or vm2 != "block",
+                     ("; ".join(vp["problems"]) + (" (advice only)" if vm2 != "block" else "")) if vp["problems"]
+                     else f"{vp['score']:.0%} of maths lines get an explaining visual")
     sup = db.one("SELECT COUNT(DISTINCT url) n FROM sources WHERE video_id=? AND verdict='supported'", video_id)["n"]
     bad = db.one("SELECT COUNT(*) n FROM sources WHERE video_id=? AND verdict IN ('wrong','unsupported')", video_id)["n"]
     _add(checks, "sources", sup >= 2 and bad == 0, f"{sup} supporting sources, {bad} problems")
@@ -351,7 +370,8 @@ def check(video_id):
     conf = db.one("SELECT AVG(confidence) c FROM sources WHERE video_id=? AND confidence IS NOT NULL", video_id)["c"]
     q = quality({"lufs": lufs, "loop_diff": diff if first is not None and last is not None else None,
                  "timing": tm.get("matched"), "speech_start": rep.get("speech_start"),
-                 "hook": ck.get("hook_score"), "originality": ck.get("originality"), "confidence": conf})
+                 "hook": ck.get("hook_score"), "originality": ck.get("originality"), "confidence": conf,
+                 "story": (ck.get("narrative") or {}).get("score"), "visual_purpose": (vp or {}).get("score")})
     meta = json.loads(db.video(video_id)["meta"] or "{}")
     db.set_video(video_id, meta=json.dumps(dict(meta, quality=q)))
     return dict(_save(video_id, checks), quality=q)
@@ -360,7 +380,7 @@ def check(video_id):
 # The weighted quality score sits NEXT TO the hard checks: it never passes a Short that failed one, and never
 # stops one that passed them all. It shows how good a passing Short is, so results can be compared over time.
 QUALITY_WEIGHTS = {"loudness": 0.10, "loop": 0.15, "timing": 0.15, "start": 0.10, "hook": 0.20, "originality": 0.20,
-                   "confidence": 0.10}
+                   "confidence": 0.10, "story": 0.20, "visual_purpose": 0.10}
 
 
 def quality(m):
@@ -384,6 +404,8 @@ def quality(m):
     put("hook", lambda v: v / 100 if v > 10 else v / 10, m.get("hook"))      # hook score 0-100 (or 0-10)
     put("originality", lambda v: (v - 5) / 5, m.get("originality"))          # 5/10 = 0, 10/10 = 1
     put("confidence", lambda v: v, m.get("confidence"))
+    put("story", lambda v: v / 100, m.get("story"))                         # the story score, 0-100
+    put("visual_purpose", lambda v: v, m.get("visual_purpose"))             # share of maths lines with an explaining visual
     w = sum(QUALITY_WEIGHTS[k] for k in parts)
     score = round(100 * sum(QUALITY_WEIGHTS[k] * v for k, v in parts.items()) / w, 1) if w else None
     return {"score": score, "parts": parts, "missing": missing}

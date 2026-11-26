@@ -29,6 +29,8 @@
               engines (status) | engines install [tool|all] | engines check | engines use on|off [area...] [--if-ready]
   handover    moves the business to another computer: handover export (old one; switches it off there)
               | handover import [zip] [--replace] (new one; autopilot stays off) | handover undo
+  story       the story check on a Short's newest script (story <video id>): every number traced to what the
+              viewer heard, units, the model, and the checker's story notes; plus recent story lessons. Read only
   stops       how many Shorts passed or stopped at the script stage, and why (--since YYYY-MM-DD); read only
   similar     the most alike earlier topics by meaning (to tune "duplicate_meaning_at")
   footage     stock footage (Pixabay/Pexels free key, NASA no key): footage connect (asks for a key) | footage (status)
@@ -506,6 +508,11 @@ def main(argv):
         print(f"Repeat at {trends.threshold():.2f} or above:")
         for sim, a, b in pairs:
             print(f"  {sim:.3f}  {a}  |  {b}")
+    elif cmd == "story":
+        from studio import storymemory, story_cli
+        if len(argv) > 1 and argv[1].isdigit():
+            print(story_cli.text(int(argv[1])))
+        print(storymemory.summary())
     elif cmd == "stops":
         from studio import stops
         since = argv[argv.index("--since") + 1] if "--since" in argv and argv.index("--since") + 1 < len(argv) else None
