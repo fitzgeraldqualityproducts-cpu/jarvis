@@ -169,9 +169,11 @@ explanation afterwards):
 4. Only then the narration. Every beat depends only on what the viewer was already told: never use a number,
    term, multiplier or assumption before the line that introduces it. Every multiplier is derived out loud before
    it is used ("4,096 layers, plus 4, times 4,096 minus 1, over 6" before "that's 2,798,250"). Every unit
-   conversion is said. Two different quantities (a sheet's length and a street's, material used and material
+   conversion is said. Every assumption is said with why it is fair, in a few words ("the tightest packing
+   possible, proven by Kepler", "say it's 0.1 mm thick, my pick"). Two different quantities (a sheet's length and a street's, material used and material
    left) never share a number or a word. The last line's answer follows from the lines before it and answers the
-   opening question, not a different one.
+   opening question, not a different one. Say the answer plainly in the PAYOFF line (the line before the last);
+   the last line is then free to loop back into the hook.
 Write the model ONCE as "model" (before the drafts), and for every line say "learn" (what the viewer learns there,
 under 12 words) and "uses" (the model quantity names that line relies on)."""
 MODEL_SHAPE = ('"model": {"question": "...", "premise": "what physically happens, to what", "assumptions": [{"what": '
@@ -221,8 +223,10 @@ def write(topic, feedback=None, previous=None):
                          "add it in plain words (with its unit) to a line BEFORE the line that uses it, or take it out of "
                          "the model and the maths. If a number is \"unexplained\", say each of its inputs and what the "
                          "operation means before saying the result, or drop that number. If a line \"leans on something "
-                         "never established\", add the missing step to the line before it. Update \"model\" to match, "
-                         "with every formula input a named quantity with its unit.")
+                         "never established\", add the missing step to the line before it. An assumption needs a few "
+                         "words on why it is fair. To stay in length, shorten or cut a line that explains nothing "
+                         "(a teaser, a restatement), never the step that was missing. Say the answer plainly in the "
+                         "payoff line. Update \"model\" to match, with every formula input a named quantity with its unit.")
         fix = ("\n\nYour previous draft failed review. Fix EVERY problem below and change nothing else that was fine. "
                "Don't add any new claim while fixing:\n"
                + "\n".join(f"- {p}" for p in feedback) + idea + story_fix + "\n\nPrevious draft:\n"
@@ -332,8 +336,26 @@ Also write 5 different hooks (each could replace line 1) and 3 title options (un
         n = len(text_of(ans, ans["hooks"][0] if ans["hooks"] else None).split())
         if WORDS_MIN <= n <= WORDS_MAX:
             break
-        ans = _fit_length(ans, n) or ans
+        ans = _kept_story(ans, _fit_length(ans, n))
     return ans
+
+
+def _story_hard(d):
+    if not _narrative_on():
+        return 0
+    from studio import narrative
+    try:
+        return len(narrative.evaluate(d)["hard"])
+    except Exception:
+        return 0
+
+
+def _kept_story(before, after):
+    """The length-fixed draft, unless fixing the length broke the story (a cut step, a number now said before
+    its inputs): then the original, which the fact-check sends back for its length instead."""
+    if not after:
+        return before
+    return after if _story_hard(after) <= _story_hard(before) else before
 
 
 JUDGE_WEIGHTS = {"hook": 0.3, "payoff": 0.2, "clarity": 0.2, "momentum": 0.15, "you": 0.05, "original": 0.1}
@@ -612,7 +634,8 @@ def _fit_length(draft, n):
         return fitted
     ans = claude.ask_json(f"""This Short script is {n} words with its first hook as line 1; it must be {WORDS_MIN}-{WORDS_MAX}.
 {goal} words so the whole thing is {target} words. Keep every number, fact id and the calculation; keep the
-meaning and the closing line. Change nothing else. Each hook must stay under {HOOK_MAX_WORDS} words.
+meaning and the closing line. Never cut a step of the explanation or the line that introduces a number before
+it is used: cut words, not steps. Change nothing else. Each hook must stay under {HOOK_MAX_WORDS} words.
 
 {json.dumps(draft)[:6000]}
 

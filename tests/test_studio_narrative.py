@@ -320,3 +320,22 @@ def test_a_rewrite_is_told_how_to_fix_story_problems(studio_home, monkeypatch): 
     monkeypatch.setattr(claude, "RUNNER", lambda prompt, timeout, web: asked.append(prompt) or json.dumps(FIXED))
     script.write(topics.topic(tid), ["narrative: unexplained number: line 7 says 2,798,250"], dict(FIXED))
     assert "For each story problem" in asked[0] and "named quantity with its unit" in asked[0]
+
+
+def test_the_loop_line_may_end_mid_thought_and_stops_say_how_to_fix():
+    """Test 22: the last line was left unfinished for the seamless loop and the story check stopped it. The answer
+    belongs in the payoff line; the loop line is free."""
+    from studio import narrative
+    r = narrative.evaluate(FIXED, dict(GOOD_STORY, continuity=[{"line": 9, "missing": "the sentence is unfinished"}]))
+    assert r["hard"] == [] and any("line 9" in a for a in r["advice"])
+    assert "PAYOFF line" in narrative.REVIEW_ASK and "unfinished on purpose" in narrative.REVIEW_ASK
+    h = narrative.evaluate(VIDEO_20)["hard"][0]
+    assert "(fix: before saying a calculated number" in h
+
+
+def test_a_length_fix_that_breaks_the_story_is_not_used():
+    from studio import script
+    broken = dict(FIXED, lines=[ln for i, ln in enumerate(FIXED["lines"]) if i != 6])   # the derivation line cut
+    assert script._kept_story(FIXED, broken) is FIXED
+    assert script._kept_story(FIXED, None) is FIXED
+    assert script._kept_story(VIDEO_20, FIXED) is FIXED

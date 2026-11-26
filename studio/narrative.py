@@ -612,8 +612,10 @@ STORY CHECK (judge the whole narration as one story, read by someone who knows n
   multiplier, an assumption) or that doesn't follow from the line before, {"line": n, "missing": "what was
   never established", "why": "what the viewer can't work out"}. Ask of each line: could an intelligent viewer
   understand why this sentence follows from the previous one? Most good scripts have none; [] if none.
-- "conclusion_follows": true/false. Can the final answer be worked out from the lines before it, and does it
-  answer the opening question (not a different one)? Two different lengths, times or amounts must never be
+- "conclusion_follows": true/false. Can the final answer (said in the PAYOFF line) be worked out from the lines
+  before it, and does it answer the opening question (not a different one)? The last line is a loop line that
+  leads back into the first line when the Short repeats, so it may be unfinished on purpose: never judge the
+  conclusion on it, and never list it under "continuity" for being unfinished. Two different lengths, times or amounts must never be
   treated as the same thing (the length of a sheet and the length of a street, material used and material left).
 - "stranger": answer these five from the narration alone, as you'd explain it to a stranger, "" when the
   narration doesn't let you: {"1": "what are we trying to understand?", "2": "what do we need to know first?",
@@ -662,7 +664,7 @@ def judged(story, lines):
         why = " ".join(str(c.get("why") or "").split())[:160]
         if not miss or not 1 <= n <= len(lines):
             continue
-        hard = beats[n - 1] in ("math", "payoff", "rehook", "loop") or n == len(lines)
+        hard = beats[n - 1] in ("math", "payoff", "rehook")     # the loop line may end mid-thought on purpose
         gaps.append(n)
         out.append({"hard": hard, "kind": "continuity", "line": n, "missing": miss,
                     "text": f"line {n} leans on something never established ({miss})" + (f": {why}" if why else "")})
@@ -820,7 +822,8 @@ def evaluate(draft, story=None, facts=None):
     parts["clarity"] = max(0.0, 1 - 0.2 * soft)
     w = sum(WEIGHTS[k] for k in parts if k in WEIGHTS)
     score = round(100 * sum(WEIGHTS[k] * v for k, v in parts.items() if k in WEIGHTS) / w, 1) if w else None
-    hard = [f"narrative: {it['text']}" for it in issues if it["hard"]]
+    hard = [f"narrative: {it['text']}" + (f" (fix: {it['fix']})" if it.get("fix") else "") for it in issues
+            if it["hard"]]
     advice = [it["text"] for it in issues if not it["hard"]]
     if hard and score is not None:
         score = min(score, 49.0)                 # a story with a hard problem never scores as a pass
