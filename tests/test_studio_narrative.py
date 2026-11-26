@@ -277,3 +277,46 @@ def test_review_blocks_on_the_checkers_story_answer_and_saves_it(studio_home, mo
         if "created" in [r["name"] for r in db.q("PRAGMA table_info(videos)")] else None
     assert storymemory.summary()                                          # table exists after migrations
     assert vid is None or vid > 0
+
+
+def test_short_21_false_alarms_are_gone_and_fair_ones_stay():
+    """Test Short 21 (transistors) was stopped partly on false alarms: count words read as unknown units, a
+    formula of typed-in numbers judged as "a plain number, not nm", and a unit conversion treated as a value the
+    viewer must hear."""
+    from studio import narrative
+    assert narrative.parse_unit("switches per mm^2") == ({"L": -2}, pytest.approx(1e6))
+    assert narrative.parse_unit("squares") == ({}, 1.0)
+    model = {"question": "How small is one transistor?", "premise": "208 billion switches share one chip",
+             "answer": "about 88 nm on a side",
+             "quantities": [{"name": "conv", "means": "square nanometres in a square millimetre", "value": 1e12,
+                             "unit": "nm^2/mm^2", "from": "standard"},
+                            {"name": "N", "means": "transistors on the chip", "value": 1.04e11, "unit": "switches",
+                             "from": "F1"},
+                            {"name": "A", "means": "chip area", "value": 800, "unit": "mm^2", "from": "F2"}],
+             "formula": {"expr": "sqrt(1e12/(1.04e11/800))"}, "result": {"value": 88, "unit": "nm"}}
+    lines = [L("104 billion switches on a chip of 800 square millimeters.")]
+    probs = narrative.model_check(model, lines)
+    assert not [p for p in probs if p["hard"]], probs
+    assert not any("can't read" in p["text"] for p in probs)
+    # the same formula from named quantities: units carried through, sqrt(mm^2 / count) is a length
+    model["formula"] = {"expr": "sqrt(A/N)"}
+    assert not [p for p in narrative.model_check(model, lines) if p["hard"]]
+    model["result"] = {"value": 88, "unit": "s"}
+    assert any(p["hard"] and p["kind"] == "units" for p in narrative.model_check(model, lines))
+    # a real starting value the viewer never hears still stops it
+    model["result"] = {"value": 88, "unit": "nm"}
+    assert any(p["kind"] == "assumption" and "chip area" in p["text"]
+               for p in narrative.model_check(model, [L("104 billion switches on one chip.")]))
+
+
+def test_a_rewrite_is_told_how_to_fix_story_problems(studio_home, monkeypatch):  # noqa: F811
+    from studio import claude, db, script, topics
+    db.put("niche_decision", {"niche": "science", "name": "Science explained", "plan": {}})
+    tid = db.insert("INSERT INTO topics(title, fingerprint, pillar, kind, score, status, angle) VALUES(?,?,?,?,?,?,?)",
+                    "Paper folding", "fold paper", "Run It Yourself", "question", 70, "idea", "fold limit")
+    db.insert("INSERT INTO sources(topic_id, claim, url, verdict, tier, http_status, domain) VALUES(?,?,?,?,?,?,?)",
+              tid, "Gallivan folded 1,219 m 12 times", "https://www.example.edu/f", "reachable", 3, 200, "example.edu")
+    asked = []
+    monkeypatch.setattr(claude, "RUNNER", lambda prompt, timeout, web: asked.append(prompt) or json.dumps(FIXED))
+    script.write(topics.topic(tid), ["narrative: unexplained number: line 7 says 2,798,250"], dict(FIXED))
+    assert "For each story problem" in asked[0] and "named quantity with its unit" in asked[0]

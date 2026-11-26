@@ -215,9 +215,18 @@ def write(topic, feedback=None, previous=None):
         tips = [p.split("(", 1)[1].rstrip(")") for p in feedback if p.startswith("originality ") and "(" in p]
         idea = ("\n\nThe reviewer found it too generic. Rebuild the Short around this idea, as one image that runs from "
                 "the hook to the last line: " + tips[-1]) if tips else ""
+        story_fix = ""
+        if any(str(p).startswith("narrative: ") for p in feedback):
+            story_fix = ("\n\nFor each story problem (\"narrative: ...\"): if a value is \"never told\" or heard too late, "
+                         "add it in plain words (with its unit) to a line BEFORE the line that uses it, or take it out of "
+                         "the model and the maths. If a number is \"unexplained\", say each of its inputs and what the "
+                         "operation means before saying the result, or drop that number. If a line \"leans on something "
+                         "never established\", add the missing step to the line before it. Update \"model\" to match, "
+                         "with every formula input a named quantity with its unit.")
         fix = ("\n\nYour previous draft failed review. Fix EVERY problem below and change nothing else that was fine. "
                "Don't add any new claim while fixing:\n"
-               + "\n".join(f"- {p}" for p in feedback) + idea + "\n\nPrevious draft:\n" + json.dumps(previous)[:6000])
+               + "\n".join(f"- {p}" for p in feedback) + idea + story_fix + "\n\nPrevious draft:\n"
+               + json.dumps(previous)[:6000])
     story_first = STORY_FIRST if _narrative_on() else ""
     prompt = f"""Write a YouTube Short script. Channel: {d.get('name', '')}. Positioning: {plan.get('positioning', '')}.
 Audience: {plan.get('audience', 'curious US adults')}. Style: {plan.get('style', 'calm, clear, conversational')}.
