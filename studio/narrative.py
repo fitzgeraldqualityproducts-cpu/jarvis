@@ -684,10 +684,19 @@ def judged(story, lines):
         why = " ".join(str(c.get("why") or "").split())[:160]
         if not miss or not 1 <= n <= len(lines):
             continue
-        hard = beats[n - 1] in ("math", "payoff", "rehook")     # the loop line may end mid-thought on purpose
         gaps.append(n)
-        out.append({"hard": hard, "kind": "continuity", "line": n, "missing": miss,
+        out.append({"hard": None, "kind": "continuity", "line": n, "missing": miss,
                     "text": f"line {n} leans on something never established ({miss})" + (f": {why}" if why else "")})
+    # Connor's rule (2026-11-26): one or two small gaps are warnings; a gap stops the script when there are
+    # 3 or more, or when it sits in the opening (first two lines) or the payoff. Wrong facts, maths and a
+    # missing answer stop as before. The loop line (last) may end mid-thought on purpose.
+    real = sorted({g for g in gaps if g != len(lines) or beats[g - 1] == "payoff"})
+    many = len(real) >= GAPS_STOP
+    for it in out:
+        if it["kind"] == "continuity" and it["hard"] is None:
+            n = it["line"]
+            key = n <= 2 or beats[n - 1] == "payoff"
+            it["hard"] = n in real and (many or key)
     if story.get("continuity") is not None:
         parts["continuity"] = max(0.0, 1 - 0.34 * len(set(gaps)))
     cf = story.get("conclusion_follows")
@@ -784,6 +793,8 @@ def origins(lines, calcs, facts=None, model=None):
                             "text": f"line {i} says {fmt(x)}, but no fact, calculation or labelled example gives it"})
     return out
 
+
+GAPS_STOP = 3            # this many small story gaps in one script stop it (fewer are warnings)
 
 WEIGHTS = {"trace": 0.25, "units": 0.1, "model": 0.15, "continuity": 0.15, "premise": 0.1, "conclusion": 0.1,
            "stranger": 0.1, "clarity": 0.05}

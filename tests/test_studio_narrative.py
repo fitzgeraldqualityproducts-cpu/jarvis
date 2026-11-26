@@ -168,14 +168,26 @@ def test_deliberate_failure_conclusion_contradicts_premise_or_misses_the_questio
 
 
 def test_deliberate_failure_undefined_term_and_correct_equation_wrong_model():
-    got = hard(FIXED, dict(GOOD_STORY, continuity=[{"line": 7, "missing": "what 'Gallivan number' means"}],
+    got = hard(FIXED, dict(GOOD_STORY, continuity=[{"line": 8, "missing": "what 'Gallivan number' means"}],
                            model_valid=False, model_problem="uses a full circle where the bend is a half circle"))
-    assert any("line 7 leans on something never established" in h for h in got)
+    assert any("line 8 leans on something never established" in h for h in got)      # payoff gap stops
     assert any("physics model is wrong" in h and "half circle" in h for h in got)
-    # a gap on an ordinary setup line is a note, not a stop
+
+
+def test_small_gaps_warn_big_gaps_stop():
+    """Connor's rule: 1-2 small gaps warn; 3+ gaps, or a gap in the opening or payoff, stop."""
     from studio import narrative
-    r = narrative.evaluate(FIXED, dict(GOOD_STORY, continuity=[{"line": 2, "missing": "who the student was"}]))
-    assert r["hard"] == [] and any("line 2" in a for a in r["advice"])
+
+    def ev(*lines):
+        return narrative.evaluate(FIXED, dict(GOOD_STORY, continuity=[{"line": n, "missing": f"thing {n}"}
+                                                                      for n in lines]))
+    r = ev(6, 7)                                     # two gaps in the maths steps: warnings only
+    assert r["hard"] == [] and sum("leans on" in a for a in r["advice"]) == 2
+    assert len([h for h in ev(3, 6, 7)["hard"] if "leans on" in h]) == 3     # three gaps: all stop
+    assert any("line 2" in h for h in ev(2)["hard"])                         # the opening
+    assert any("line 8" in h for h in ev(8)["hard"])                         # the payoff
+    assert ev(9)["hard"] == []                                               # the loop line may end open
+    assert ev(4, 6, 9)["hard"] == []                 # the loop line doesn't count toward three
 
 
 def test_pi_needs_a_circle_first_and_storyboard_order():
