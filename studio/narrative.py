@@ -44,6 +44,7 @@ NUM = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?:\s*(
                  re.I)
 # conversion factors a narrator never has to say ("0.1 millimeters" goes into a formula as 0.0001 m)
 CONVERSIONS = (60, 3600, 24, 365, 365.25, 86400, 2.54, 0.3048, 1609.344, 0.4536)
+CALENDAR = {7: r"\bweeks?\b|\bdays a week\b", 52: r"\bweeks?\b", 12: r"\bmonths?\b|\bhours?\b|\bdozen\b"}
 TRIVIAL = (0, 1, 2, 0.5, 100)            # 100 turns a fraction into a percent
 TOL = 0.03                                 # a spoken number may be rounded by 3%
 SMALL = 12                                 # like the script module: whole numbers up to 12 are ordinary words
@@ -104,7 +105,7 @@ def fmt(x):
 
 
 def _says_pi(text):
-    return bool(re.search(r"\bpi\b|π", str(text), re.I))
+    return bool(re.search(r"\bpi\b|π|3\.14", str(text), re.I))
 
 
 # ---------- tracing spoken results back to what the viewer heard ----------
@@ -165,6 +166,11 @@ def _unexplained(node, nums, text, others, depth=0, top=True):
         return []                                    # the viewer heard this whole part's value
     if isinstance(node, ast.Constant):
         v = float(node.value)
+        if abs(v - math.pi) < 2e-3:                 # pi typed in as 3.14159...: judged like the name pi
+            return _unexplained(ast.Name(id="pi"), nums, text, others, depth, top)
+        for k, words in CALENDAR.items():           # 7 is "a week", 52 "weeks in a year", 12 "months"
+            if _close(v, k, 1e-9) and re.search(words, text, re.I):
+                return []
         if any(_close(v, t, 1e-9) for t in TRIVIAL) or any(_close(v, c, 1e-6) for c in CONVERSIONS):
             return []
         if v != 0 and _pow10(v, 1.0):              # 1000, 0.001: a change of unit
@@ -793,15 +799,18 @@ def evaluate(draft, story=None, facts=None):
         lines = [dict(lines[0], text=draft.get("hook") or lines[0].get("text"))] + list(lines[1:])
     texts = _texts(lines)
     issues = []
+    sourced = [x for f in facts or [] for x in spoken(f.get("claim") if isinstance(f, dict) else f)]
     for t in trace(lines, draft.get("calcs")):
+        if sourced and heard(t["number"], sourced, scaled=False):
+            continue                     # a sourced value (the Moon is 10,916 km around) needn't be derived on screen
         sent = texts[t["line"] - 1] if 0 < t["line"] <= len(texts) else ""
         miss = ", ".join(t["missing"][:4])
         if t["kind"] == "too_late":
             text = (f"line {t['line']} says {fmt(t['number'])} before the viewer has heard {miss}, which it comes from "
                     f"({t['expr']})")
         else:
-            text = (f"unexplained number: line {t['line']} says {fmt(t['number'])}, but the viewer never hears where "
-                    f"{miss} come{'s' if len(t['missing']) == 1 else ''} from (it is {t['expr']}); show each step "
+            text = (f"unexplained number: line {t['line']} says {fmt(t['number'])}, worked out as {t['expr']}, but "
+                    f"the viewer never hears {miss}, which it needs; say {'that input' if len(t['missing']) == 1 else 'those inputs'} "
                     "before the result, or drop the number")
         issues.append({"hard": True, "kind": t["kind"], "line": t["line"], "sentence": sent, "missing": miss,
                        "math": f"{t['expr']} = {fmt(t['number'])}", "text": text})
