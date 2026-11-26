@@ -521,3 +521,18 @@ def test_story_repair_keeps_the_image(studio_home, monkeypatch):  # noqa: F811
                                "One more floor: the Sun's center, about 15.7 million kelvin.")
     assert not script._keeps_image("One more floor: the Sun's center.",
                                    "The Sun's core is about 15,710,000 kelvin; divide by 5,772.")
+
+
+def test_formula_for_another_quantity_than_the_answer_is_not_a_unit_stop():
+    """Test 32: 'mu = g*r/v**2' gives a grip number, while the model's answer is a speed."""
+    from studio import narrative
+    m = {"question": "q", "premise": "p", "answer": "a",
+         "quantities": [{"name": "g", "means": "Moon gravity", "value": 1.62, "unit": "m/s^2", "from": "F1"},
+                        {"name": "r", "means": "radius", "value": 4.7, "unit": "m", "from": "F2"},
+                        {"name": "v", "means": "running speed", "value": 5.4, "unit": "m/s", "from": "F3"}],
+         "formula": {"expr": "mu = g*r/v**2"}, "result": {"value": 2.8, "unit": "m/s"}}
+    lines = [{"text": "Gravity 1.62 meters per second squared, a 4.7-meter radius, running at 5.4 meters per second."}]
+    probs = narrative.model_check(m, lines)
+    assert not [p for p in probs if p["hard"]] and any(p["kind"] == "units" for p in probs)
+    m["formula"] = {"expr": "g*r/v**2"}                    # no left side: the answer is what it gives, so it stops
+    assert any(p["hard"] and p["kind"] == "units" for p in narrative.model_check(m, lines))
