@@ -839,9 +839,10 @@ def evaluate(draft, story=None, facts=None):
     hard = [f"narrative: {it['text']}" + (f" (fix: {it['fix']})" if it.get("fix") else "") for it in issues
             if it["hard"]]
     advice = [it["text"] for it in issues if not it["hard"]]
+    grade = score                                # the real grade, so stopped scripts can be compared
     if hard and score is not None:
         score = min(score, 49.0)                 # a story with a hard problem never scores as a pass
-    return {"hard": hard, "advice": advice[:6], "score": score, "parts": {k: round(v, 2) for k, v in parts.items()},
+    return {"hard": hard, "advice": advice[:6], "score": score, "grade": grade, "parts": {k: round(v, 2) for k, v in parts.items()},
             "issues": issues}
 
 
@@ -879,5 +880,7 @@ def summary(nar):
     if not nar:
         return "story not checked"
     if nar.get("hard"):
-        return f"story check failed ({len(nar['hard'])} problem(s)), score {nar.get('score')}"
+        g = nar.get("grade")
+        return (f"story check failed ({len(nar['hard'])} problem(s)), score {nar.get('score')}"
+                + (f" (graded {g} before the stop)" if g is not None and g != nar.get("score") else ""))
     return f"story check passed, score {nar.get('score')}"
