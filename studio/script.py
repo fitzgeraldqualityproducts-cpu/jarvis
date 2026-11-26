@@ -170,7 +170,9 @@ explanation afterwards):
    term, multiplier or assumption before the line that introduces it. Every multiplier is derived out loud before
    it is used ("4,096 layers, plus 4, times 4,096 minus 1, over 6" before "that's 2,798,250"). Every unit
    conversion is said. Every assumption is said with why it is fair, in a few words ("the tightest packing
-   possible, proven by Kepler", "say it's 0.1 mm thick, my pick"). Two different quantities (a sheet's length and a street's, material used and material
+   possible, proven by Kepler", "say it's 0.1 mm thick, my pick"). Never use a technical label (a band name like
+   "Ks", an abbreviation, a term of art) unless a line before says in plain words what it is; plain words are
+   better. Two different quantities (a sheet's length and a street's, material used and material
    left) never share a number or a word. The last line's answer follows from the lines before it and answers the
    opening question, not a different one. Say the answer plainly in the PAYOFF line (the line before the last);
    the last line is then free to loop back into the hook.
@@ -952,10 +954,25 @@ JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|
     return _judged(draft, ans, video_id, facts=facts)
 
 
+def plain_question(text):
+    """A line that only asks (a transition or the loop question: "So what does infrared actually do?") makes no
+    claim, so "unsupported" can't apply to it (test 23 was stopped twice on one). A question that states a
+    number or a fact on the way ("Why is the Sun 5,500 C?") is still checked."""
+    t = " ".join(str(text or "").split())
+    if not t.endswith("?") or len(t.split()) > 16:
+        return False
+    if t.count("?") > 1 or re.search(r"[.!:;]\s", t):
+        return False                                 # a statement before the question
+    return not [n for n in _numbers(t) if not (n.isdigit() and int(n) <= SMALL)]
+
+
 def _judged(draft, ans, video_id, rechecked=None, facts=None):
     """The code's half of the review: the checker's answer plus the hard rules the code checks itself."""
     problems = []
     claims = [c for c in ans.get("claims") or [] if isinstance(c, dict)]
+    texts = [str(ln.get("text") or "") for ln in draft.get("lines") or []]
+    asks = {i for i, t in enumerate(texts, 1) if plain_question(t)}
+    claims = [c for c in claims if not (c.get("verdict") == "unsupported" and c.get("line") in asks)]
     for c in claims:
         if c.get("verdict") in ("unsupported", "wrong"):
             problems.append(f"line {c.get('line')} is {c['verdict']}: {c.get('note', '')}".strip())
@@ -1604,7 +1621,79 @@ def revise_step(topic, video_id=None):
                 fixed["recheck"] = {"from": row["id"], "changed": sorted(plan["changed"]),
                                     "kept": {str(k): v for k, v in plan["kept"].items()}}
             return draft_step(topic, video_id, draft=fixed)
+    if hard and all(STORY_LINE.match(h) or LINE_PROBLEM.match(h) for h in hard) and _narrative_on():
+        fixed = _fix_story(_draft_of(row), topic, hard)    # a story gap: add the missing set-up, keep the rest
+        if fixed:
+            return draft_step(topic, video_id, draft=fixed)
     return draft_step(topic, video_id, checks.get("problems") or [], _draft_of(row))
+
+
+# story stops tied to one line (or one untold value), which a set-up line or a reworded line can fix
+STORY_LINE = re.compile(r"^narrative: (line \d+ (leans on|relies on|says .* before)|the starting value|"
+                        r"unexplained number: line \d+)")
+
+
+def _fix_story(draft, topic, problems):
+    """Repairs story gaps the way an editor would: a short set-up line ADDED before the line that needs it (what
+    a term means, a value with its unit, why an assumption is fair), or the line reworded in plain words, with
+    every other line kept word for word. Rewriting the whole script fixed none of 25 such stops (tests 21-23):
+    each rewrite made new gaps of its own. The fixed script then gets a full check. None if it can't be used."""
+    from studio import claude
+    facts = _facts(topic)
+    fact_list = "\n".join(f"F{i + 1}. {s['claim']} (source: {s['url']})" for i, s in enumerate(facts))
+    lines = "\n".join(f"L{i + 1}. [{ln.get('beat')}] {ln['text']}  [uses: {', '.join(map(str, ln.get('facts') or []))}]"
+                      for i, ln in enumerate(draft["lines"]))
+    n = len(text_of(draft, draft["hooks"][0] if draft.get("hooks") else None).split())
+    ans = claude.ask_json(f"""A story editor found places in this Short script where a first-time viewer gets lost. Fix ONLY those
+places. For each: either add ONE short set-up line (under 14 words) just before the flagged line that gives what is
+missing in plain words (what a term means, a value with its unit, why an assumption is fair), or reword the
+flagged line so it no longer needs it (plain words instead of jargon like a band name or an abbreviation). A
+value you add must come from the facts below; never a new number. Every other line stays exactly as it is,
+word for word. The script is {n} words and must stay {WORDS_MIN}-{WORDS_MAX}: if an added line would push it over,
+shorten or delete a line that explains nothing (a teaser or a restatement), never a step of the explanation,
+the payoff or the last line.
+
+Facts:
+{fact_list}
+
+Lines:
+{lines}
+
+Problems:
+""" + "\n".join(f"- {p}" for p in problems) + """
+
+JSON only: {"edits": [{"op": "insert_before|replace|delete", "line": 5, "text": "...", "facts": ["F2"], "beat": "setup"}]}""",
+                          timeout=300, web=False, purpose=f"fix story gaps: {topic['title']}")
+    edits = [e for e in (ans.get("edits") if isinstance(ans, dict) else None) or []
+             if isinstance(e, dict) and str(e.get("line", "")).isdigit() and e.get("op") in ("insert_before", "replace",
+                                                                                           "delete")]
+    if not edits:
+        return None
+    by = {}
+    for e in edits:
+        by.setdefault(int(e["line"]), []).append(e)
+    out = []
+    for i, ln in enumerate(draft["lines"], 1):
+        keep = dict(ln)
+        for e in by.get(i, []):
+            text = " ".join(str(e.get("text") or "").split())
+            if e["op"] == "insert_before" and text and i > 1:
+                out.append({"text": text, "facts": [str(f) for f in e.get("facts") or []] or ["none"],
+                            "beat": str(e.get("beat") or "setup"), "visual": "", "learn": "the missing set-up"})
+            elif e["op"] == "replace" and text:
+                keep = dict(keep, text=text, **({"facts": [str(f) for f in e["facts"]]} if e.get("facts") else {}))
+            elif e["op"] == "delete" and str(ln.get("beat")) not in PRUNE_KEEP_BEATS and i > 1:
+                keep = None
+        if keep is not None:
+            out.append(keep)
+    fixed = _clean(dict(draft, lines=out))
+    words = len(text_of(fixed, fixed["hooks"][0] if fixed.get("hooks") else None).split())
+    if not WORDS_MIN <= words <= WORDS_MAX:
+        fixed = _kept_story(fixed, _fit_length(fixed, words))
+    if _story_hard(fixed) > _story_hard(draft):
+        return None                                    # the repair broke something the code can see
+    fixed["story_fix"] = {"problems": [p[:200] for p in problems[:5]], "edits": len(edits)}
+    return fixed
 
 
 def make(topic, video_id=None, progress=print, max_revisions=MAX_REVISIONS):
