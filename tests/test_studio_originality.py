@@ -166,3 +166,24 @@ def test_an_unoriginal_draft_is_not_told_to_keep_its_image(fakes, monkeypatch): 
     script.write(topics.topic(tid), ["originality 5/10: needs its own explanation (use a hiker)"], {"lines": []},
                  keep_original=True)
     assert "PASSED the originality check" not in seen[-1]
+
+
+def test_an_idea_needing_several_new_terms_is_dropped_before_writing():
+    from studio import topics
+    c = {"title": "Check a supernova's distance by hand", "angle": "distance modulus",
+         "_checked": [{"http_status": 200, "url": "https://nasa.gov/a"}, {"http_status": 200, "url": "https://esa.int/b"}]}
+    heavy = _rating(jargon=["absolute magnitude", "parsec", "distance modulus (log formula)"])
+    _, f = topics.score_one(heavy, 8)
+    assert any("terms a viewer hasn't heard" in w and "parsec" in w for w in topics.gate(c, heavy, 8, f))
+    one = _rating(jargon=["escape velocity"])
+    assert not any("terms" in w for w in topics.gate(c, one, 8, f))
+    assert topics.jargon_of({"jargon": "parsec; magnitude"}) == ["parsec", "magnitude"]
+    assert topics.jargon_of({"jargon": ["none"]}) == [] and topics.jargon_of({}) == []
+
+
+def test_rating_asks_for_newcomer_terms(fakes, monkeypatch):  # noqa: F811
+    from studio import claude, topics
+    seen = []
+    monkeypatch.setattr(claude, "RUNNER", lambda p, timeout, web: (seen.append(p), "{}")[1])
+    topics.rate([{"title": "x", "angle": "y", "facts": []}])
+    assert '"jargon"' in seen[-1] and "NEWCOMER TERMS" in seen[-1]
