@@ -972,6 +972,11 @@ def _judged(draft, ans, video_id, rechecked=None, facts=None):
     claims = [c for c in ans.get("claims") or [] if isinstance(c, dict)]
     texts = [str(ln.get("text") or "") for ln in draft.get("lines") or []]
     asks = {i for i, t in enumerate(texts, 1) if plain_question(t)}
+    beats = [str(ln.get("beat") or "") for ln in draft.get("lines") or []]
+    for i, t in enumerate(texts, 1):                 # the loop line hands back to the hook: no new claim of its own
+        if (i == len(texts) or beats[i - 1] == "loop") and i > 1 and \
+                not [n for n in _numbers(t) if not (n.isdigit() and int(n) <= SMALL)]:
+            asks.add(i)
     claims = [c for c in claims if not (c.get("verdict") == "unsupported" and c.get("line") in asks)]
     for c in claims:
         if c.get("verdict") in ("unsupported", "wrong"):
@@ -1174,7 +1179,8 @@ def draft_step(topic, video_id=None, feedback=None, previous=None, draft=None):
                                  **({"model": draft["model"]} if isinstance(draft.get("model"), dict) else {}),
                                  **({"picked": draft["picked"]} if draft.get("picked") else {}),
                                  **({"recheck": draft["recheck"]} if draft.get("recheck") else {}),
-                                 **({"number_check": draft["number_check"]} if draft.get("number_check") else {})}),
+                                 **({"number_check": draft["number_check"]} if draft.get("number_check") else {}),
+                                 **({"story_fix": draft["story_fix"]} if draft.get("story_fix") else {})}),
                      "{}", "draft", time.time())
 
 
@@ -1338,6 +1344,8 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
         return "passed", prow
     tries = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status='failed'", video_id)["n"]
     again = None if st.get("lookup_from") else _repeated(video_id, row["id"], rev["hard_problems"])
+    if again and _story_repairable(rev["hard_problems"]) and not _story_fix_tried(video_id):
+        again = None                              # the targeted story repair gets its one try before giving up
     if again:                                     # the same kind of problem twice in a row: move on to the next idea
         _trial_outcome(topic, video_id, False)
         topics.set_status(topic["id"], script_status="failed")
@@ -1346,7 +1354,7 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
         _story_outcome(video_id, False)
         raise ScriptRejected(f"the same problem came back after a revision ({again.replace('_', ' ')}): "
                              + "; ".join(rev["hard_problems"][:3]))
-    if tries > max_revisions:
+    if tries > max_revisions and not (_story_repairable(rev["hard_problems"]) and not _story_fix_tried(video_id)):
         _trial_outcome(topic, video_id, False)
         topics.set_status(topic["id"], script_status="failed")
         guard.audit("script.failed", True, {"topic": topic["id"], "video": video_id, "problems": rev["hard_problems"][:5]})
@@ -1621,7 +1629,7 @@ def revise_step(topic, video_id=None):
                 fixed["recheck"] = {"from": row["id"], "changed": sorted(plan["changed"]),
                                     "kept": {str(k): v for k, v in plan["kept"].items()}}
             return draft_step(topic, video_id, draft=fixed)
-    if hard and all(STORY_LINE.match(h) or LINE_PROBLEM.match(h) for h in hard) and _narrative_on():
+    if _story_repairable(hard) and not _story_fix_tried(video_id):
         fixed = _fix_story(_draft_of(row), topic, hard)    # a story gap: add the missing set-up, keep the rest
         if fixed:
             return draft_step(topic, video_id, draft=fixed)
@@ -1630,7 +1638,17 @@ def revise_step(topic, video_id=None):
 
 # story stops tied to one line (or one untold value), which a set-up line or a reworded line can fix
 STORY_LINE = re.compile(r"^narrative: (line \d+ (leans on|relies on|says .* before)|the starting value|"
-                        r"unexplained number: line \d+)")
+                        r"unexplained number: line \d+|the conclusion doesn't follow)")
+
+
+def _story_repairable(hard):
+    return bool(hard) and _narrative_on() and any(STORY_LINE.match(h) for h in hard) and \
+        all(STORY_LINE.match(h) or LINE_PROBLEM.match(h) for h in hard)
+
+
+def _story_fix_tried(video_id):
+    return any(json.loads(r["structure"] or "{}").get("story_fix")
+               for r in db.q("SELECT structure FROM scripts WHERE video_id IS ?", video_id))
 
 
 def _fix_story(draft, topic, problems):
@@ -1648,6 +1666,8 @@ def _fix_story(draft, topic, problems):
 places. For each: either add ONE short set-up line (under 14 words) just before the flagged line that gives what is
 missing in plain words (what a term means, a value with its unit, why an assumption is fair), or reword the
 flagged line so it no longer needs it (plain words instead of jargon like a band name or an abbreviation). A
+line the fact-checker marked wrong is reworded to its correction. If the conclusion doesn't follow, reword the
+payoff line (the line before the last) so it answers the opening question plainly from the lines before it. A
 value you add must come from the facts below; never a new number. Every other line stays exactly as it is,
 word for word. The script is {n} words and must stay {WORDS_MIN}-{WORDS_MAX}: if an added line would push it over,
 shorten or delete a line that explains nothing (a teaser or a restatement), never a step of the explanation,
