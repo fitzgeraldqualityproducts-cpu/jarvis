@@ -655,12 +655,16 @@ video page that asks and answers the same question, e.g. "how long to walk aroun
 in the Sun"), set "famous" to that page in a few words (publisher: question), else "". For a famous one, "twist" is
 one sentence with our own angle the famous page doesn't do (a personal, everyday calculation a viewer would never
 find there, still using the same sourced facts), or "" if you can't think of a real one. Not famous: "twist": "".
+NEWCOMER TERMS: "jargon" lists the terms a curious viewer with no science background has never heard that the
+calculation can't be done without (a specialist unit like parsecs or magnitudes, a named quantity like absolute
+magnitude, a log or exponent formula), each a few words; [] when everyday words carry it all. Everyday units
+(km, hours, degrees, kg, light-years) and ideas explained in one short phrase don't count.
 
 {lines}
 
 JSON object keyed by the number: {{"0": {{"relevance":..,"interest":..,"novelty":..,"curiosity":..,"value":..,
 "story":..,"feasibility":..,"originality":..,"copyright_risk":..,"avoid":false,"note":"..","famous":"",
-"twist":""}}, ...}}"""
+"twist":"","jargon":[]}}, ...}}"""
     ans = claude.ask_json(prompt, timeout=300, web=False, purpose="rate topic ideas")
     out = {}
     if isinstance(ans, dict):
@@ -730,10 +734,29 @@ def gate(c, r, src_reliability, factors):
         # Connor's choice (2026-11-26): 22 scripts failed at originality 4-5 as "reads like the standard explainer";
         # an idea whose answer is already a famous page needs our own twist, or it isn't written at all
         why.append(f"the answer is already a famous explainer ({famous}) and there's no twist of our own")
+    terms = jargon_of(r)
+    if len(terms) >= JARGON_MAX:
+        # test 29 (2026-11-26): a supernova distance-modulus Short stopped on 8 unexplained terms; 40 s can't teach
+        # several new terms and the maths too, so such an idea is dropped before writing
+        why.append("needs too many terms a viewer hasn't heard (" + ", ".join(terms[:4]) + ")")
     good = _working(c.get("_checked", []))
     if len(good) < 2:
         why.append(f"only {len(good)} working source{'s' if len(good) != 1 else ''}")
     return why
+
+
+JARGON_MAX = 2                 # an idea whose maths needs this many unfamiliar terms is dropped before writing
+
+
+def jargon_of(r):
+    """The unfamiliar terms an idea's calculation needs, from its rating ([] when absent)."""
+    got = r.get("jargon")
+    if isinstance(got, str):
+        got = [t for t in re.split(r"[;,]", got)]
+    if not isinstance(got, list):
+        return []
+    terms = [" ".join(str(t).split())[:60] for t in got]
+    return [t for t in terms if t and t.lower() not in ("none", "n/a")]
 
 
 def famous_of(r):
@@ -829,7 +852,8 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
             famous, twist = famous_of(r)
             scores = {"version": SCORING_VERSION, "factors": factors, "note": str(r.get("note", ""))[:300],
                       "median_views": med, **({"wikipedia": wiki} if wiki else {}),
-                      **({"famous": famous, "twist": twist} if famous else {})}
+                      **({"famous": famous, "twist": twist} if famous else {}),
+                      **({"jargon": jargon_of(r)} if jargon_of(r) else {})}
             tid = db.insert(
                 "INSERT INTO topics(title, fingerprint, pillar, kind, sources, score, scores, status, discovered, updated, "
                 "angle, hook, why, keywords, origin, fresh_until, reject_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
