@@ -300,8 +300,8 @@ def test_a_named_thing_gets_a_real_nasa_photo(monkeypatch, tmp_path):
     assert path and info["nasa_id"] == "X59" and info["credit"] == "Photo: NASA"   # not the talk, not someone else's
     out = art.framed_photo(path, tmp_path / "f.png")
     im = Image.open(out)
-    assert im.size == (art.GEN_W, art.GEN_H)
-    assert im.getpixel((art.GEN_W // 2, int(art.GEN_H * 0.36)))[0] > 150             # the whole photo, upper part
+    assert im.size == (art.PHOTO_W, art.PHOTO_H)                # full size since the Video 35 audit (was 512x896)
+    assert im.getpixel((art.PHOTO_W // 2, int(art.PHOTO_H * 0.36)))[0] > 150         # the photo is on screen
     none, why = footage.photo("Voyager 3", tmp_path)
     assert none is None and "no photo" in why
 

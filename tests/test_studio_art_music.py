@@ -78,7 +78,7 @@ def test_without_pictures_the_cinematic_look_falls_back_to_diagrams(fakes, fake_
     assert not json.loads(db.video(vid)["meta"])["upload"]["containsSyntheticMedia"]
 
 
-def test_counter_counts_up_and_carries_on():
+def test_counter_lands_and_carries_on():
     from studio import video
     h = video.huds([{"type": "number", "value": "2,970", "unit": "t", "label": "Saturn V on the pad"},
                     {"type": "headline", "text": "Then what?"},
@@ -86,7 +86,7 @@ def test_counter_counts_up_and_carries_on():
                     {"type": "equation", "left": "2290 / 2970", "right": "0.77", "label": "of the rocket"}])
     assert h[0]["label"] == "SATURN V ON THE PAD" and h[0]["from"] == h[0]["num"] == 2970   # the hook doesn't move
     assert h[1]["value"] == h[0]["value"] and h[1]["from"] == h[1]["num"] and h[1]["carried"]  # carried, standing still
-    assert h[2]["num"] == 2290 and h[2]["from"] == 0.0                                       # smaller: counts from 0
+    assert h[2]["num"] == 2290 and h[2]["from"] == 2290      # lands as itself (Video 35 audit: no count from 0)
     assert h[3]["value"] == "0.77" and h[3]["dec"] == 2
     h = video.huds([{"type": "number", "value": "5", "unit": "m", "label": "x"}, {"type": "headline"},
                     {"type": "headline"}])

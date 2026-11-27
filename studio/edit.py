@@ -19,7 +19,18 @@ import math
 import re
 
 JUMP_AFTER = 3.2          # a scene longer than this gets a jump zoom near its middle
-COUNT_SHARE = 0.7         # the counter counts over this share of the scene (same as Short.tsx HudBox)
+# Numbers on screen (Connor's Video 35 audit): a count runs only from a start the viewer already saw, takes at
+# most COUNT_MAX seconds, and the final value then stays still for at least HOLD_MIN seconds (same as Short.tsx).
+COUNT_SHARE = 0.3         # share of the scene a count may take...
+COUNT_MAX = 0.8           # ...and never longer than this
+HOLD_MIN = 1.5            # the final value stays readable this long after a count
+READ_MIN = 1.0            # a number that just appears is on screen at least this long
+
+
+def count_seconds(span):
+    """How long a counter counts in a scene of span seconds (0 when the scene is too short to also hold it)."""
+    c = min(COUNT_MAX, span * COUNT_SHARE)
+    return round(c, 3) if span - c >= HOLD_MIN else 0.0
 OVERLAY = {"x": 80, "y": 760, "w": 850, "h": 380}       # inside video.BOX (y 250-1150), above the caption
 
 
@@ -55,11 +66,14 @@ def cues(starts, beats, huds=None, words=None):
             out.append({"t": round(s0, 3), "kind": "cut", "scene": k})
         h = (huds or [None] * n)[k] if huds else None
         mid_taken = False
-        if h and h.get("num") is not None and h.get("from") is not None and h["from"] != h["num"] and k > 0:
-            until = s0 + max(0.4, span * COUNT_SHARE)
+        counts = count_seconds(span)
+        if h and h.get("num") is not None and h.get("from") is not None and h["from"] != h["num"] and k > 0 \
+                and counts:
+            until = s0 + counts
             out.append({"t": round(s0, 3), "kind": "count", "scene": k, "until": round(until, 3)})
             out.append({"t": round(until, 3), "kind": "pop", "scene": k})
-            mid_taken = span * COUNT_SHARE > JUMP_AFTER / 2
+        elif h and h.get("num") is not None and not h.get("carried") and k > 0:
+            out.append({"t": round(s0 + 0.05, 3), "kind": "pop", "scene": k})      # the number lands
         if beats[k] == "rehook" and k > 0:
             out.append({"t": round(s0, 3), "kind": "rehook", "scene": k})
         if beats[k] == "payoff" and k > 0:
@@ -177,6 +191,8 @@ def overlay(scene):
                 "frac": round((v - lo) / (hi - lo), 3), "low": f"{_fmt(lo) if lo >= 0 else '-' + _fmt(-lo)}{unit}",
                 "high": f"{_fmt(hi) if hi >= 0 else '-' + _fmt(-hi)}{unit}", "label": _short(scene.get("label"), 44),
                 "cold": v < 0, **OVERLAY}
+    if t == "orbit":
+        return orbit_overlay(scene)
     if t == "measure":
         value = _short(scene.get("value"), 14)
         a, b = _short(scene.get("from"), 18), _short(scene.get("to"), 18)
@@ -185,6 +201,99 @@ def overlay(scene):
         return {"kind": "measure", "from": a, "to": b, "value": f"{value} {_short(scene.get('unit'), 10)}".strip(),
                 "label": _short(scene.get("label"), 40), **OVERLAY}
     return None
+
+
+# ---------- the hands-on demonstration, drawn (Video 35 audit) ----------
+ORBIT = {"x": 80, "y": 300, "w": 850, "h": 820}         # a bigger panel: the demonstration IS the picture here
+PHASE_WORDS = {"new": 180.0, "full": 0.0, "first": 90.0, "last": 270.0, "quarter": 90.0, "start": 0.0}
+ORBIT_LABELS = {"lamp": "lamp = Sun", "you": "you = Earth", "ball": "ball = Moon", "marker": "note = far-side spot"}
+
+
+def phase_angle(v, default=90.0):
+    """Where the ball is on its circle, in degrees (180 = between you and the lamp, 0 = behind you)."""
+    if v is None or str(v).strip() == "":
+        return default
+    t = str(v).lower()
+    for k, a in PHASE_WORDS.items():
+        if k in t:
+            return a
+    n = _num(v)
+    return float(n) % 360 if n is not None else default
+
+
+def orbit_overlay(scene):
+    """A top-down demonstration: the lamp far off on the left, you in the middle, the ball on its circle turning
+    once per circle (so the same side always faces you), the marked spot drawn on it and lit only when it faces
+    the lamp. The ball moves from "from" to "to" over the scene ("to": "cycle" = one whole circle); "split" also
+    colours the half of the circle where the spot is in sunlight."""
+    from studio import demo
+    marker = str(scene.get("marker") or "far").lower()
+    marker = marker if marker in ("far", "near", "none") else "far"
+    a0 = phase_angle(scene.get("from"), 0.0)
+    to = str(scene.get("to") or "").lower()
+    a1 = a0 + 360.0 if "cycle" in to or "lap" in to or "circle" in to else phase_angle(scene.get("to"), a0)
+    if a1 < a0:
+        a1 += 360.0                                  # always forward, the way the Moon goes
+    labels = dict(ORBIT_LABELS)
+    given = scene.get("labels") if isinstance(scene.get("labels"), dict) else {}
+    for k in labels:
+        v = _short(given.get(k), 26)
+        if v:
+            labels[k] = v
+    if marker == "none":
+        labels.pop("marker")
+    spot = (labels.get("marker") or "spot").split("=")[0].strip() or "spot"
+    return {"kind": "orbit", "a0": round(a0, 1), "a1": round(a1, 1), "marker": marker,
+            "split": bool(scene.get("split")), "labels": labels,
+            "litText": _short(f"{spot} in sunlight", 26), "darkText": _short(f"{spot} in darkness", 26),
+            "litEnd": marker != "none" and demo.lit(a1 % 360, marker),
+            "label": _short(scene.get("label"), 44), **ORBIT}
+
+
+def shown_values(hud, span, fps=30):
+    """Every number text the counter shows in a scene, frame by frame, the way Short.tsx draws it."""
+    if not hud or hud.get("num") is None:
+        return [hud["value"]] if hud else []
+    frm, num = hud.get("from", hud["num"]), hud["num"]
+    if frm == num:
+        return [hud["value"]]
+    c = count_seconds(span)
+    out = []
+    for f in range(int(span * fps)):
+        t = f / fps
+        k = min(1.0, t / c) if c else 1.0
+        x = frm + (num - frm) * (1 - (1 - k) ** 3)
+        v = hud["value"] if k >= 1 else f"{x:,.{int(hud.get('dec') or 0)}f}" + (f" {hud['unit']}" if hud.get("unit") else "")
+        if not out or out[-1] != v:
+            out.append(v)
+    return out
+
+
+def number_motion(hud_list, starts, approved=None):
+    """Problems with the numbers on screen (Connor's rules): [str]. A count must start from a number the viewer
+    already saw (or one in approved), be quick, and the final value must hold long enough to read, with its unit."""
+    probs, seen = [], []
+    approved = [float(a) for a in (approved or [])]
+    for k, h in enumerate(hud_list or []):
+        if not h or h.get("num") is None:
+            continue
+        span = (starts[k + 1] - starts[k]) if k + 1 < len(starts) else 0.0
+        unit = str(h.get("unit") or "")
+        if unit and unit not in str(h.get("value")):
+            probs.append(f"scene {k + 1}: {h.get('value')} lost its unit ({unit})")
+        if not h.get("carried"):
+            if h.get("from") is not None and h["from"] != h["num"]:
+                known = seen + approved
+                if not any(abs(h["from"] - x) <= 1e-9 * max(1.0, abs(x)) for x in known):
+                    probs.append(f"scene {k + 1}: counts up from {h['from']:g}, a value the viewer never saw, so it "
+                                 f"flashes in-between numbers before {h['value']}")
+                elif not count_seconds(span):
+                    probs.append(f"scene {k + 1}: counts in a {span:.1f} s scene, leaving no time to read "
+                                 f"{h['value']}")
+            if span and span < READ_MIN:
+                probs.append(f"scene {k + 1}: {h['value']} is on screen for only {span:.1f} s")
+            seen.append(h["num"])
+    return probs
 
 
 def overlays(scenes, look="hud"):

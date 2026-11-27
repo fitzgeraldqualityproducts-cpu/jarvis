@@ -71,7 +71,7 @@ def test_dates_appear_as_they_are_and_never_count_up():
     h = video.huds([{"type": "number", "value": "1947", "label": "first supersonic flight"},
                     {"type": "number", "value": "1,500", "unit": "km/h", "label": "speed"}])
     assert h[0]["from"] == h[0]["num"] == 1947
-    assert h[1]["from"] == 0.0                           # a real quantity still counts up
+    assert h[1]["from"] == h[1]["num"]                   # a real quantity lands as itself too (Video 35 audit)
     assert not video._year_like("1,947", (1947.0, 0, ""))
     assert video._year_like("2023", (2023.0, 0, ""), "LAUNCH")
 

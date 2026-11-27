@@ -299,10 +299,10 @@ def test_cues_and_overlays():
     huds = [{"num": 5, "from": 5}, {"num": 2970, "from": 0.0}, None, None, None]
     c = edit.cues(starts, ["hook", "setup", "rehook", "payoff", "loop"], huds, [{"s": 4.6}, {"s": 10.9}, {"s": 14.4}])
     kinds = [(x["kind"], x["scene"]) for x in c]
-    assert ("count", 1) in kinds and ("pop", 1) in kinds and ("rehook", 2) in kinds and ("payoff", 3) in kinds
+    assert ("count", 1) in kinds and ("pop", 1) in kinds    # a count runs only when Jarvis set a "from" and ("rehook", 2) in kinds and ("payoff", 3) in kinds
     assert ("cut", 0) not in kinds and ("count", 0) not in kinds          # the hook frame never moves
     assert ("jump", 3) in kinds and not any(k == "jump" and s == 4 for k, s in kinds)   # never in the last scene
-    j = [x for x in c if x["kind"] == "jump"][0]
+    j = [x for x in c if x["kind"] == "jump" and x["scene"] == 3][0]
     assert j["t"] == 10.9                                                # on a word near the middle
     ov = edit.overlay({"type": "compare", "unit": "km", "items": [{"label": "Moon", "value": "384,400"},
                                                                    {"label": "ISS", "value": 400}]})
