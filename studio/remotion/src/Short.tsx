@@ -118,12 +118,12 @@ const HudBox: React.FC<{hud: Hud; span: number; fps: number; bold?: boolean}> = 
   return (
     <div style={{position: 'absolute', left: 90, top: 270, maxWidth: 900, color: 'white', textShadow: SHADOW,
       overflowWrap: 'break-word'}}>
-      {hud.label ? <div style={{fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: 700, fontSize: 24,
-        letterSpacing: '0.12em', opacity: 0.92}}>{hud.label}</div> : null}
+      {hud.label ? <div style={{fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: 700, fontSize: 34,
+        letterSpacing: '0.08em', opacity: 0.95}}>{hud.label}</div> : null}
       <div style={{...big(bold), fontSize: bold ? 84 : 88, lineHeight: 1.05, marginTop: 8,
         fontVariantNumeric: 'tabular-nums'}}>{value}</div>
-      {hud.sub ? <div style={{fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: 700, fontSize: 22,
-        letterSpacing: '0.12em', opacity: 0.85, marginTop: 10}}>{hud.sub}</div> : null}
+      {hud.sub ? <div style={{fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: 700, fontSize: 30,
+        letterSpacing: '0.08em', opacity: 0.9, marginTop: 10}}>{hud.sub}</div> : null}
     </div>
   );
 };
@@ -167,7 +167,7 @@ const OverlayBox: React.FC<{ov: Overlay; span: number; p: ShortProps}> = ({ov, s
             </div>
           );
         })}
-        {ov.note ? <div style={{fontFamily: SANS, fontSize: 22, opacity: 0.7, marginTop: 6}}>{ov.note}</div> : null}
+        {ov.note ? <div style={{fontFamily: SANS, fontSize: 28, opacity: 0.8, marginTop: 6}}>{ov.note}</div> : null}
       </div>
     );
   }
@@ -255,8 +255,8 @@ const OverlayBox: React.FC<{ov: Overlay; span: number; p: ShortProps}> = ({ov, s
           <circle cx={60} cy={tubeH + 34} r={30} fill={col} stroke="white" strokeWidth={3} />
           {[0, 0.25, 0.5, 0.75, 1].map((f) => <line key={f} x1={78} x2={94} y1={10 + tubeH * (1 - f)} y2={10 + tubeH * (1 - f)}
             stroke="white" strokeWidth={2} opacity={0.7} />)}
-          <text x={100} y={22} fill="white" opacity={0.8} style={{fontFamily: SANS, fontSize: 20}}>{ov.high}</text>
-          <text x={100} y={tubeH + 8} fill="white" opacity={0.8} style={{fontFamily: SANS, fontSize: 20}}>{ov.low}</text>
+          <text x={100} y={22} fill="white" opacity={0.9} style={{fontFamily: SANS, fontSize: 26}}>{ov.high}</text>
+          <text x={100} y={tubeH + 8} fill="white" opacity={0.9} style={{fontFamily: SANS, fontSize: 26}}>{ov.low}</text>
         </svg>
         <div style={{display: 'flex', flexDirection: 'column'}}>
           {ov.label ? <div style={{fontFamily: SANS, fontWeight: 700, fontSize: 30, letterSpacing: '0.03em',
@@ -286,14 +286,16 @@ const OverlayBox: React.FC<{ov: Overlay; span: number; p: ShortProps}> = ({ov, s
           {ticks.map((i) => <line key={i} x1={inner * grow * i / 10} x2={inner * grow * i / 10} y1={30}
             y2={i % 5 === 0 ? 64 : 48} stroke={p.palette.amber} strokeWidth={3} />)}
         </svg>
-        <div style={{display: 'flex', justifyContent: 'space-between', width: inner, fontFamily: SANS, fontSize: 28,
-          opacity: 0.85}}><span>{ov.from}</span><span style={{opacity: grow}}>{ov.to}</span></div>
+        <div style={{display: 'flex', justifyContent: 'space-between', width: inner, fontFamily: SANS, fontSize: 34,
+          opacity: 0.9}}><span>{ov.from}</span><span style={{opacity: grow}}>{ov.to}</span></div>
       </div>
     );
   }
   const items = (ov.items || []) as string[];
   const gap = span / (items.length + 0.6);
   const lit = Math.min(items.length - 1, Math.floor(Math.max(0, t - 0.2) / gap));
+  const longest = Math.max(...items.map((x) => x.length));
+  const stepSize = longest <= 26 ? 44 : longest <= 32 ? 40 : 34;     // as big as fits one line on a phone
   return (
     <div style={panel}>
       {items.map((x, i) => {
@@ -301,12 +303,13 @@ const OverlayBox: React.FC<{ov: Overlay; span: number; p: ShortProps}> = ({ov, s
           {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
         const on = i === lit;
         return (
-          <div key={i} style={{display: 'flex', alignItems: 'center', margin: '10px 0', opacity: a * (on ? 1 : 0.6),
+          <div key={i} style={{display: 'flex', alignItems: 'center', margin: '10px 0', opacity: a * (on ? 1 : 0.78),
             transform: `translateX(${(1 - a) * -24}px)`}}>
             <div style={{width: 54, height: 54, borderRadius: 27, flex: '0 0 54px', display: 'flex', alignItems: 'center',
-              justifyContent: 'center', fontFamily: SANS, fontWeight: 800, fontSize: 28,
+              justifyContent: 'center', fontFamily: SANS, fontWeight: 800, fontSize: 30,
               background: on ? p.palette.amber : 'rgba(255,255,255,0.14)', color: on ? '#101420' : 'white'}}>{i + 1}</div>
-            <div style={{fontFamily: SANS, fontWeight: on ? 700 : 400, fontSize: 34, marginLeft: 20}}>{x}</div>
+            <div style={{fontFamily: SANS, fontWeight: on ? 700 : 500, fontSize: stepSize, marginLeft: 20,
+              lineHeight: 1.15}}>{x}</div>
           </div>
         );
       })}
