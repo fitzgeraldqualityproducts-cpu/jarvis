@@ -188,11 +188,19 @@ explanation afterwards):
    month), which is also sunrise to sunrise at any spot on the Moon (its solar day): never call 29.53 days a lap
    or a turn. Use the technical name only when it helps (never in the hook); plain words come first. When the
    answer depends on place (latitude, the poles, terrain), say in a few words where it holds ("near the equator").
+7. Plan what a newcomer must already know (Connor, 2026-11-27: most stopped scripts left out a background fact,
+   like "the Moon always shows us the same face" or "the Sun lights half the Moon at all times"). Before writing
+   lines, list in the model's "background" every plain fact (not a number) the answer depends on that a curious
+   14-year-old might not know. Each must be said in a line before (or in) the first line that relies on it; if
+   it can't fit, pick a simpler question. A fraction or share you work out is said as the calculation it comes
+   from ("a quarter of the 29.53-day cycle", "half of 29.53"), never as a bare 0.25 or "a quarter" on its own.
 Write the model ONCE as "model" (before the drafts), and for every line say "learn" (what the viewer learns there,
-under 12 words) and "uses" (the model quantity names that line relies on)."""
+under 12 words), "uses" (the model quantity names that line relies on), "tells" (the background keys that line
+states) and "needs" (the background keys it relies on: each must be in "tells" of that line or an earlier one)."""
 MODEL_SHAPE = ('"model": {"question": "...", "premise": "what physically happens, to what", "assumptions": [{"what": '
                '"...", "why": "..."}], "quantities": [{"name": "t", "means": "tissue thickness", "value": 0.1, "unit": '
-               '"mm", "from": "F2|example|standard|calc"}], "formula": {"expr": "pi*t*(2**n+4)*(2**n-1)/6", '
+               '"mm", "from": "F2|example|standard|calc"}], "background": [{"key": "one_face", "fact": "the Moon always '
+               'shows Earth the same face", "from": "F3|standard"}], "formula": {"expr": "pi*t*(2**n+4)*(2**n-1)/6", '
                '"means": "...", "applies_because": "..."}, "result": {"value": 879, "unit": "m"}, "answer": "...", '
                '"demo": {"objects": [{"thing": "ball", "stands_for": "the Moon"}], "observer": "you = someone on '
                'Earth", "marker": {"thing": "sticky note", "stands_for": "a spot on the far side", "where": "the side '
@@ -336,7 +344,7 @@ Also write 5 different hooks (each could replace line 1) and 3 title options (un
 
 {{shape}}"""
     model_shape = MODEL_SHAPE if story_first else ""
-    line_extra = ', "learn": "...", "uses": ["t"]' if story_first else ""
+    line_extra = ', "learn": "...", "uses": ["t"], "tells": ["one_face"], "needs": []' if story_first else ""
     one = ('JSON only: {' + model_shape + '"hooks": ["..." x5], "lines": [{"text": "...", "facts": ["F1"], "visual": "...", '
            '"beat": "setup"' + line_extra + '}],\n'
            '"calcs": [{"expr": "...", "result": 0.0, "unit": "...", "says": "what it shows"}], "titles": ["..." x3],\n'
@@ -566,8 +574,10 @@ def pick_draft(raw, topic):
         return None
     if isinstance(raw, dict) and isinstance(raw.get("model"), dict):
         drafts = [d if isinstance(d.get("model"), dict) else dict(d, model=raw["model"]) for d in drafts]
-    good = [(i, d) for i, d in enumerate(drafts) if not _screen(d)]
-    pool = good or [(i, d) for i, d in enumerate(drafts)]
+    screened = {i: _screen(d) for i, d in enumerate(drafts)}
+    good = [(i, d) for i, d in enumerate(drafts) if not screened[i]]
+    fewest = min(len(v) for v in screened.values())          # none clean: judge only the ones with fewest problems
+    pool = good or [(i, d) for i, d in enumerate(drafts) if len(screened[i]) == fewest]
     scores, why, notes = {}, "", {}
     if len(pool) > 1:
         try:
@@ -583,7 +593,7 @@ def pick_draft(raw, topic):
         chosen["model"] = raw["model"]
     chosen["picked"] = {"of": len(drafts), "passed_screen": len(good), "angle": str(pool[best][1].get("angle") or "")[:160],
                         "score": judge_score(scores.get(best)) if scores else None, "why": why,
-                        "dropped": {str(i): _screen(d)[:3] for i, d in enumerate(drafts) if (i, d) not in good}}
+                        "dropped": {str(i): screened[i][:3] for i in screened if screened[i]}}
     return chosen
 
 
