@@ -163,7 +163,7 @@ def _unexplained(node, nums, text, others, depth=0, top=True):
             return []
         if node.id == "g" and not re.search(r"\bgravity|\bg\b|9\.8", text, re.I):
             return ["g, gravity's pull (never said)"]
-        if node.id == "c" and not re.search(r"speed of light|light", text, re.I):
+        if node.id == "c" and not re.search(CONSTANTS[0][2], text, re.I):
             return ["c, the speed of light (never said)"]
         return []
     if not top and not isinstance(node, (ast.Constant, ast.Name)) and val is not None and heard(val, nums) and \
@@ -171,6 +171,9 @@ def _unexplained(node, nums, text, others, depth=0, top=True):
         return []                                    # the viewer heard this whole part's value
     if isinstance(node, ast.Constant):
         v = float(node.value)
+        for (lo, hi), _, words in CONSTANTS:        # G typed in as 6.674e-11: fine once "gravitational constant" is said
+            if lo <= abs(v) <= hi and re.search(words, text, re.I):
+                return []
         if abs(v - math.pi) < 2e-3:                 # pi typed in as 3.14159...: judged like the name pi
             return _unexplained(ast.Name(id="pi"), nums, text, others, depth, top)
         for k, words in CALENDAR.items():           # 7 is "a week", 52 "weeks in a year", 12 "months"
@@ -489,6 +492,29 @@ def _alias(names, qs, env):
                 env[sym] = env[key]
 
 
+# physical constants a narrator may name instead of reading out (value range, pattern for the model quantity,
+# pattern for the narration)
+CONSTANTS = [
+    ((2.9e8, 3.1e8), r"\bc\b|speed of light|light speed", r"speed of light|light'?s speed|light speed|speed light"),
+    ((6.6e-11, 6.7e-11), r"\bG\b|gravitational constant|newton", r"gravitational constant|gravity'?s constant|"
+                                                               r"newton'?s constant|constant of gravity|big G"),
+    ((6.6e-34, 6.7e-34), r"\bh\b|planck", r"planck"),
+    ((1.3e-23, 1.4e-23), r"\bk\b|boltzmann", r"boltzmann"),
+    ((9.7, 9.9), r"\bg\b|gravity|gravitational acceleration", r"gravity|9\.8"),
+    ((5.6e-8, 5.7e-8), r"sigma|stefan", r"stefan|boltzmann"),
+]
+
+
+def _constant_words(q):
+    """The narration pattern that names this model quantity, when it is a well-known physical constant."""
+    v = _num(q.get("value"))
+    label = f"{q.get('name')} {q.get('means')}"
+    for (lo, hi), qpat, words in CONSTANTS:
+        if v is not None and lo <= abs(v) <= hi and re.search(qpat, label, re.I | 0):
+            return words
+    return None
+
+
 def model_check(model, lines):
     """Hard and soft problems with the writer's model: [{"hard", "kind", "text", "line"}]."""
     out = []
@@ -517,6 +543,9 @@ def model_check(model, lines):
         src = str(q.get("from") or "").lower()
         if src.startswith("calc") or src.startswith("result") or is_conversion(q):
             continue
+        named = _constant_words(q)
+        if named and any(re.search(named, t, re.I) for t in texts):
+            continue                     # "light's speed", "gravity's constant": a viewer needs the name, not the digits
         if val is not None and not (float(val).is_integer() and abs(val) <= SMALL) and \
                 not any(heard(val, s) or heard(abs(val), s) for s in said_all):     # "minus 19.4" is said as 19.4
             out.append({"hard": True, "kind": "assumption", "line": None,
@@ -604,8 +633,8 @@ def background_check(lines, model):
     for b in (model or {}).get("background") or []:
         if isinstance(b, dict) and str(b.get("key") or "").strip() and str(b.get("fact") or "").strip():
             bg[str(b["key"]).strip()] = " ".join(str(b["fact"]).split())[:120]
-    if not bg:
-        return []
+    if not bg or not any(isinstance(ln, dict) and isinstance(ln.get("tells"), list) for ln in lines):
+        return []                         # no line says what it tells (a rewrite dropped the plan): can't judge
     keys = lambda v: {str(x).strip() for x in (v if isinstance(v, list) else [v] if v else [])}
     first = {}
     for i, ln in enumerate(lines, 1):

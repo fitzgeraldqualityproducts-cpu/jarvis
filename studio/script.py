@@ -227,6 +227,9 @@ explanation afterwards):
    14-year-old might not know. Each must be said in a line before (or in) the first line that relies on it; if
    it can't fit, pick a simpler question. A fraction or share you work out is said as the calculation it comes
    from ("a quarter of the 29.53-day cycle", "half of 29.53"), never as a bare 0.25 or "a quarter" on its own.
+   Every constant in the formula (the speed of light, the gravitational constant, gravity's 9.8) is named aloud
+   before the line that uses it; its digits are optional. A size word ("atom-sized", "car-sized") says the size
+   it stands for the first time it is used ("an atom, about a tenth of a nanometer").
 Write the model ONCE as "model" (before the drafts), and for every line say "learn" (what the viewer learns there,
 under 12 words), "uses" (the model quantity names that line relies on), "tells" (the background keys that line
 states) and "needs" (the background keys it relies on: each must be in "tells" of that line or an earlier one)."""
@@ -415,6 +418,8 @@ Also write 5 different hooks (each could replace line 1) and 3 title options (un
     if feedback and previous and isinstance(previous.get("model"), dict) and not isinstance(ans.get("model"), dict):
         ans["model"] = previous["model"]          # a rewrite keeps the model unless it fixed it
     ans = _clean(ans)
+    if previous:
+        ans = _carry_plan(ans, previous)
     ans, cta_note = rules.fix_cta(ans)            # a last line that isn't one of Connor's CTA types: free fix
     if cta_note:
         ans["rules_fixed"] = [cta_note]
@@ -2148,6 +2153,26 @@ def held_for_review(video_id):
 def _story_fix_tried(video_id):
     return any(json.loads(r["structure"] or "{}").get("story_fix")
                for r in db.q("SELECT structure FROM scripts WHERE video_id IS ?", video_id))
+
+
+PLAN_KEYS = ("learn", "uses", "tells", "needs")
+
+
+def _carry_plan(new, old):
+    """A rewrite often drops the per-line storyboard ("learn", "uses", "tells", "needs"; test 39). A new line
+    without it takes it from the old line it most resembles (half or more of the old line's own words kept)."""
+    olds = [ln for ln in (old or {}).get("lines") or [] if isinstance(ln, dict)]
+    out = []
+    for ln in new.get("lines") or []:
+        missing = [k for k in PLAN_KEYS if ln.get(k) in (None, "")]
+        if missing and olds:
+            words = _content_words(ln.get("text"))
+            best = max(olds, key=lambda o: len(_content_words(o.get("text")) & words) /
+                       max(1, len(_content_words(o.get("text")))))
+            if _keeps_image(best.get("text"), ln.get("text")):
+                ln = dict(ln, **{k: best[k] for k in missing if best.get(k) not in (None, "")})
+        out.append(ln)
+    return dict(new, lines=out)
 
 
 def _content_words(t):
