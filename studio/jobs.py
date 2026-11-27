@@ -245,7 +245,22 @@ def resume():
     db.put("paused", False)
 
 
+TEST_STALE = 15 * 60       # a test pause whose process stopped beating this long ago is lifted by itself
+
+
 def paused():
+    if not db.get("paused", False):
+        return False
+    t = db.get("test_pause")
+    if isinstance(t, dict) and time.time() - float(t.get("beat") or 0) > TEST_STALE:
+        # the `studio test` run that paused the studio died (Claude plan limit, closed window): lift its pause,
+        # unless the studio was already paused before the test began (then it stays as Connor left it)
+        db.put("test_pause", None)
+        if not t.get("was_paused"):
+            resume()
+            health.recovery("restart", "a test Short run stopped without finishing",
+                            "the studio's pause from that test was lifted by itself")
+            return False
     return bool(db.get("paused", False))
 
 

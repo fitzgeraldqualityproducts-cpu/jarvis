@@ -20,6 +20,9 @@
               render, metadata and the QA gate (--video <id>); never uploads
   approve     lets a Short held for your review (originality 5/10, everything else strong) go out like any
               other (approve --video <id>); without it, a held Short never goes out by itself
+  test        a held test Short in one go: pauses the studio, makes one Short with the new looks (video
+              --new-looks, same options), holds it as "TEST SHORT: sample only, never upload" and resumes the
+              studio, even if it fails; if this window dies, the studio un-pauses itself within 15 minutes
   upload      uploads the newest finished Short as PRIVATE to the business channel, after you confirm
               (--video <id>); then checks YouTube processed it
   dashboard   opens the live dashboard (Jarvis's own page if Jarvis is running, else serves it itself)
@@ -290,6 +293,46 @@ def _upload(argv):
     return 0
 
 
+TEST_HOLD = "TEST SHORT: sample only, never upload"
+
+
+def _test(argv):
+    import threading
+    from studio import db, jobs
+    health.startup()
+    was = jobs.paused()
+    last = (db.one("SELECT MAX(id) n FROM videos") or {"n": 0})["n"] or 0
+    db.put("test_pause", {"t": time.time(), "beat": time.time(), "was_paused": was, "pid": os.getpid()})
+    jobs.pause()
+    done = threading.Event()
+
+    def beat():                                   # tells the studio this test is still alive
+        while not done.wait(60):
+            t = db.get("test_pause")
+            if isinstance(t, dict):
+                db.put("test_pause", dict(t, beat=time.time()))
+    threading.Thread(target=beat, daemon=True).start()
+    print("Studio paused for a test Short." + (" (It was already paused and stays paused after.)" if was else ""))
+    rc = 1
+    try:
+        rc = _video(["video", "--new-looks", *[a for a in argv[1:] if a != "--new-looks"]])
+    finally:
+        done.set()
+        vids = {r["id"] for r in db.q("SELECT id FROM videos WHERE id>?", last)}
+        if "--video" in argv:
+            vids.add(int(argv[argv.index("--video") + 1]))
+        for vid in sorted(vids):
+            if db.video(vid):
+                db.set_video(vid, state="rejected", error=TEST_HOLD, error_kind="permanent", owner=None,
+                             finished=time.time())
+                print(f"Video {vid} held: {TEST_HOLD}.")
+        db.put("test_pause", None)
+        if not was:
+            jobs.resume()
+            print("Studio resumed.")
+    return rc
+
+
 def _approve(argv):
     from studio import db, guard, script
     if "--video" not in argv:
@@ -515,6 +558,8 @@ def main(argv):
         return _script(argv)
     elif cmd == "video":
         return _video(argv)
+    elif cmd == "test":
+        return _test(argv)
     elif cmd == "upload":
         return _upload(argv)
     elif cmd == "approve":
