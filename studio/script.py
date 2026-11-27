@@ -517,12 +517,52 @@ def _learn_from_drafts(topic, drafts, good, scores, notes, best):
         print(f"(couldn't save what the losing drafts taught: {str(e)[:120]})")
 
 
+def _find_drafts(raw, depth=0):
+    """Every draft (a dict with a list of "lines") in Claude's answer, wherever it sits: {"drafts": [...]},
+    {"drafts": {"1": {...}}}, a bare list of drafts, one draft, or one level deeper (test 36's first try came
+    back in a shape the old code couldn't read and the whole call was lost)."""
+    if depth > 3:
+        return []
+    if isinstance(raw, dict):
+        if isinstance(raw.get("lines"), list) and raw["lines"]:
+            return [raw]
+        out = []
+        for key in ("drafts", "scripts", "options", "versions"):
+            v = raw.get(key)
+            if isinstance(v, dict):
+                v = list(v.values())
+            if isinstance(v, list):
+                out += [d for x in v for d in _find_drafts(x, depth + 1)]
+        if out:
+            return out
+        for v in raw.values():
+            if isinstance(v, (dict, list)) and v is not raw.get("model"):
+                out += _find_drafts(v, depth + 1)
+        return out
+    if isinstance(raw, list):
+        return [d for x in raw for d in _find_drafts(x, depth + 1)]
+    return []
+
+
+def _log_unusable(raw, topic):
+    """Says what came back when no draft could be read, and keeps it for a look (studio_data/research)."""
+    shape = (f"a {type(raw).__name__} with keys {sorted(raw)[:8]}" if isinstance(raw, dict) else
+             f"a list of {len(raw)}" if isinstance(raw, list) else type(raw).__name__)
+    print(f"(script: no readable draft in Claude's answer: {shape})")
+    try:
+        from studio import data_dir
+        (data_dir("research") / "last_unreadable_script.json").write_text(json.dumps(
+            {"topic": (topic or {}).get("title"), "shape": shape, "answer": raw}, indent=1, default=str)[:200000])
+    except Exception:
+        pass
+
+
 def pick_draft(raw, topic):
     """The strongest of the side-by-side drafts (or the only one). Drafts that break a hard rule the code can
     check are dropped first; a short judging call ranks the rest. Never fails because of the judge."""
-    drafts = raw.get("drafts") if isinstance(raw, dict) and isinstance(raw.get("drafts"), list) else [raw]
-    drafts = [_clean(d) for d in drafts if isinstance(d, dict) and d.get("lines")]
+    drafts = [_clean(d) for d in _find_drafts(raw)]
     if not drafts:
+        _log_unusable(raw, topic)
         return None
     if isinstance(raw, dict) and isinstance(raw.get("model"), dict):
         drafts = [d if isinstance(d.get("model"), dict) else dict(d, model=raw["model"]) for d in drafts]

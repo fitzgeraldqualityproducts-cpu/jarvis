@@ -441,3 +441,19 @@ def test_the_gate_refuses_a_wrong_export_size_and_new_looks_paint_bigger_picture
         monkeypatch.setattr(mod, name, getattr(mod, name))          # put back after the test
     cli._new_looks(["--new-looks"])
     assert art.gen_size() == (art.HD_W, art.HD_H)
+
+
+# ---------- test 36's first try: an answer the old code couldn't read ----------
+
+def test_drafts_are_found_in_any_shape_and_a_split_answer_is_joined(studio_home):  # noqa: F811
+    from clipper import llm
+    from studio import data_dir, script
+    d = {"lines": [{"text": "a"}]}
+    assert len(script._find_drafts({"model": {}, "drafts": {"1": d, "2": d}})) == 2
+    assert len(script._find_drafts([d, d])) == 2 and len(script._find_drafts({"answer": {"drafts": [d]}})) == 1
+    assert script._find_drafts({"model": {"lines": [1]}}) == []
+    split = 'The model:\n```json\n{"model": {"question": "q"}}\n```\nThe drafts:\n```json\n{"drafts": [{"lines": [{"text": "a"}]}]}\n```'
+    got = llm.parse_json(split)
+    assert got["model"]["question"] == "q" and got["drafts"][0]["lines"]
+    assert script.pick_draft({"model": {"question": "q"}}, {"title": "t"}) is None
+    assert (data_dir("research") / "last_unreadable_script.json").exists()
