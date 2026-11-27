@@ -396,6 +396,8 @@ Also write 5 different hooks (each could replace line 1) and 3 title options (un
     if feedback and previous and isinstance(previous.get("model"), dict) and not isinstance(ans.get("model"), dict):
         ans["model"] = previous["model"]          # a rewrite keeps the model unless it fixed it
     ans = _clean(ans)
+    if previous:
+        ans = _carry_plan(ans, previous)
     if number_check_on():
         ans, rep = tag_numbers(ans, topic)
         if rep["tagged"] or rep["looked_up"]:
@@ -2084,6 +2086,26 @@ def held_for_review(video_id):
 def _story_fix_tried(video_id):
     return any(json.loads(r["structure"] or "{}").get("story_fix")
                for r in db.q("SELECT structure FROM scripts WHERE video_id IS ?", video_id))
+
+
+PLAN_KEYS = ("learn", "uses", "tells", "needs")
+
+
+def _carry_plan(new, old):
+    """A rewrite often drops the per-line storyboard ("learn", "uses", "tells", "needs"; test 39). A new line
+    without it takes it from the old line it most resembles (half or more of the old line's own words kept)."""
+    olds = [ln for ln in (old or {}).get("lines") or [] if isinstance(ln, dict)]
+    out = []
+    for ln in new.get("lines") or []:
+        missing = [k for k in PLAN_KEYS if ln.get(k) in (None, "")]
+        if missing and olds:
+            words = _content_words(ln.get("text"))
+            best = max(olds, key=lambda o: len(_content_words(o.get("text")) & words) /
+                       max(1, len(_content_words(o.get("text")))))
+            if _keeps_image(best.get("text"), ln.get("text")):
+                ln = dict(ln, **{k: best[k] for k in missing if best.get(k) not in (None, "")})
+        out.append(ln)
+    return dict(new, lines=out)
 
 
 def _content_words(t):
