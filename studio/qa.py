@@ -489,7 +489,9 @@ def check(video_id):
     if row:
         sim, other = script.similar_script(row["body"], video_id)
         _add(checks, "not a remake", sim < script.SIMILAR_SCRIPT, f"{sim:.0%} overlap with video {other}" if other else "")
-    if all(c["passed"] for c in checks):          # the editor's look, only for a Short that passed everything else
+    # the editor's look, only for a Short that passed everything else, or failed only a check that doesn't change
+    # what the editor would see (test 39 failed the loop alone and got no review)
+    if all(c["passed"] or c["name"] in REVIEW_ANYWAY for c in checks):
         from studio import finalreview
         try:
             fr = finalreview.review(video_id)
@@ -514,6 +516,9 @@ def check(video_id):
 
 # The weighted quality score sits NEXT TO the hard checks: it never passes a Short that failed one, and never
 # stops one that passed them all. It shows how good a passing Short is, so results can be compared over time.
+REVIEW_ANYWAY = ("seamless loop",)
+
+
 QUALITY_WEIGHTS = {"loudness": 0.10, "loop": 0.15, "timing": 0.15, "start": 0.10, "hook": 0.20, "originality": 0.20,
                    "confidence": 0.10, "story": 0.20, "visual_purpose": 0.10}
 

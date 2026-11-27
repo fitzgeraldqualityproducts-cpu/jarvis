@@ -4,7 +4,7 @@
 // downloaded or random, so the same props always give the same video.
 import React from 'react';
 import {
-  AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, interpolate, spring, staticFile,
+  AbsoluteFill, Audio, Freeze, Img, OffthreadVideo, Sequence, interpolate, spring, staticFile,
   useCurrentFrame, useVideoConfig,
 } from 'remotion';
 
@@ -573,9 +573,10 @@ const Cinematic: React.FC<ShortProps> = (p) => {
   const frame = useCurrentFrame();
   const t = frame / p.fps;
   const fadeFrames = Math.round(p.fade * p.fps);
-  const loopA = p.scenes.length > 1 ? interpolate(t, [p.duration - p.loopBlend, p.duration], [0, 1],
+  const loopA = p.scenes.length > 1 ? interpolate(t, [p.duration - p.loopBlend, p.duration - 1.5 / p.fps], [0, 1],
     {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}) : 0;
   const cam = cueLook(p.fx || [], p.scenes, t);
+  const cam0 = cueLook(p.fx || [], p.scenes, 0);
   return (
     <AbsoluteFill style={{backgroundColor: p.palette.background}}>
       <AbsoluteFill style={{transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.scale})`,
@@ -593,8 +594,15 @@ const Cinematic: React.FC<ShortProps> = (p) => {
       </AbsoluteFill>
       {cam.flash > 0 ? <AbsoluteFill style={{backgroundColor: 'white', opacity: cam.flash}} /> : null}
       {loopA > 0 ? (
+        // the loop blends into exactly what frame 1 shows (the first scene's own move, text and camera at t=0),
+        // not its still picture: a star field moved by a few pixels differed by 14.8 (test 39)
         <AbsoluteFill style={{opacity: loopA}}>
-          <Img src={staticFile(p.scenes[0].image)} />
+          <Freeze frame={0}>
+            <AbsoluteFill style={{transform: `translate(${cam0.x}px, ${cam0.y}px) scale(${cam0.scale})`,
+              transformOrigin: '50% 45%'}}>
+              <CinemaScene scene={p.scenes[0]} index={0} p={p} />
+            </AbsoluteFill>
+          </Freeze>
         </AbsoluteFill>
       ) : null}
       <LineCaption p={p} />
@@ -610,7 +618,7 @@ export const Short: React.FC<ShortProps> = (p) => {
   const frame = useCurrentFrame();
   const t = frame / p.fps;
   const fadeFrames = Math.round(p.fade * p.fps);
-  const loopA = p.scenes.length > 1 ? interpolate(t, [p.duration - p.loopBlend, p.duration], [0, 1],
+  const loopA = p.scenes.length > 1 ? interpolate(t, [p.duration - p.loopBlend, p.duration - 1.5 / p.fps], [0, 1],
     {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}) : 0;
   return (
     <AbsoluteFill style={{backgroundColor: p.palette.background}}>
