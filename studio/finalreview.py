@@ -143,6 +143,86 @@ JSON only: {{"score": 0-10, "first_frame": 0-10, "visual_hook": 0-10,
     return res
 
 
+# ---------- the stills check: the pictures are judged BEFORE the Short is put together ----------
+# Pipeline order review (2026-11-27): tests 35 and 36 passed the script and then scored 5/10 on pictures (a glitched
+# NASA photo) that were only seen after the full render. Here the scene pictures are looked at on one sheet as
+# soon as they exist; a picture with a major problem is swapped for a plain background before anything is drawn
+# on it, so the after-render review finds less. Config "stills_check": true turns it on (off until a held test).
+
+def stills_on():
+    try:
+        return config.general().get("stills_check", False) is True
+    except Exception:
+        return False
+
+
+def image_sheet(paths, out):
+    """A numbered contact sheet of these pictures (any size), in order. Returns out."""
+    from PIL import Image, ImageDraw, ImageFont
+    tiles = []
+    for p in paths:
+        try:
+            with Image.open(p) as im:
+                tiles.append(im.convert("RGB").resize((TILE_W, TILE_H)))
+        except Exception:
+            tiles.append(Image.new("RGB", (TILE_W, TILE_H)))
+    cols = min(5, max(1, len(tiles)))
+    rows = (len(tiles) + cols - 1) // cols
+    head = 34
+    board = Image.new("RGB", (cols * (TILE_W + 8) + 8, max(1, rows) * (TILE_H + head + 8) + 8), (40, 40, 40))
+    d = ImageDraw.Draw(board)
+    try:
+        font = ImageFont.load_default(size=22)
+    except TypeError:
+        font = ImageFont.load_default()
+    for i, img in enumerate(tiles):
+        x, y = 8 + (i % cols) * (TILE_W + 8), 8 + (i // cols) * (TILE_H + head + 8)
+        d.text((x + 4, y + 4), f"scene {i + 1}", fill=(255, 255, 255), font=font)
+        board.paste(img, (x, y + head))
+    board.save(out)
+    return out
+
+
+def stills_check(video_id, pictures, lines, photos=()):
+    """{"bad": {scene index: issue}, "problems": [...], "sheet": path} for the scene pictures {index: path}.
+    One Claude call (the Read tool only, to open the sheet). None when switched off or there are no pictures."""
+    if not stills_on() or not pictures:
+        return None
+    from studio import claude
+    order = sorted(pictures)
+    folder = os.path.dirname(str(pictures[order[0]]))
+    out = os.path.join(folder, "stills_check.png")
+    image_sheet([pictures[k] for k in order], out)
+    said = "\n".join(f"Scene {n} ({'a real photo' if k in photos else 'an AI picture'}): the narrator says "
+                      f"\"{lines[k] if k < len(lines) else ''}\"" for n, k in enumerate(order, 1))
+    ans = claude.ask_json(
+        f"""You check the background pictures of a science YouTube Short BEFORE it is put together. The picture is a
+sheet of {len(order)} scene backgrounds, numbered in order. Captions, numbers and diagrams are drawn on top later, so
+judge only the picture itself.
+
+{said}
+
+For each scene, look for: a picture that doesn't show what the line is about (wrong object, unrelated scene),
+broken AI artwork (garbled text or symbols, melted shapes, obvious glitches), a damaged photo (black blocks,
+stripes of missing data, a scan seam), or a logo or brand. "major" means a viewer would notice and it hurts trust or
+understanding; small style preferences are "minor". If everything is fine, give no problems.
+
+JSON only: {{"problems": [{{"scene": 2, "issue": "what is wrong, briefly", "severity": "minor|major"}}]}}""",
+        timeout=300, purpose=f"stills check: video {video_id}", images=[out])
+    probs, bad = [], {}
+    for p in (ans.get("problems") if isinstance(ans, dict) else None) or []:
+        if not isinstance(p, dict) or not str(p.get("issue") or "").strip() or not str(p.get("scene", "")).isdigit():
+            continue
+        n = int(p["scene"])
+        if not 1 <= n <= len(order):
+            continue
+        sev = "major" if str(p.get("severity")).lower() == "major" else "minor"
+        probs.append({"scene": n, "issue": str(p["issue"])[:200], "severity": sev})
+        if sev == "major":
+            bad[order[n - 1]] = str(p["issue"])[:200]
+    return {"bad": bad, "problems": probs[:12], "sheet": out}
+
+
 def _sections(ans):
     """{section: one-line guess} for the known sections only. Labelled as a guess: no viewer data behind it."""
     got = (ans or {}).get("sections") if isinstance(ans, dict) else None

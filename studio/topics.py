@@ -460,6 +460,124 @@ def enrich(t, progress=lambda s: None):
     return len(found)
 
 
+# ---------- background facts a newcomer needs (pipeline order review, 2026-11-27) ----------
+# enrich() only keeps sentences with numbers, so plain set-up facts ("the Moon always shows Earth the same face")
+# never reached the writer and most stopped scripts left one out. The idea's rating lists them (free, same call);
+# here each is found word for word on the topic's own pages or Wikipedia, before a script is written.
+
+BACKGROUND_NOTE = "background fact for a newcomer, from a free reference source"
+BACKGROUND_SKIP = 2            # this many newcomer facts that no page states skip the idea before writing
+
+
+def background_sentence(fact, text):
+    """The sentence of text that best states this background fact (most shared words), or None."""
+    want = _words(fact)
+    if len(want) < 2:
+        return None
+    best = None
+    for x in _sentences(text):
+        if "{" in x or "\\" in x or x.lower().startswith(("see also", "for other")):
+            continue
+        hit = len(want & _words(x))
+        if hit >= max(2, math.ceil(0.6 * len(want))) and (best is None or hit > best[0]):
+            best = (hit, x)
+    return best[1] if best else None
+
+
+def _wiki_background(fact):
+    """(sentence, url, page text) from the best Wikipedia page for this fact; None when none states it;
+    raises when Wikipedia can't be reached."""
+    ans = json.loads(_api(WIKI_API + "?" + urllib.parse.urlencode(
+        {"action": "query", "list": "search", "srsearch": fact[:200], "srlimit": 2, "format": "json"})))
+    for hit in ((ans.get("query") or {}).get("search") or [])[:2]:
+        title = str(hit.get("title") or "")
+        if not title:
+            continue
+        pages = (json.loads(_api(WIKI_API + "?" + urllib.parse.urlencode(
+            {"action": "query", "prop": "extracts", "explaintext": 1, "redirects": 1, "titles": title,
+             "format": "json"}))).get("query") or {}).get("pages") or {}
+        text = " ".join(str(p.get("extract") or "") for p in pages.values())
+        x = background_sentence(fact, text)
+        if x:
+            return x, "https://en.wikipedia.org/wiki/" + urllib.parse.quote(title.replace(" ", "_")), title, text
+    return None
+
+
+def background(t, progress=lambda s: None):
+    """Finds a source sentence for each newcomer fact the idea's rating listed, adds it to the topic's facts, and
+    returns {"found": {fact: claim}, "missing": [facts no page states]}. Free (no Claude), once per topic. A fact
+    Wikipedia couldn't be asked about (offline) is never counted as missing."""
+    sc = dict(t.get("scores") or {})
+    if isinstance(sc.get("background"), dict):
+        return sc["background"]
+    need = [str(f) for f in sc.get("newcomer") or []][:NEWCOMER_MAX]
+    out = {"found": {}, "missing": []}
+    if not need or not enrich_on():
+        return out
+    now = time.time()
+    for fact in need:
+        got = None
+        for s in t.get("sources") or []:                   # already one of the facts
+            if background_sentence(fact, s.get("claim")):
+                got = s["claim"]
+                break
+        if got is None:
+            for s in t.get("sources") or []:               # stated on a page the idea already cites
+                if tier(s.get("url")) < 3 or s.get("note") == BACKGROUND_NOTE:
+                    continue
+                x = background_sentence(fact, page_text(s["url"]))
+                if x:
+                    got = _add_source(t, x, s["url"], s.get("title") or domain(s["url"]), now)
+                    break
+        if got is None:
+            try:
+                hit = _wiki_background(fact)
+            except Exception as e:
+                progress(f"background facts: Wikipedia didn't answer ({str(e)[:80]})")
+                continue
+            if hit:
+                x, url, title, text = hit
+                _save(url, text)
+                got = _add_source(t, x, url, f"Wikipedia: {title}", now)
+        if got is None:
+            out["missing"].append(fact)
+        else:
+            out["found"][fact] = got
+    sc["background"] = out
+    db.run("UPDATE topics SET scores=? WHERE id=?", json.dumps(sc), t["id"])
+    t["scores"] = sc
+    if out["found"]:
+        progress(f"background facts: {len(out['found'])} of {len(need)} found word for word")
+    return out
+
+
+def _add_source(t, claim, url, title, now):
+    row = {"topic_id": t["id"], "claim": claim[:400], "url": url[:500], "title": str(title)[:200],
+           "domain": domain(url), "tier": tier(url), "http_status": 200, "verdict": "reachable", "note": BACKGROUND_NOTE}
+    row["id"] = db.insert("INSERT INTO sources(topic_id, claim, url, title, retrieved, verdict, note, domain, tier, "
+                          "http_status) VALUES(?,?,?,?,?,?,?,?,?,?)", t["id"], row["claim"], row["url"], row["title"],
+                          now, "reachable", BACKGROUND_NOTE, row["domain"], row["tier"], 200)
+    t.setdefault("sources", []).append(row)
+    return row["claim"]
+
+
+def prepare(t, progress=lambda s: None):
+    """Free research before any script is written: more sourced numbers, then the newcomer facts. Returns a reason
+    to skip the idea (too much background no page states), or None."""
+    try:
+        enrich(t, progress)
+    except Exception:
+        pass
+    try:
+        bg = background(t, progress)
+    except Exception as e:
+        progress(f"background facts skipped ({str(e)[:80]})")
+        return None
+    if len(bg.get("missing") or []) >= BACKGROUND_SKIP:
+        return ("a newcomer needs background no source states (" + "; ".join(bg["missing"][:3])[:200] + ")")
+    return None
+
+
 def _enrich_due(t):
     return enrich_on() and "enriched" not in (t.get("scores") or {})
 
@@ -661,6 +779,10 @@ NEWCOMER TERMS: "jargon" lists the terms a curious viewer with no science backgr
 calculation can't be done without (a specialist unit like parsecs or magnitudes, a named quantity like absolute
 magnitude, a log or exponent formula), each a few words; [] when everyday words carry it all. Everyday units
 (km, hours, degrees, kg, light-years) and ideas explained in one short phrase don't count.
+NEWCOMER FACTS: "newcomer" lists the plain background facts (not numbers) a curious 14-year-old must be told
+before the answer makes sense, each one short sentence a reference page would state ("the Moon always shows Earth
+the same face", "sound is air vibrating"); [] when nothing is needed beyond everyday knowledge. At most 4: if the
+answer needs more set-up than that, list them all anyway (the idea is dropped: 40 s can't teach it).
 STEPS: "steps" is how many worked-out numbers the answer needs in a chain (each calculated from the facts or from
 an earlier result): 1 for "384,400 km at 100 km/h is 160 days", 3 for speed, then force, then the grip it needs.
 
@@ -668,7 +790,7 @@ an earlier result): 1 for "384,400 km at 100 km/h is 160 days", 3 for speed, the
 
 JSON object keyed by the number: {{"0": {{"relevance":..,"interest":..,"novelty":..,"curiosity":..,"value":..,
 "story":..,"feasibility":..,"originality":..,"copyright_risk":..,"avoid":false,"note":"..","famous":"",
-"twist":"","jargon":[],"steps":1}}, ...}}"""
+"twist":"","jargon":[],"newcomer":[],"steps":1}}, ...}}"""
     ans = claude.ask_json(prompt, timeout=300, web=False, purpose="rate topic ideas")
     out = {}
     if isinstance(ans, dict):
@@ -743,6 +865,11 @@ def gate(c, r, src_reliability, factors):
         # test 29 (2026-11-26): a supernova distance-modulus Short stopped on 8 unexplained terms; 40 s can't teach
         # several new terms and the maths too, so such an idea is dropped before writing
         why.append("needs too many terms a viewer hasn't heard (" + ", ".join(terms[:4]) + ")")
+    need = newcomer_of(r)
+    if len(need) > NEWCOMER_MAX:
+        # pipeline order review (2026-11-27): most stopped scripts left out a background fact; an idea that needs
+        # more set-up than a Short can say is dropped here, before any script is written
+        why.append(f"needs too much background for a newcomer ({len(need)} set-up facts)")
     steps = steps_of(r)
     if steps is not None and steps >= STEPS_MAX:
         # Connor's choice (2026-11-26): after 32 tests, multi-step physics was what the writer couldn't fit in 40 s
@@ -777,6 +904,20 @@ def jargon_of(r):
         return []
     terms = [" ".join(str(t).split())[:60] for t in got]
     return [t for t in terms if t and t.lower() not in ("none", "n/a")]
+
+
+NEWCOMER_MAX = 4               # an idea needing more background facts than this is dropped before writing
+
+
+def newcomer_of(r):
+    """The plain background facts a newcomer must hear first, from an idea's rating ([] when absent)."""
+    got = r.get("newcomer")
+    if isinstance(got, str):
+        got = [t for t in re.split(r"[;\n]", got)]
+    if not isinstance(got, list):
+        return []
+    facts = [" ".join(str(t).split())[:160] for t in got if not isinstance(t, (dict, list))]
+    return [f for f in facts if len(f) >= 8 and f.lower() not in ("none", "n/a")]
 
 
 def famous_of(r):
@@ -874,6 +1015,7 @@ def discover(pillar_names=None, per_pillar=6, measure_top=4, progress=print):
                       "median_views": med, **({"wikipedia": wiki} if wiki else {}),
                       **({"famous": famous, "twist": twist} if famous else {}),
                       **({"jargon": jargon_of(r)} if jargon_of(r) else {}),
+                      **({"newcomer": newcomer_of(r)} if newcomer_of(r) else {}),
                       **({"steps": steps_of(r)} if steps_of(r) is not None else {})}
             tid = db.insert(
                 "INSERT INTO topics(title, fingerprint, pillar, kind, sources, score, scores, status, discovered, updated, "
