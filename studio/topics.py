@@ -513,6 +513,9 @@ def background(t, progress=lambda s: None):
     need = [str(f) for f in sc.get("newcomer") or []][:NEWCOMER_MAX]
     out = {"found": {}, "missing": []}
     if not need or not enrich_on():
+        print(f"[studio] newcomer facts: none to fetch for idea {t.get('id')} "
+              + ("(fact lookups are switched off)" if need else "(its rating has no newcomer list; ideas rated "
+                 "before 2026-11-27 don't)"))
         return out
     now = time.time()
     for fact in need:
@@ -546,8 +549,10 @@ def background(t, progress=lambda s: None):
     sc["background"] = out
     db.run("UPDATE topics SET scores=? WHERE id=?", json.dumps(sc), t["id"])
     t["scores"] = sc
-    if out["found"]:
-        progress(f"background facts: {len(out['found'])} of {len(need)} found word for word")
+    msg = (f"newcomer facts: {len(out['found'])} of {len(need)} found word for word"
+           + (f"; not found: {'; '.join(out['missing'])[:200]}" if out["missing"] else ""))
+    progress(msg)
+    print(f"[studio] {msg} (idea {t.get('id')})")
     return out
 
 
