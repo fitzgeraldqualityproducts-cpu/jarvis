@@ -670,3 +670,17 @@ def test_named_physical_constants_count_as_told():
                                             L("Smaller than an atom.", "payoff"), L("Smaller?", "loop")],
          "calcs": [{"expr": "2*6.674e-11*1e12/299792458**2", "result": 1.48e-15, "unit": "m"}]}
     assert not [h for h in hard(d) if "unexplained" in h]
+
+
+def test_rewrite_keeps_the_line_plan_and_no_plan_means_no_background_notes():
+    """Test 39: the passed rewrite had tells/needs missing on every line, so 'no line says it' notes were false."""
+    from studio import narrative, script
+    old = {"lines": [L("Lie back. Every star is a dot on a ball around you.", "setup", tells=["all_around"]),
+                     L("The ground hides the lower half, so divide 2,800 by 2.", "math", tells=["half_sky"],
+                       needs=["all_around"])]}
+    new = {"lines": [{"text": "Lie back: every star is a dot on a big ball around you.", "beat": "setup"},
+                     {"text": "Something completely different here now.", "beat": "math"}]}
+    got = script._carry_plan(new, old)
+    assert got["lines"][0]["tells"] == ["all_around"] and "tells" not in got["lines"][1]
+    model = {"background": [{"key": "all_around", "fact": "stars surround you"}]}
+    assert narrative.background_check(new["lines"], model) == []
