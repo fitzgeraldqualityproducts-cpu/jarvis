@@ -42,6 +42,10 @@ NASA_SKIP = ("interview", "interviews", "briefing", "briefings", "conference", "
              "podcast", "panel", "live coverage", "livestream", "broadcast", "talks", "lecture", "town hall",
              "remarks", "speech", "newscast", "©", "copyright", "courtesy", "rights reserved", "music video", "trailer")
 _NASA_SKIP = re.compile("|".join(rf"(?<!\w){re.escape(w)}(?!\w)" for w in NASA_SKIP))
+# archival survey frames: film scans with framelet seams, dropout blocks and reseau marks (test 35's Moon photo)
+NASA_PHOTO_SKIP = ("lunar orbiter", "mosaic", "framelet", "framelets", "photographic map", "photomosaic", "reseau",
+                   "film scan", "scanned film", "mapping camera", "strip", "swath")
+_NASA_PHOTO_SKIP = re.compile("|".join(rf"(?<!\w){re.escape(w)}(?!\w)" for w in NASA_PHOTO_SKIP))
 
 
 def _key_file(site="pexels"):
@@ -306,7 +310,7 @@ def nasa_photo_candidates(answer, name, used=()):
         text = f" {d.get('title', '')} {d.get('description', '')} {' '.join(str(k) for k in d.get('keywords') or [])} "
         low = text.lower()
         if not nid or f"nasa_{nid}" in used or d.get("media_type") not in (None, "image") or not it.get("href") \
-                or _NASA_SKIP.search(low) or re.search(r"credit[s]?:\s*(?!nasa)", low):
+                or _NASA_SKIP.search(low) or _NASA_PHOTO_SKIP.search(low) or re.search(r"credit[s]?:\s*(?!nasa)", low):
             continue
         flat = re.sub(r"[^a-z0-9]+", "", low)
         if not words or not all(re.sub(r"[^a-z0-9]", "", w) in flat for w in words):

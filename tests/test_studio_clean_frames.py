@@ -221,3 +221,23 @@ def test_small_numbers_appear_as_they_are():
     from studio import video
     h = video.huds([{"type": "number", "value": "0.1", "unit": "millimeters", "label": "say your tissue is"}])
     assert h[0]["from"] == h[0]["num"] == 0.1
+
+
+def test_archival_survey_photos_are_skipped():
+    """Test 35: a Lunar Orbiter mosaic (framelet seams, dropout blocks) opened the Short; such scans aren't used."""
+    from studio import footage
+    def item(title, desc=""):
+        return {"href": "https://images-assets.nasa.gov/x/collection.json",
+                "data": [{"nasa_id": title.replace(" ", "_"), "title": title, "description": desc, "media_type": "image"}]}
+    ans = {"collection": {"items": [item("Moon far side", "Lunar Orbiter 2 photographic mosaic of the far side"),
+                                    item("Moon framelet scan", "Moon near side framelets"),
+                                    item("The Moon", "Full Moon from the International Space Station")]}}
+    got = [c["title"] for c in footage.nasa_photo_candidates(ans, "Moon")]
+    assert got == ["The Moon"]
+
+
+def test_on_screen_labels_are_phone_sized():
+    from pathlib import Path
+    tsx = (Path(__file__).resolve().parents[1] / "studio" / "remotion" / "src" / "Short.tsx").read_text()
+    assert "fontSize: 34,\n        letterSpacing: '0.08em', opacity: 0.95}}>{hud.label}" in tsx
+    assert "stepSize" in tsx and "fontSize: 24," not in tsx

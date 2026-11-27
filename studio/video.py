@@ -249,7 +249,11 @@ When the scene type draws a diagram (compare, scale, equation, steps, wave, meas
 middle of the screen: keep the picture's subject in the top third, with open sky, ground or water below it.
 Honesty: AI pictures show places and objects. Never a staged "experiment result", a measurement reading, a
 chart or a lab photo, as if it were recorded evidence. A demonstration or measurement is drawn as a diagram
-(the scene "type"), never faked as a photo."""
+(the scene "type"), never faked as a photo.
+Everyday comparisons: when a line uses a stand-in ("a ball circling you, a lamp across the room"), the picture
+shows the REAL thing it stands for (the Moon lit by the Sun), since the words already carry the comparison, and
+the scene type (steps, compare) draws the stand-in's logic. Picture makers can't stage props: a room, a lamp or
+a ball on its own reads as an empty set (test 35)."""
     prompt = f"""Plan the on-screen visual for each narrated line of a science Short.{story}{board}
 One scene per line, chosen from:
 {tmpl}
@@ -860,7 +864,7 @@ def draw_cinematic(bg, hud, pal, title="", bold=False):
     if hud:
         width = BOX["x1"] - HUD_X
         if hud.get("label"):
-            f, ls, _ = _fit(d, hud["label"], 24, width, 1)
+            f, ls, _ = _fit(d, hud["label"], 34, width, 1)
             y = put((HUD_X, y), ls[0], f, soft)[3] + 10
         big = _black if bold else _serif
         f = big(84 if bold else 88)
@@ -868,7 +872,7 @@ def draw_cinematic(bg, hud, pal, title="", bold=False):
             f = big(f.size - 6)
         y = put((HUD_X, y), hud["value"], f, white)[3] + 12
         if hud.get("sub"):
-            f, ls, _ = _fit(d, hud["sub"], 22, width, 1, bold=True)
+            f, ls, _ = _fit(d, hud["sub"], 30, width, 1, bold=True)
             y = put((HUD_X, y), ls[0], f, soft)[3]
     if title:
         f = _black(68) if bold else _serif(66)
