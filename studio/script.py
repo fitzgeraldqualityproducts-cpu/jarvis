@@ -213,6 +213,9 @@ explanation afterwards):
    14-year-old might not know. Each must be said in a line before (or in) the first line that relies on it; if
    it can't fit, pick a simpler question. A fraction or share you work out is said as the calculation it comes
    from ("a quarter of the 29.53-day cycle", "half of 29.53"), never as a bare 0.25 or "a quarter" on its own.
+   Every constant in the formula (the speed of light, the gravitational constant, gravity's 9.8) is named aloud
+   before the line that uses it; its digits are optional. A size word ("atom-sized", "car-sized") says the size
+   it stands for the first time it is used ("an atom, about a tenth of a nanometer").
 Write the model ONCE as "model" (before the drafts), and for every line say "learn" (what the viewer learns there,
 under 12 words), "uses" (the model quantity names that line relies on), "tells" (the background keys that line
 states) and "needs" (the background keys it relies on: each must be in "tells" of that line or an earlier one)."""
