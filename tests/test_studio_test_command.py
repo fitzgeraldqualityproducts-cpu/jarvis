@@ -45,3 +45,35 @@ def test_a_dead_test_run_unpauses_the_studio_by_itself(studio_home):  # noqa: F8
     assert jobs.paused()
     db.put("test_pause", {"t": 0, "beat": 0, "was_paused": True})
     assert jobs.paused()
+
+
+def test_a_topic_gets_a_fresh_script_inside_the_same_pause(studio_home, monkeypatch):  # noqa: F811
+    from studio import __main__ as cli, db, jobs
+    calls = []
+    old = db.insert("INSERT INTO videos(idem_key, state, title, created, updated) VALUES(?,?,?,?,?)", "topic-69",
+                    "rejected", "old try", time.time(), time.time())
+
+    def fake_script(argv):
+        calls.append(("script", argv, jobs.paused()))
+        db.insert("INSERT INTO videos(idem_key, state, title, created, updated) VALUES(?,?,?,?,?)",
+                  f"test-69-{time.time()}", "rendering", "fresh", time.time(), time.time())
+        return 0
+
+    def fake_video(argv):
+        calls.append(("video", argv, jobs.paused()))
+        return 0
+    monkeypatch.setattr(cli, "_script", fake_script)
+    monkeypatch.setattr(cli, "_video", fake_video)
+    assert cli._test(["test", "--topic", "69", "--footage"]) == 0
+    new = db.one("SELECT id FROM videos ORDER BY id DESC LIMIT 1")["id"]
+    assert calls[0] == ("script", ["script", "--topic", "69", "--fresh"], True)
+    assert calls[1] == ("video", ["video", "--new-looks", "--video", str(new), "--footage"], True)
+    assert new != old and db.video(new)["state"] == "rejected" and not jobs.paused()
+    assert db.video(old)["error"] is None                    # the earlier video is left as it was
+
+
+def test_fresh_makes_a_new_video_for_an_idea_tried_before(studio_home):  # noqa: F811
+    from studio import jobs
+    a = jobs.create(7, title="x")
+    assert jobs.create(7, title="x") == a                     # the normal key reuses the video
+    assert jobs.create(7, idem_key="test-7-1", title="x") != a

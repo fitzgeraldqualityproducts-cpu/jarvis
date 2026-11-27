@@ -597,6 +597,44 @@ def _overlap(a, b):
     return len(wa & wb) / min(len(wa), len(wb))
 
 
+def background_check(lines, model):
+    """The writer's own plan of what a newcomer must know (model "background", each line's "tells" and "needs")
+    checked line by line: a background fact a line needs must be said in that line or before it. Free."""
+    bg = {}
+    for b in (model or {}).get("background") or []:
+        if isinstance(b, dict) and str(b.get("key") or "").strip() and str(b.get("fact") or "").strip():
+            bg[str(b["key"]).strip()] = " ".join(str(b["fact"]).split())[:120]
+    if not bg:
+        return []
+    keys = lambda v: {str(x).strip() for x in (v if isinstance(v, list) else [v] if v else [])}
+    first = {}
+    for i, ln in enumerate(lines, 1):
+        for k in keys((ln or {}).get("tells") if isinstance(ln, dict) else None):
+            first.setdefault(k, i)
+    out, needed = [], set()
+    for i, ln in enumerate(lines, 1):
+        if not isinstance(ln, dict):
+            continue
+        beat = str(ln.get("beat") or "")
+        for k in keys(ln.get("needs")) & set(bg):
+            needed.add(k)
+            at = first.get(k)
+            if at is not None and at <= i:
+                continue
+            if at is not None and (i == 1 or beat == "hook") and at <= 3:
+                continue                                     # the hook may raise it; lines 2-3 explain it
+            if beat == "loop":
+                continue                                     # the loop line may end on an open question
+            out.append({"hard": True, "kind": "background", "line": i, "missing": bg[k],
+                        "text": f"line {i} relies on the background fact \"{bg[k]}\", but "
+                                + (f"the viewer only hears it in line {at}" if at else "no line says it")})
+    for k, fact in bg.items():
+        if k not in needed and k not in first:
+            out.append({"hard": False, "kind": "background", "line": None,
+                        "text": f"the model says a newcomer must know \"{fact}\", but no line says it"})
+    return out
+
+
 def storyboard_check(lines, model):
     """Each line's "learn" and "uses" against the model: [{"hard", "kind", "text", "line"}]."""
     out = []
@@ -782,6 +820,8 @@ ROOT = {   # kind -> (root cause, prevention rule) for the failure memory
               "establish the physical setup (what bends, how, what is measured) before picking the formula"),
     "assumption": ("an assumption was used in the maths but never said",
                    "say every assumed value out loud as an assumption (\"say the tissue is 0.1 mm thick\")"),
+    "background": ("a line relied on a background fact (not a number) the viewer was never told",
+                   "list what a newcomer must know before writing, and say each fact before the first line that needs it"),
     "continuity": ("a line depended on information never established",
                    "make every line follow from what the viewer already knows"),
     "conclusion": ("the ending did not follow from the explanation or answered a different question",
@@ -879,6 +919,7 @@ def evaluate(draft, story=None, facts=None):
                        "text": f"unit slip in line {u['line']}: {u['said']}, but it should be {u['should']}"})
     issues += model_check(model, lines) if model is not None else []
     issues += storyboard_check(lines, model)
+    issues += background_check(lines, model)
     issues += confusion(lines)
     issues += origins(lines, draft.get("calcs"), facts, model)
     from studio import demo

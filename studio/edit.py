@@ -204,7 +204,7 @@ def overlay(scene):
 
 
 # ---------- the hands-on demonstration, drawn (Video 35 audit) ----------
-ORBIT = {"x": 80, "y": 300, "w": 850, "h": 820}         # a bigger panel: the demonstration IS the picture here
+ORBIT = {"x": 80, "y": 250, "w": 850, "h": 900}         # the whole safe area: the demonstration IS the picture here
 PHASE_WORDS = {"new": 180.0, "full": 0.0, "first": 90.0, "last": 270.0, "quarter": 90.0, "start": 0.0}
 ORBIT_LABELS = {"lamp": "lamp = Sun", "you": "you = Earth", "ball": "ball = Moon", "marker": "note = far-side spot"}
 

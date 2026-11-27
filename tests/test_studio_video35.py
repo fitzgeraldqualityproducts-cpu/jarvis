@@ -3,7 +3,9 @@ must show the real science, periods name their cycle, numbers land without in-be
 visual, the opening is clean and the export is a real 1080x1920. Each test is one of the regressions Connor
 listed, or a correct case that must keep passing."""
 import json
+import re
 import shutil
+from pathlib import Path
 import subprocess
 
 import numpy as np
@@ -457,3 +459,59 @@ def test_drafts_are_found_in_any_shape_and_a_split_answer_is_joined(studio_home)
     assert got["model"]["question"] == "q" and got["drafts"][0]["lines"]
     assert script.pick_draft({"model": {"question": "q"}}, {"title": "t"}) is None
     assert (data_dir("research") / "last_unreadable_script.json").exists()
+
+
+# ---------- test 36 follow-up: the same glitched Moon photo opened again; diagram text too small ----------
+
+def _blocky_moon():
+    """A lit Moon surface with the stepped black dropout blocks and seam bars of test 36's opening photo."""
+    rng = np.random.default_rng(3)
+    img = (110 + rng.normal(0, 18, (1920, 1080))).clip(30, 230).astype(np.uint8)
+    for y in (430, 1010, 1600):
+        for x in range(100, 1000, 175):
+            img[y:y + 25, x:x + 15] = 0                  # a stepped dash: one block, then one lower and to the side
+            img[y + 50:y + 75, x + 55:x + 70] = 0
+    img[1050:1900, 740:760] = 0                          # a seam bar
+    return img
+
+
+def test_a_photo_with_black_dropout_blocks_is_refused(tmp_path):
+    from PIL import Image
+    from studio import art, footage
+    bad = tmp_path / "blocks.png"
+    Image.fromarray(_blocky_moon()).save(bad)
+    assert art.photo_dropouts(Image.open(bad)) > art.DROPOUT_MAX
+    with pytest.raises(ValueError):
+        art.framed_photo(bad, tmp_path / "out.png")
+    assert "missing-data" in footage.photo_problem(bad)  # refused at download, so the next NASA photo is tried
+
+
+def test_natural_shadows_and_a_dark_sky_are_not_dropout_blocks(tmp_path):
+    from PIL import Image
+    from studio import art, footage
+    rng = np.random.default_rng(5)
+    img = (120 + rng.normal(0, 20, (1600, 1600))).clip(20, 230).astype(np.uint8)
+    yy, xx = np.mgrid[:1600, :1600]
+    for cx, cy, r in ((300, 400, 60), (900, 700, 90), (1200, 1300, 40), (500, 1200, 70), (1300, 300, 50)):
+        d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+        img[d < r] = np.minimum(img[d < r], (d[d < r] / r * 90).astype(np.uint8))   # round craters, shadow fades
+    assert art.photo_dropouts(Image.fromarray(img)) < art.DROPOUT_MAX
+    sky = np.zeros((1600, 1600), np.uint8)
+    sky[(yy - 800) ** 2 + (xx - 800) ** 2 < 500 ** 2] = 170
+    for x, y in rng.integers(20, 1580, (40, 2)):
+        sky[y:y + 3, x:x + 3] = 255                      # stars
+    assert art.photo_blocks(sky) < art.DROPOUT_MAX
+    ok = tmp_path / "ok.png"
+    Image.fromarray(img).save(ok)
+    assert footage.photo_problem(ok) == ""
+
+
+def test_the_demonstration_panel_fills_the_safe_area_with_big_labels():
+    from studio import edit, video
+    box = (edit.ORBIT["x"], edit.ORBIT["y"], edit.ORBIT["x"] + edit.ORBIT["w"], edit.ORBIT["y"] + edit.ORBIT["h"])
+    assert video.inside_safe_area(box)                   # clear of the Shorts buttons and captions...
+    assert edit.ORBIT["w"] >= video.BOX["x1"] - video.BOX["x0"] - 4 and edit.ORBIT["h"] >= 880   # ...and all of it
+    tsx = (Path(__file__).resolve().parent.parent / "studio" / "remotion" / "src" / "Short.tsx").read_text()
+    body = tsx[tsx.index("const Orbit"):tsx.index("const OverlayBox")]
+    sizes = [int(m) for m in re.findall(r"fontSize: (\d+)", body)] + [int(m) for m in re.findall(r"const FS = (\d+)", body)]
+    assert sizes and min(sizes) >= 36                    # test 36: 28-32 px labels were unreadable on a phone

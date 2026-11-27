@@ -104,7 +104,42 @@ def photo_dropouts(im):
         left, right = np.roll(g, d, 1), np.roll(g, -d, 1)
         hits |= black & (((up > 50) & (down > 50)) | ((left > 50) & (right > 50)))
     hits[:4, :] = hits[-4:, :] = hits[:, :4] = hits[:, -4:] = False
-    return float(hits.mean())
+    return max(float(hits.mean()), photo_blocks(g))
+
+
+BLOCKS_MAX = 5                    # crisp pure-black squares/bars a real photo may have before it counts as glitched
+
+
+def photo_blocks(g):
+    """Share of the picture in crisp pure-black rectangles set into lit surface: the stepped dropout blocks and
+    seam bars of a mosaicked survey photo (test 36's opening, which the thin-line test above missed). A natural
+    shadow is ragged and fades into grey; these are solid black boxes with a lit border all round. Five or more
+    count as a glitched photo (returned as a share over DROPOUT_MAX); fewer count only by their area."""
+    import cv2
+    g = np.asarray(g, dtype=np.uint8)
+    h, w = g.shape
+    k = min(1.0, 1600 / max(h, w))                 # big scans are checked at up to 1600 px, edges kept sharp
+    if k < 1.0:
+        g = cv2.resize(g, (max(1, round(w * k)), max(1, round(h * k))), interpolation=cv2.INTER_NEAREST)
+        h, w = g.shape
+    black = (g <= 8).astype(np.uint8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(black, connectivity=4)
+    side = max(6, round(min(h, w) * 0.009))       # smallest block that counts (~10 px on a 1080-wide picture)
+    found, area = 0, 0
+    for i in range(1, n):
+        x, y, bw, bh, a = (int(v) for v in stats[i])
+        if min(bw, bh) < side or a > 0.02 * h * w or x == 0 or y == 0 or x + bw >= w or y + bh >= h:
+            continue
+        if a < 0.8 * bw * bh:                      # ragged: a shadow, not a box (a stepped dash still fills >80%)
+            continue
+        r = 3
+        ring = np.concatenate([g[max(0, y - r):y, x:x + bw].ravel(), g[y + bh:y + bh + r, x:x + bw].ravel(),
+                               g[y:y + bh, max(0, x - r):x].ravel(), g[y:y + bh, x + bw:x + bw + r].ravel()])
+        if ring.size and float(np.percentile(ring, 20)) > 20 and float(ring.mean()) > 40:
+            found += 1
+            area += a
+    share = area / float(h * w)
+    return max(share, 2 * DROPOUT_MAX) if found >= BLOCKS_MAX else share
 
 
 def framed_photo(src, out, W=PHOTO_W, H=PHOTO_H, info=None):
