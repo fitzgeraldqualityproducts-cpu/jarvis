@@ -188,6 +188,13 @@ def _script(argv):
         topics.set_status(t["id"], "rejected", reject_reason="script failed the fact-check")
         print(f"\nRejected: {e}\nThat's the safety net working: nothing unchecked goes further.")
         return 1
+    except jobs.QuotaWait as e:          # out of Claude for now (the day's cap or the plan's 5-hour limit)
+        db.set_video(vid, state="failed", error=f"stopped, out of Claude for now: {e}", error_kind="quota",
+                     finished=time.time())
+        topics.set_status(t["id"], "idea", script_status=None)   # the idea goes back in the queue, not stuck
+        print(f"\nStopped: out of Claude for now ({e}). Nothing was lost: idea #{t['id']} is back in the queue "
+              "and can be tried again once the limit resets.")
+        return 1
     folder = data_dir("videos", str(vid))
     page = folder / "script.md"
     page.write_text(script.report(vid), encoding="utf-8")

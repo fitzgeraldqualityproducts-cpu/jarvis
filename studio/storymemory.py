@@ -80,4 +80,5 @@ def summary(now=None):
         kinds[r["kind"]] = kinds.get(r["kind"], 0) + 1
     return (f"{len(rows)} story problem(s) in the last 30 days ("
             + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items(), key=lambda kv: -kv[1]))
-            + f"); {fixed} fixed by a rewrite, {failed} not.")
+            + f"); {fixed} fixed by a rewrite, {failed} not"
+            + (f", {len(rows) - fixed - failed} still being worked on" if len(rows) - fixed - failed else "") + ".")

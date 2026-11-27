@@ -631,7 +631,8 @@ def storyboard_check(lines, model):
             if any(heard(val, s) for s in said[:i]):
                 continue
             first = next((k for k, s in enumerate(said, 1) if heard(val, s)), None)
-            out.append({"hard": True, "kind": "too_late", "line": i,
+            teaser = (i == 1 or beat == "hook") and first is not None and first <= 3   # the hook may tease it
+            out.append({"hard": not teaser, "kind": "too_late", "line": i,
                         "text": f"line {i} relies on {q.get('means') or name} ({fmt(val)} {q.get('unit') or ''}) "
                                 + (f"but the viewer only hears it in line {first}" if first else
                                    "but the viewer never hears it")})
