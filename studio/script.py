@@ -378,7 +378,8 @@ Also write 5 different hooks (each could replace line 1) and 3 title options (un
     if first and _local_draft_turn():
         ans = _local_draft(prompt.replace("{shape}", one), facts)   # the trial: a first draft written on this computer
     if ans is None and n == 1:
-        ans = claude.ask_json(prompt.replace("{shape}", one), timeout=600, web=False, purpose=f"script: {topic['title']}")
+        ans = claude.ask_json(prompt.replace("{shape}", one), timeout=600, web=False, purpose=("originality rewrite" if only_originality else "rewrite" if feedback else "script")
+                              + f": {topic['title']}")
     if ans is None:
         many = (f"Write {n} COMPLETE drafts that follow every rule above. Each is built around a DIFFERENT everyday image "
                 "or angle (say which in \"angle\"), so they are real alternatives, not rewordings. Same facts, same "
@@ -705,6 +706,9 @@ def pick_draft(raw, topic):
             break
         reads[i] = r
     clear = [(i, d) for i, d in pool if i in reads and not read_problems(reads[i])]
+    print("[studio] newcomer read: " + (f"{len(reads)} of {len(pool)} drafts read on this computer, {len(clear)} "
+                                       f"followed with no problems" if reads else
+                                       "skipped (switched off, or the local brain isn't ready)"))
     if reads and clear and len(clear) < len(pool):
         pool = clear                              # drafts a newcomer could follow go on; the others are dropped
     scores, why, notes, editor = {}, "", {}, {}
@@ -721,6 +725,14 @@ def pick_draft(raw, topic):
     chosen.pop("angle", None)
     if isinstance(raw, dict) and isinstance(raw.get("model"), dict) and not isinstance(chosen.get("model"), dict):
         chosen["model"] = raw["model"]
+    if editor:
+        e = editor.get(best) or {}
+        print(f"[studio] editor (in the pick-a-draft call): picked draft {best + 1} of {len(pool)}; originality "
+              f"{e.get('original')}, premise {e.get('premise')}, story gaps {len(e.get('gaps') or [])}")
+    elif len(pool) > 1:
+        print("[studio] editor: no verdict (editor_first off, or the judge's answer had none)")
+    else:
+        print("[studio] editor: skipped (only one draft left to judge, so no pick-a-draft call)")
     if pool[best][0] in reads:
         chosen["newcomer_read"] = reads[pool[best][0]]
     if editor.get(best):
@@ -1489,7 +1501,9 @@ def _pre_fix(draft, topic):
         return draft
     probs = editor_problems(draft.get("editor"), draft.get("lines")) + read_problems(draft.get("newcomer_read"))
     if not probs:
+        print("[studio] repair before the fact-check: not needed")
         return draft
+    print(f"[studio] repair before the fact-check: {len(probs)} problem(s): " + "; ".join(probs)[:240])
     keep = {k: draft[k] for k in ("picked", "editor", "newcomer_read", "number_check") if draft.get(k)}
     try:
         if any(p.startswith("originality ") for p in probs):
@@ -1506,7 +1520,9 @@ def _pre_fix(draft, topic):
         print(f"(repair before the fact-check skipped: {str(e)[:120]})")
         fixed = None
     if not fixed:
+        print("[studio] repair before the fact-check: no usable repair; the draft goes on as it was")
         return dict(draft, pre_fix={"kind": "none", "problems": [p[:200] for p in probs[:5]]})
+    print(f"[studio] repair before the fact-check: done ({kind})")
     if isinstance(draft.get("model"), dict) and not isinstance(fixed.get("model"), dict):
         fixed["model"] = draft["model"]
     keep.pop("newcomer_read", None)               # the read was of the old wording
