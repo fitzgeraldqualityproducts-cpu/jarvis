@@ -633,8 +633,8 @@ def background_check(lines, model):
     for b in (model or {}).get("background") or []:
         if isinstance(b, dict) and str(b.get("key") or "").strip() and str(b.get("fact") or "").strip():
             bg[str(b["key"]).strip()] = " ".join(str(b["fact"]).split())[:120]
-    if not bg:
-        return []
+    if not bg or not any(isinstance(ln, dict) and isinstance(ln.get("tells"), list) for ln in lines):
+        return []                         # no line says what it tells (a rewrite dropped the plan): can't judge
     keys = lambda v: {str(x).strip() for x in (v if isinstance(v, list) else [v] if v else [])}
     first = {}
     for i, ln in enumerate(lines, 1):
