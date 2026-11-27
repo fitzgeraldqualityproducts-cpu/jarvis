@@ -154,69 +154,78 @@ const Orbit: React.FC<{ov: Overlay; span: number; p: ShortProps}> = ({ov, span, 
   const a1 = ov.a1 ?? a0;
   const ang = ((a0 + (a1 - a0) * eased) * Math.PI) / 180;
   const W = ov.w;
-  const H = ov.h - 120;
+  const TOP = 96;                         // the key (lamp = Sun, ball = Moon, you = Earth) sits in a row up here
+  const H = ov.h - TOP - 150;
   const cx = W * 0.56;
-  const cy = H * 0.52;
-  const R = Math.min(W * 0.34, H * 0.36);
+  const cy = H * 0.5;
+  const br = 54;
+  const R = Math.min(W * 0.3, H * 0.5 - br - 90);   // room for the spot's name above and beside the ball
   const bx = cx + R * Math.cos(ang);
   const by = cy - R * Math.sin(ang);
-  const br = 44;
   const out = ov.marker === 'near' ? -1 : 1;
   const mx = bx + out * br * 0.78 * Math.cos(ang);
   const my = by - out * br * 0.78 * Math.sin(ang);
   const lit = ov.marker !== 'none' && -out * Math.cos(ang) > 1e-6;
   const L = ov.labels || {};
   const amber = p.palette.amber;
-  const lab = (x: number, y: number, s: string | undefined, anchor: 'start' | 'middle' | 'end' = 'middle',
-    col = 'white') => s ? (
-      <text x={x} y={y} textAnchor={anchor} fill={col} style={{fontFamily: SANS, fontWeight: 700, fontSize: 32,
-        paintOrder: 'stroke', stroke: 'rgba(4,7,16,0.85)', strokeWidth: 6}}>{s}</text>) : null;
+  const FS = 46;                          // test 36: 32 px labels read as tiny on a phone
+  const txt = (x: number, y: number, s: string, anchor: 'start' | 'middle' | 'end' = 'middle', col = 'white') => (
+    <text x={x} y={y} textAnchor={anchor} fill={col} style={{fontFamily: SANS, fontWeight: 800, fontSize: FS,
+      paintOrder: 'stroke', stroke: 'rgba(4,7,16,0.9)', strokeWidth: 8}}>{s}</text>);
+  // the spot's name sits just outside it; when the spot points at the lamp, above it, so it never covers the lamp
+  const ux = Math.cos(ang) * out;
+  const uy = -Math.sin(ang) * out;
+  const towardLamp = ux < -0.5;
+  const sx = towardLamp ? mx : mx + ux * 70;
+  const sy = towardLamp ? Math.min(my, by - br) - 22 : my + uy * 70 + FS * 0.35;
+  const spot = (L.marker || '').split('=')[0].trim() || 'spot';
+  const key: [string, string | undefined][] = [[amber, L.lamp], ['#e9ecf2', L.ball], [p.palette.cyan, L.you]];
   return (
     <div style={{position: 'absolute', left: ov.x, top: ov.y, width: ov.w, height: ov.h, borderRadius: 28,
-      background: 'rgba(6,10,24,0.72)', border: '1px solid rgba(255,255,255,0.14)', opacity: appear,
+      background: 'rgba(6,10,24,0.78)', border: '1px solid rgba(255,255,255,0.14)', opacity: appear,
       overflow: 'hidden'}}>
-      <svg width={W} height={H} style={{position: 'absolute', left: 0, top: 0}}>
-        {[0.25, 0.5, 0.75].map((f) => (
-          <line key={f} x1={110} y1={H * f} x2={W - 20} y2={H * f} stroke={amber} strokeOpacity={0.16} strokeWidth={4}
+      <div style={{position: 'absolute', left: 0, right: 0, top: 26, display: 'flex', justifyContent: 'center',
+        gap: 26, fontFamily: SANS, fontWeight: 800, fontSize: 36, color: 'white'}}>
+        {key.filter(([, s]) => s).map(([c, s]) => (
+          <div key={s} style={{display: 'flex', alignItems: 'center', gap: 10}}>
+            <div style={{width: 24, height: 24, borderRadius: 12, background: c}} />{s}</div>
+        ))}
+      </div>
+      <svg width={W} height={H} style={{position: 'absolute', left: 0, top: TOP}}>
+        {[0.3, 0.5, 0.7].map((f) => (
+          <line key={f} x1={130} y1={H * f} x2={W - 20} y2={H * f} stroke={amber} strokeOpacity={0.16} strokeWidth={4}
             strokeDasharray="14 18" />
         ))}
-        <circle cx={60} cy={cy} r={34} fill={amber} />
-        <circle cx={60} cy={cy} r={50} fill={amber} fillOpacity={0.25} />
-        {lab(60, cy + 92, L.lamp, 'start')}
+        <circle cx={70} cy={cy} r={42} fill={amber} />
+        <circle cx={70} cy={cy} r={62} fill={amber} fillOpacity={0.25} />
         {ov.split ? (
           <>
-            <path d={`M ${cx} ${cy - R} A ${R} ${R} 0 0 0 ${cx} ${cy + R}`} stroke={amber} strokeWidth={12}
+            <path d={`M ${cx} ${cy - R} A ${R} ${R} 0 0 0 ${cx} ${cy + R}`} stroke={amber} strokeWidth={14}
               fill="none" strokeOpacity={0.85} />
-            <path d={`M ${cx} ${cy + R} A ${R} ${R} 0 0 0 ${cx} ${cy - R}`} stroke="#5b6478" strokeWidth={12}
+            <path d={`M ${cx} ${cy + R} A ${R} ${R} 0 0 0 ${cx} ${cy - R}`} stroke="#5b6478" strokeWidth={14}
               fill="none" />
           </>
         ) : (
-          <circle cx={cx} cy={cy} r={R} stroke="white" strokeOpacity={0.45} strokeWidth={4} fill="none"
-            strokeDasharray="10 12" />
+          <circle cx={cx} cy={cy} r={R} stroke="white" strokeOpacity={0.45} strokeWidth={5} fill="none"
+            strokeDasharray="12 14" />
         )}
-        <circle cx={cx} cy={cy} r={22} fill={p.palette.cyan} />
-        {lab(cx, cy + 62, L.you)}
+        <circle cx={cx} cy={cy} r={28} fill={p.palette.cyan} />
         <circle cx={bx} cy={by} r={br} fill="#2b3142" />
         <path d={`M ${bx} ${by - br} A ${br} ${br} 0 0 0 ${bx} ${by + br} Z`} fill="#e9ecf2" />
         {ov.marker !== 'none' ? (
           <>
-            {lit ? <circle cx={mx} cy={my} r={28} fill={amber} fillOpacity={0.35} /> : null}
-            <circle cx={mx} cy={my} r={16} fill={lit ? amber : '#8a93a8'} stroke="white" strokeWidth={3} />
-            {/* the marked spot is named right where it is (the note, on the side facing away from you) */}
-            {lab(bx + out * (br + 30 + 30 * Math.abs(Math.cos(ang))) * Math.cos(ang),
-              by - out * (br + 30) * Math.sin(ang) + 11,
-              (L.marker || '').split('=')[0].trim() || 'spot', 'middle', lit ? amber : '#c7cede')}
+            {lit ? <circle cx={mx} cy={my} r={34} fill={amber} fillOpacity={0.35} /> : null}
+            <circle cx={mx} cy={my} r={19} fill={lit ? amber : '#8a93a8'} stroke="white" strokeWidth={4} />
+            {txt(sx, sy, spot, 'middle', lit ? amber : '#c7cede')}
           </>
         ) : null}
-        {lab(bx - out * (br + 36 + 80 * Math.abs(Math.cos(ang))) * Math.cos(ang),
-          by + out * (br + 36) * Math.sin(ang) + 11, L.ball)}
       </svg>
-      <div style={{position: 'absolute', left: 0, right: 0, bottom: 18, textAlign: 'center', fontFamily: SANS}}>
+      <div style={{position: 'absolute', left: 24, right: 24, bottom: 22, textAlign: 'center', fontFamily: SANS}}>
         {ov.marker !== 'none' ? (
-          <div style={{fontWeight: 800, fontSize: 40, color: lit ? amber : '#c7cede'}}>
+          <div style={{fontWeight: 800, fontSize: 56, color: lit ? amber : '#c7cede'}}>
             {lit ? ov.litText : ov.darkText}</div>
         ) : null}
-        {L.marker ? <div style={{fontSize: 28, opacity: 0.85, marginTop: 4, color: 'white'}}>{L.marker}</div> : null}
+        {L.marker ? <div style={{fontSize: 36, opacity: 0.9, marginTop: 6, color: 'white'}}>{L.marker}</div> : null}
       </div>
     </div>
   );

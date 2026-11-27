@@ -624,14 +624,14 @@ def draw_scene(scene, pal, handle="", bg=None):
             put((0, cy + R + 70), ov["litText"] if ov["litEnd"] else ov["darkText"], _font(54), amber if ov["litEnd"]
                 else text)
         labs = ov["labels"]
-        fs = _font(34, False)
+        fs = _font(44, False)                    # test 36: 34 px labels read as tiny
         for s_, (lx, ly) in ((labs.get("lamp"), (x0 + 10, cy + 50)), (labs.get("you"), (cx - 90, cy + 34)),
                              (labs.get("ball"), (bx - 90, by - br - 46))):
             if s_:
                 d.text((max(x0, min(lx, x1 - d.textlength(s_, font=fs))), ly), s_, font=fs, fill=text)
                 drawn.append(d.textbbox((max(x0, min(lx, x1 - d.textlength(s_, font=fs))), ly), s_, font=fs))
         if labs.get("marker"):
-            put((0, cy + R + 140), labs["marker"], _font(40, False), muted)
+            put((0, cy + R + 140), labs["marker"], _font(44, False), muted)
     elif t == "measure":
         ya = y0 + 470
         d.line([(x0 + 40, ya), (x1 - 40, ya)], fill=amber, width=8)

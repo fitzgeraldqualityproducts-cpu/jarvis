@@ -323,7 +323,8 @@ def nasa_photo_candidates(answer, name, used=()):
 
 def photo_problem(path):
     """Why a downloaded photo can't be shown, or "": a long survey strip (an orbiter's map swath, the Short 17
-    Olympus Mons picture), a tiny file, or one with wide black margins (a tilted map tile or scan)."""
+    Olympus Mons picture), a tiny file, one with wide black margins (a tilted map tile or scan), or a mosaic with
+    missing-data lines or black dropout blocks (the Moon photo that opened tests 35 and 36)."""
     try:
         import numpy as np
         from PIL import Image
@@ -334,8 +335,12 @@ def photo_problem(path):
             if max(w, h) / min(w, h) > 2.2:
                 return f"a long strip ({w}x{h})"
             g = np.asarray(im.convert("L").resize((96, 96)), dtype=np.float32)
-        dark = float((g < 12).mean())
-        return f"{dark:.0%} black margins" if dark > 0.15 else ""
+            dark = float((g < 12).mean())
+            if dark > 0.15:
+                return f"{dark:.0%} black margins"
+            from studio import art                # missing-data lines and black dropout blocks (tests 35 and 36)
+            drop = art.photo_dropouts(im)
+        return f"missing-data blocks ({drop:.2%} of it)" if drop > art.DROPOUT_MAX else ""
     except Exception as e:
         return f"unreadable ({str(e)[:60]})"
 
