@@ -648,3 +648,25 @@ def test_pick_prefers_the_draft_with_fewest_problems_when_none_is_clean(monkeypa
     monkeypatch.setattr(script, "_learn_from_drafts", lambda *a, **k: None)
     got = script.pick_draft({"drafts": [a, b]}, {"id": 1, "title": "t"})
     assert got["hooks"] == ["B?"] and got["picked"]["passed_screen"] == 0
+
+
+def test_named_physical_constants_count_as_told():
+    """Test 38 (atom-sized black hole): G and c were in the formula; saying 'the gravitational constant' and
+    'light's speed' is enough, the viewer doesn't need their digits. Never naming them still stops."""
+    from studio import narrative
+    m = {"question": "q", "premise": "p", "answer": "a",
+         "quantities": [{"name": "G", "means": "gravitational constant", "value": 6.674e-11, "unit": "m^3/(kg*s^2)",
+                         "from": "standard"},
+                        {"name": "c", "means": "speed of light", "value": 3e8, "unit": "m/s", "from": "standard"},
+                        {"name": "M", "means": "mass", "value": 1e12, "unit": "kg", "from": "F1"}],
+         "formula": {"expr": "2*G*M/c**2"}, "result": {"value": 1.48e-15, "unit": "m"}}
+    said = [{"text": "Squeeze a trillion kilograms, 1e12, using the gravitational constant and light's speed."}]
+    assert not [p for p in narrative.model_check(m, said) if p["kind"] == "assumption"]
+    quiet = [{"text": "Squeeze a trillion kilograms, 1e12."}]
+    assert len([p for p in narrative.model_check(m, quiet) if p["kind"] == "assumption" and p["hard"]]) == 2
+    d = {"hooks": ["How small?"], "lines": [L("How small?", "hook"),
+                                            L("Take 1e12 kg and the gravitational constant and light's speed.", "setup"),
+                                            L("Two times G times mass over c squared: 1.48e-15 meters.", "math"),
+                                            L("Smaller than an atom.", "payoff"), L("Smaller?", "loop")],
+         "calcs": [{"expr": "2*6.674e-11*1e12/299792458**2", "result": 1.48e-15, "unit": "m"}]}
+    assert not [h for h in hard(d) if "unexplained" in h]
