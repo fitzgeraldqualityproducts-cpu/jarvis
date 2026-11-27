@@ -536,3 +536,37 @@ def test_formula_for_another_quantity_than_the_answer_is_not_a_unit_stop():
     assert not [p for p in probs if p["hard"]] and any(p["kind"] == "units" for p in probs)
     m["formula"] = {"expr": "g*r/v**2"}                    # no left side: the answer is what it gives, so it stops
     assert any(p["hard"] and p["kind"] == "units" for p in narrative.model_check(m, lines))
+
+
+def test_hook_may_tease_a_number_and_open_rows_are_counted(studio_home):  # noqa: F811
+    """Test 33: the hook teased 23,000 km, said in line 2 (a note, not a stop); the story counter left 11 rows
+    unexplained (still being worked on)."""
+    from studio import db, narrative, storymemory
+    model = {"quantities": [{"name": "gap", "means": "Moon's extra distance", "value": 23000, "unit": "km",
+                             "from": "F1"}]}
+    lines = [L("When does the last total eclipse happen?", "hook", uses=["gap"]),
+             L("The Moon must drift 23,000 km further out.", "setup"), L("Then never again.", "loop")]
+    probs = narrative.storyboard_check(lines, model)
+    assert probs and not [p for p in probs if p["hard"]]
+    lines[0] = L("When does the last total eclipse happen?", "setup", uses=["gap"])
+    lines[1], lines[2] = L("Some other line.", "setup"), L("Not yet.", "setup")
+    lines.append(L("The Moon must drift 23,000 km further out.", "math"))
+    assert [p for p in narrative.storyboard_check(lines, model) if p["hard"]]      # too late beyond line 3
+    db.conn()
+    storymemory.record([{"hard": True, "kind": "continuity", "line": 2, "text": "x"}], {"id": 1, "title": "t"}, 9, 1)
+    assert "1 still being worked on" in storymemory.summary()
+
+
+def test_out_of_claude_during_a_script_puts_the_idea_back(studio_home, monkeypatch):  # noqa: F811
+    from studio import __main__ as cli, db, jobs, script, topics
+    db.put("niche_decision", {"niche": "science", "name": "Science explained", "plan": {}})
+    tid = db.insert("INSERT INTO topics(title, fingerprint, pillar, kind, score, status, angle) VALUES(?,?,?,?,?,?,?)",
+                    "Eclipses", "eclipse", "Run It Yourself", "question", 70, "idea", "last eclipse")
+
+    def out(*a, **k):
+        raise jobs.QuotaWait("the Claude plan's usage limit")
+    monkeypatch.setattr(script, "make", out)
+    assert cli._script(["--topic", str(tid), "--no-voice"]) == 1
+    assert topics.topic(tid)["status"] == "idea"
+    v = db.one("SELECT * FROM videos ORDER BY id DESC LIMIT 1")
+    assert v["state"] == "failed" and v["error_kind"] == "quota"
