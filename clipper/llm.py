@@ -48,9 +48,22 @@ def available():
 def parse_json(text):
     """The first JSON object/array in text (Claude sometimes wraps it in prose or ```json)."""
     text = text.strip()
-    m = re.search(r"```(?:json)?\s*(.+?)```", text, re.S)
-    if m:
-        text = m.group(1).strip()
+    blocks = re.findall(r"```(?:json)?\s*(.+?)```", text, re.S)
+    if len(blocks) > 1:                 # e.g. the model in one block and the drafts in the next: one answer
+        parts = []
+        for b in blocks:
+            try:
+                parts.append(json.loads(b.strip()))
+            except ValueError:
+                parts = []
+                break
+        if parts and all(isinstance(x, dict) for x in parts):
+            merged = {}
+            for x in parts:
+                merged.update(x)
+            return merged
+    if blocks:
+        text = blocks[0].strip()
     pairs = sorted((("[", "]"), ("{", "}")), key=lambda p: text.find(p[0]) if text.find(p[0]) >= 0 else len(text))
     for opener, closer in pairs:
         a = text.find(opener)
