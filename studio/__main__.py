@@ -18,6 +18,8 @@
               (--topic <id> picks the idea; --no-voice skips narration)
   video       makes a finished test Short: the waiting narrated script (or a new one), visuals, captions,
               render, metadata and the QA gate (--video <id>); never uploads
+  pack        a Short's output pack: final script, shot list with timing, titles, thumbnail concept,
+              description and notes (pack <video id>; also saved as pack.md next to the Short)
   approve     lets a Short held for your review (originality 5/10, everything else strong) go out like any
               other (approve --video <id>); without it, a held Short never goes out by itself
   test        a held test Short in one go: pauses the studio, makes one Short with the new looks (video
@@ -587,6 +589,13 @@ def main(argv):
         print(f"Repeat at {trends.threshold():.2f} or above:")
         for sim, a, b in pairs:
             print(f"  {sim:.3f}  {a}  |  {b}")
+    elif cmd == "pack":
+        from studio import pack
+        if len(argv) < 2 or not argv[1].isdigit():
+            print("usage: python -m studio pack <video id>")
+        else:
+            p = pack.save(int(argv[1]))
+            print(pack.markdown(p))
     elif cmd == "story":
         from studio import storymemory, story_cli
         if len(argv) > 1 and argv[1].isdigit():

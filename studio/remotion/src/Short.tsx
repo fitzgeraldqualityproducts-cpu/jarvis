@@ -8,7 +8,9 @@ import {
   useCurrentFrame, useVideoConfig,
 } from 'remotion';
 
-type Hud = {label: string; value: string; sub?: string; num?: number; from?: number; dec?: number; unit?: string};
+type Hud = {label: string; value: string; sub?: string; num?: number; from?: number; dec?: number; unit?: string;
+  holdFor?: number};
+type EndCard = {text: string; sub?: string; start: number; seconds: number};
 type Bar = {label: string; v: number; frac: number; text: string; top: boolean};
 type Overlay = {kind: 'bars' | 'equation' | 'steps' | 'wave' | 'measure' | 'thermo' | 'orbit'; x: number; y: number; w: number; h: number;
   a0?: number; a1?: number; marker?: 'far' | 'near' | 'none'; split?: boolean;
@@ -34,6 +36,7 @@ export type ShortProps = {
   look?: 'diagram' | 'hud';
   type?: 'serif' | 'bold';
   fx?: Cue[];
+  endCard?: EndCard | null;
 };
 
 export const defaults: ShortProps = {
@@ -124,9 +127,14 @@ const HudBox: React.FC<{hud: Hud; span: number; fps: number; bold?: boolean}> = 
     value = k >= 1 ? hud.value : `${fmt(x, hud.dec || 0)}${hud.unit ? ' ' + hud.unit : ''}`;
   }
   const land = spring({frame, fps, config: {damping: 16, stiffness: 200}, durationInFrames: 8});
+  // Connor's core rules: a big number is held 2-3 seconds, then steps aside (holdFor = 3 s after it lands)
+  const counts = hud.num !== undefined && hud.from !== undefined && hud.from !== hud.num && span - countFor >= 1.5;
+  const shownFor = hud.holdFor ? hud.holdFor + (counts ? countFor : 0) : 0;
+  const gone = shownFor && span > shownFor + 0.4
+    ? interpolate(t, [shownFor, shownFor + 0.3], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}) : 1;
   return (
     <div style={{position: 'absolute', left: 90, top: 270, maxWidth: 900, color: 'white', textShadow: SHADOW,
-      overflowWrap: 'break-word'}}>
+      overflowWrap: 'break-word', opacity: gone}}>
       {hud.label ? <div style={{fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: 700, fontSize: 34,
         letterSpacing: '0.08em', opacity: 0.95}}>{hud.label}</div> : null}
       <div style={{...big(bold), fontSize: bold ? 84 : 88, lineHeight: 1.05, marginTop: 8,
@@ -512,6 +520,27 @@ const CinemaScene: React.FC<{scene: Scene; index: number; p: ShortProps}> = ({sc
   );
 };
 
+// Connor's core rules: the final frame is clean and readable on pause. After the last word, the answer's number
+// and the call to action sit on their own dark backing, nothing else on top.
+const EndCardBox: React.FC<{card: EndCard; p: ShortProps}> = ({card, p}) => {
+  const frame = useCurrentFrame();
+  const t = frame / p.fps;
+  const a = interpolate(t, [0, 0.25], [0, 1], {extrapolateRight: 'clamp'});
+  const pop = spring({frame, fps: p.fps, config: {damping: 15, stiffness: 180}, durationInFrames: 10});
+  return (
+    <AbsoluteFill style={{opacity: a}}>
+      <AbsoluteFill style={{background: 'linear-gradient(180deg, rgba(4,7,16,0.72), rgba(4,7,16,0.9))'}} />
+      <div style={{position: 'absolute', left: 90, width: 900, top: 560, textAlign: 'center', color: 'white',
+        transform: `scale(${0.9 + 0.1 * pop})`}}>
+        {card.sub ? <div style={{...big(true), fontSize: 150, lineHeight: 1, color: p.palette.amber,
+          fontVariantNumeric: 'tabular-nums'}}>{card.sub}</div> : null}
+        <div style={{...big(p.type === 'bold'), fontSize: 66, lineHeight: 1.18, marginTop: card.sub ? 50 : 0,
+          textWrap: 'balance'} as React.CSSProperties}>{card.text}</div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
 // 1 until just before the loop blend, then 0: the last scene's words are gone before frame 1 (with its own
 // question and counter) blends back in, so two sets of text are never on screen at once
 const textLeft = (p: ShortProps, gt: number) => p.scenes.length > 1 && p.loopBlend > 0
@@ -589,6 +618,11 @@ const Cinematic: React.FC<ShortProps> = (p) => {
         </AbsoluteFill>
       ) : null}
       <LineCaption p={p} />
+      {p.endCard ? (
+        <Sequence from={Math.round(p.endCard.start * p.fps)} layout="none">
+          <EndCardBox card={p.endCard} p={p} />
+        </Sequence>
+      ) : null}
       {p.audio ? <Audio src={staticFile(p.audio)} /> : null}
     </AbsoluteFill>
   );
@@ -621,6 +655,11 @@ export const Short: React.FC<ShortProps> = (p) => {
         </AbsoluteFill>
       ) : null}
       <Captions p={p} />
+      {p.endCard ? (
+        <Sequence from={Math.round(p.endCard.start * p.fps)} layout="none">
+          <EndCardBox card={p.endCard} p={p} />
+        </Sequence>
+      ) : null}
       {p.audio ? <Audio src={staticFile(p.audio)} /> : null}
     </AbsoluteFill>
   );

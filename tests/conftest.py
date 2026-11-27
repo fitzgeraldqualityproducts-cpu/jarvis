@@ -49,6 +49,12 @@ def clipper_home(tmp_path, monkeypatch):
     monkeypatch.setattr(script, "polish_on", lambda: False)
     from studio import obsidian
     monkeypatch.setattr(obsidian, "vault", lambda: None)     # never writes into a real Obsidian vault
+    from studio import rules
+    monkeypatch.setattr(rules, "mode", lambda: "off")        # Connor's core rules (test_studio_core_rules switches
+    monkeypatch.setattr(script, "WORDS_MIN", 60)             # them on): other tests' fake scripts were written for
+    monkeypatch.setattr(script, "WORDS_MAX", 105)            # the earlier limits
+    monkeypatch.setattr(script, "HOOK_MAX_WORDS", 12)
+    monkeypatch.setattr(script, "HOOK_GRAB_WORDS", 6)
     yield tmp_path
     db.reset_connections()
 

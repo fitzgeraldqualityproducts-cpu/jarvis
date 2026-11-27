@@ -17,11 +17,11 @@ import operator
 import re
 import time
 
-from studio import db, guard
+from studio import db, guard, rules
 
-WORDS_MIN, WORDS_MAX = 60, 105          # 25-45 s: Kokoro am_michael at 1.05 reads about 143 words a minute
-HOOK_MAX_WORDS = 12          # about 4 seconds; the grabbing part must come in the first few words
-HOOK_GRAB_WORDS = 6
+WORDS_MIN, WORDS_MAX = rules.WORDS      # Connor's core rules (2026-11-27): 75-90 words, about 35-45 s with the end card
+HOOK_MAX_WORDS = rules.HOOK_MAX_WORDS   # said by 3 seconds (Connor's core rules)
+HOOK_GRAB_WORDS = rules.HOOK_GRAB_WORDS # the question or hook in the first 7 words
 CLICKBAIT = ("you won't believe", "you wont believe", "shocking", "insane", "mind-blowing", "mind blowing",
              "nobody is talking about", "they don't want you to know", "100% true", "in this video", "hey guys",
              "make sure to subscribe", "wait for it", "gone wrong")
@@ -105,7 +105,7 @@ def hook_checks(hook):
     if not h:
         return ["empty"]
     if words > HOOK_MAX_WORDS:
-        problems.append(f"{words} words (max {HOOK_MAX_WORDS}, about 4 seconds)")
+        problems.append(f"{words} words (max {HOOK_MAX_WORDS}, said by {rules.HOOK_BY:g} seconds)")
     for c in CLICKBAIT:
         if c in low:
             problems.append(f"clickbait phrase \"{c}\"")
@@ -150,6 +150,20 @@ def _niche():
     d = topics.niche() or {}
     return d, d.get("plan") or {}
 
+
+LOOP_ENDING = """and a LOOP ending: the last line must lead straight back into the first line,
+  so when the Short repeats it plays as one continuous thought (for example the last line sets up the hook's
+  question again, or ends mid-thought that the hook completes). No outro, no "like and subscribe"."""
+# Connor's core rules (2026-11-27): hook -> setup -> key insight or calculation -> punchline answer -> CTA.
+CTA_ENDING = """and a CTA as the last line. The CTA is ONE of these three types only, short (under 14 words) and
+  specific: a comment challenge on the Short's own number ("Comment 14.8 if this surprised you"), an opinion
+  question that grows out of the answer ("Would you rather live through 15 days of sun or 15 days of night?") or a
+  series tease for the follow-up question this answer really raises ("Part 2: What happens at the lunar poles?").
+  Never "like and subscribe", "follow for more" or a generic "let me know". ONE primary big number: the payoff's;
+  other numbers only as the inputs it needs.
+- Natural spoken English: contractions (it's, you're, don't), short sentences, the way a friend explains it out
+  loud. Never stiff or robotic phrasing ("delve", "fascinating", "it's important to note", "furthermore",
+  "embark", "testament to", "ever wondered")."""
 
 DRAFTS = 3                              # first drafts written side by side; the strongest goes on (config studio.drafts)
 BEATS = ("hook", "setup", "math", "rehook", "payoff", "loop")
@@ -263,6 +277,15 @@ def write(topic, feedback=None, previous=None, only_originality=False, keep_orig
                    + "\nThe review said:\n" + "\n".join(f"- {p}" for p in feedback)
                    + "\n\nPrevious draft:\n" + json.dumps(previous)[:6000])
     story_first = STORY_FIRST if _narrative_on() else ""
+    ending = CTA_ENDING if rules.on() else LOOP_ENDING
+    feedback_tips = ""
+    if rules.on():
+        try:
+            feedback_tips = rules.feedback_advice(db.get("studio_insights", {}) or {})
+        except Exception:
+            feedback_tips = ""
+    if feedback_tips:
+        learned += "\n\n" + feedback_tips
     prompt = f"""Write a YouTube Short script. Channel: {d.get('name', '')}. Positioning: {plan.get('positioning', '')}.
 Audience: {plan.get('audience', 'curious US adults')}. Style: {plan.get('style', 'calm, clear, conversational')}.
 Topic: {topic['title']}
@@ -273,13 +296,11 @@ FACTS YOU MAY USE (nothing else; never invent numbers, dates, names or quotes):
 {fact_list}
 
 Rules:
-- {WORDS_MIN}-{WORDS_MAX} words in total (aim for {WORDS_MIN + 20}-{WORDS_MAX - 10}; count them before answering),
+- {WORDS_MIN}-{WORDS_MAX} words in total (aim for {WORDS_MIN + 5}-{WORDS_MAX - 2}; count them before answering),
   read aloud by one narrator (no stage directions in the text).
 - Structure: hook (the first line, at most {HOOK_MAX_WORDS} words, with the surprising number or the question in its
   first {HOOK_GRAB_WORDS} words, no warm-up like "did you know" or "in this video"), the setup, the calculation step by
-  step with real numbers, the payoff, and a LOOP ending: the last line must lead straight back into the first line,
-  so when the Short repeats it plays as one continuous thought (for example the last line sets up the hook's
-  question again, or ends mid-thought that the hook completes). No outro, no "like and subscribe".
+  step with real numbers, the payoff, {ending}
 - ONE STEP (Connor, 2026-11-26): one surprising number and at most ONE calculation from numbers the viewer has
   just heard (one multiply or divide, then what it means). Never a chain where a worked-out number feeds the next
   calculation: in 40 seconds a viewer can't follow it. If the angle needs more, keep only its most surprising step.
@@ -328,8 +349,9 @@ Rules:
 - RE-HOOK: about halfway, after the setup and before the payoff, one short line (under 10 words) that raises the
   stakes or opens a fresh question, so a viewer who is drifting stays for the answer. Your own words: not a stock
   phrase like "but here's the thing", "wait for it" or "it turns out". It must be honest (the script delivers it).
-- Give every line a "beat": "hook" (line 1), "setup", "math" (a step of the calculation), "rehook", "payoff" (the
-  line that lands the surprising result; exactly one) or "loop" (the last line). The beats drive the edit: the
+- Give every line a "beat": "hook" (line 1), "setup", "math" (the key insight or a step of the calculation),
+  "rehook", "payoff" (the punchline answer: the line that lands the surprising result; exactly one) or "loop" (the
+  last line{', the CTA' if rules.on() else ''}). The beats drive the edit: the
   payoff gets the big on-screen moment and the narrator leans on it.
 - "visual" says what the screen shows for that line (diagram, chart, number, map, simple animation; no footage).
 Also write 5 different hooks (each could replace line 1) and 3 title options (under 60 characters, honest).{story_first}{learned}{fix}
@@ -365,6 +387,9 @@ Also write 5 different hooks (each could replace line 1) and 3 title options (un
     if feedback and previous and isinstance(previous.get("model"), dict) and not isinstance(ans.get("model"), dict):
         ans["model"] = previous["model"]          # a rewrite keeps the model unless it fixed it
     ans = _clean(ans)
+    ans, cta_note = rules.fix_cta(ans)            # a last line that isn't one of Connor's CTA types: free fix
+    if cta_note:
+        ans["rules_fixed"] = [cta_note]
     if number_check_on():
         ans, rep = tag_numbers(ans, topic)
         if rep["tagged"] or rep["looked_up"]:
@@ -439,6 +464,8 @@ def _screen(d):
         problems.append(f"{n} words; it must be {WORDS_MIN}-{WORDS_MAX}: " + ("cut" if n > WORDS_MAX else "add"))
     low = " ".join(str(ln["text"]).lower() for ln in d.get("lines") or [])
     problems += [f"stock phrase \"{p}\"" for p in STOCK_REHOOKS if p in low]
+    if rules.on():
+        problems += [f"robotic phrase \"{p}\"" for p in rules.robotic(low) if not p.startswith("no contractions")][:2]
     if _narrative_on():                         # free: an unexplained number or unit slip drops a draft before judging
         from studio import narrative
         try:
@@ -717,7 +744,7 @@ def _fit_length(draft, n):
     """Asks Claude to shorten (or lengthen) the lines to fit, keeping every fact id, number and calc."""
     from studio import claude
     goal = "Cut" if n > WORDS_MAX else "Add"
-    target = f"{WORDS_MAX - 15}-{WORDS_MAX - 5}" if n > WORDS_MAX else f"{WORDS_MIN + 10}-{WORDS_MIN + 25}"
+    target = f"{WORDS_MAX - 10}-{WORDS_MAX - 3}" if n > WORDS_MAX else f"{WORDS_MIN + 5}-{WORDS_MAX - 5}"
     fitted = _local_fit(draft, n, goal, target)        # on this computer first, checked before it's used
     if fitted:
         return fitted
@@ -979,6 +1006,17 @@ def review(draft, topic, video_id=None, recheck=None):
         m = draft.get("model") if isinstance(draft.get("model"), dict) else None
         model_txt = ("\nThe writer's model (the physics and maths the story rests on):\n" + json.dumps(m)[:2500] + "\n"
                      if m else "\nThe writer gave no model: judge the physics from the narration.\n")
+    loop_ask = ('"loop" 0-10 (read the LAST line and then the FIRST line: does it flow back into the start as one '
+                'continuous\nthought, so a viewer would keep watching when it repeats?)')
+    critic_ask = critic_shape = strength_key = ""
+    if rules.on():                                # Connor's critic gate rides in this same call (no extra call)
+        loop_ask = ('"loop" 0-10 (the LAST line is a call to action: how clear and specific is it, so a viewer '
+                    'knows exactly what to do?)')
+        titles = "\n".join(f"T{i}. {t}" for i, t in enumerate((draft.get("titles") or [])[:3]))
+        critic_ask = "\n" + rules.CRITIC_ASK + ("\nTitle options:\n" + titles if titles else "") + \
+            '\nAlso rate each hook "strength" 0-10 (would it stop a scrolling thumb in its first 5-7 words?).'
+        critic_shape = rules.CRITIC_SHAPE
+        strength_key = ', "strength": 0'
     from studio import packaging
     best = packaging.best_openings()
     proven_txt = proven_key = ""
@@ -1015,8 +1053,7 @@ statement. Any calculation in the narration must follow from the line before it.
 debated, the line must say so plainly; a guess stated as a fact is "unsupported".
 Rate each hook 0-10 on curiosity, clarity, specificity, honesty (10 = fully delivered by the script, no bait) and
 speed (gets to the point at once).{proven_txt}
-Also: "loop" 0-10 (read the LAST line and then the FIRST line: does it flow back into the start as one continuous
-thought, so a viewer would keep watching when it repeats?), "rehook" 0-10 (is there an honest line about halfway
+Also: {loop_ask}, "rehook" 0-10 (is there an honest line about halfway
 that raises the stakes or opens a new question, so a drifting viewer stays for the payoff?), "question" (the one
 question the hook raises, in your words), "answered" 0-10 (does the payoff answer exactly that question plainly,
 with nothing left hanging?), "bare_numbers" (the surprising numbers said with no plain comparison a viewer can
@@ -1024,7 +1061,7 @@ picture, e.g. ["127 C"]; [] if none), "originality" 0-10 (own explanation and wo
 sentence naming what reads generic and a concrete idea to make it the channel's own), "inauthentic_risk"
 "low/medium/high" (does it read like mass-produced template content?), and "problems": anything else a careful
 editor would fix (confusing step, misleading simplification, unit mistake).
-{story_ask}
+{story_ask}{critic_ask}
 
 For each "supported" or "wrong" claim also give "quote": the source's own words that settle it (at most 25 words,
 copied exactly), "confidence": 0.0-1.0 (how sure you are of the verdict), and "source_date": the page's
@@ -1034,8 +1071,8 @@ published or updated date if it shows one (YYYY-MM-DD), else "". Give "note" onl
 
 JSON only: {{"claims": [{{"line": 1, "verdict": "supported|standard|unsupported|wrong", "fact": "F1",
 "quote": "...", "confidence": 0.9, "source_date": ""}}, {{"line": 2, "verdict": "unsupported", "note": "..."}}],
-"hooks": {{"0": {{"curiosity": 0, "clarity": 0, "specificity": 0, "honesty": 0, "speed": 0{proven_key}}}}},
-"loop": 0, "rehook": 0, "question": "...", "answered": 0, "bare_numbers": [], "originality": 0, "originality_fix": "...", "inauthentic_risk": "low", "problems": ["..."]{story_shape}}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
+"hooks": {{"0": {{"curiosity": 0, "clarity": 0, "specificity": 0, "honesty": 0, "speed": 0{proven_key}{strength_key}}}}},
+"loop": 0, "rehook": 0, "question": "...", "answered": 0, "bare_numbers": [], "originality": 0, "originality_fix": "...", "inauthentic_risk": "low", "problems": ["..."]{story_shape}{critic_shape}}}""", timeout=900, web=True, purpose=f"fact-check: {topic['title']}")
     if not isinstance(ans, dict):
         raise ScriptRejected("the fact-check didn't return a result")
     return _judged(draft, ans, video_id, facts=facts)
@@ -1064,6 +1101,9 @@ def _judged(draft, ans, video_id, rechecked=None, facts=None):
         if (i == len(texts) or beats[i - 1] == "loop") and i > 1 and \
                 not [n for n in _numbers(t) if not (n.isdigit() and int(n) <= SMALL)]:
             asks.add(i)
+        elif i == len(texts) and i > 1 and rules.on() and rules.cta_type(t) and \
+                all(n in " ".join(texts[:-1]).replace(",", "") for n in rules.numbers(t)):
+            asks.add(i)                              # a CTA that only repeats the Short's own number claims nothing new
     claims = [c for c in claims if not (c.get("verdict") == "unsupported" and c.get("line") in asks)]
     for c in claims:
         if c.get("verdict") in ("unsupported", "wrong"):
@@ -1088,6 +1128,14 @@ def _judged(draft, ans, video_id, rechecked=None, facts=None):
                 if not hook_checks(h) and WORDS_MIN <= len(text_of(draft, h).split()) <= WORDS_MAX]
         if fits:                                  # a slightly lower-rated hook that keeps it in length
             hs, hi = max(fits)
+    swapped = None
+    if rules.on() and hi is not None:              # critic gate, free part: a stronger checked hook takes over
+        s_hi = rules._score((ratings.get(hi) or {}).get("strength"))
+        si = rules.strong_hook(draft["hooks"], ratings, hook_checks)
+        if s_hi is not None and s_hi < rules.CRITIC_MIN and si is not None and si != hi and \
+                WORDS_MIN <= len(text_of(draft, draft["hooks"][si]).split()) <= WORDS_MAX:
+            swapped = (hi, si)
+            hi, hs = si, hook_score(ratings.get(si) or {})
     hook = draft["hooks"][hi] if hi is not None else (draft["lines"][0]["text"] if draft["lines"] else "")
     proven = (ratings.get(hi) or {}).get("proven") if hi is not None else None
     if isinstance(proven, (int, float)) and proven < PROVEN_WEAK:
@@ -1096,11 +1144,25 @@ def _judged(draft, ans, video_id, rechecked=None, facts=None):
     body = text_of(draft, hook)
     words = len(body.split())
     if not WORDS_MIN <= words <= WORDS_MAX:
-        problems.append(f"{words} words; it must be {WORDS_MIN}-{WORDS_MAX} (25-45 seconds): "
+        problems.append(f"{words} words; it must be {WORDS_MIN}-{WORDS_MAX} (35-45 seconds): "
                         + ("cut about " + str(words - WORDS_MAX + 8) if words > WORDS_MAX else
                            "add about " + str(WORDS_MIN - words + 8)) + " words")
     loop = ans.get("loop")
-    if isinstance(loop, (int, float)) and loop < 5:
+    crit, crit_probs, rule_probs = None, [], []
+    if rules.on():                                 # Connor's core rules: the script checks and the critic gate
+        last = texts[-1] if texts else ""
+        crit, crit_probs = rules.critic(ans, last)
+        if hi is not None and (ratings.get(hi) or {}).get("strength") is not None:
+            crit["hook"] = rules._score(ratings[hi]["strength"])      # the chosen hook's own strength
+            crit_probs = rules.critic({"critic": dict(crit)}, last)[1]
+        if swapped:
+            crit["hook_swapped"] = {"from": swapped[0], "to": swapped[1]}
+        rule_probs = rules.script_problems(draft.get("lines"), hook, words=False)
+        hard_rules = rules.mode() == "block"
+        problems += [p if hard_rules or p.startswith("editor: ") else f"editor: {p}" for p in rule_probs + crit_probs]
+        if isinstance(crit.get("cta"), (int, float)):
+            loop = crit["cta"]                     # the ending is the CTA now: its clarity stands in for "loop"
+    elif isinstance(loop, (int, float)) and loop < 5:
         problems.append(f"editor: the ending doesn't lead back into the hook (loop {loop}/10); make the last line set up the first")
     rehook = ans.get("rehook")
     if isinstance(rehook, (int, float)) and rehook < 5:
@@ -1151,6 +1213,9 @@ def _judged(draft, ans, video_id, rechecked=None, facts=None):
             **({"originality_hold": hold} if hold else {}),
             "question": q or None, "answered": answered,
             **({"narrative": nar} if nar else {}),
+            **({"critic": crit, "rules": rule_probs} if crit is not None else {}),
+            **({"title_scores": {str(k): v for k, v in ans["titles"].items()}} if isinstance(ans.get("titles"), dict)
+               else {}),
             **({"rechecked": rechecked} if rechecked else {})}
 
 
@@ -1272,6 +1337,7 @@ def draft_step(topic, video_id=None, feedback=None, previous=None, draft=None):
                                  **({"picked": draft["picked"]} if draft.get("picked") else {}),
                                  **({"recheck": draft["recheck"]} if draft.get("recheck") else {}),
                                  **({"number_check": draft["number_check"]} if draft.get("number_check") else {}),
+                                 **({"rules_fixed": draft["rules_fixed"]} if draft.get("rules_fixed") else {}),
                                  **({"story_fix": draft["story_fix"]} if draft.get("story_fix") else {}),
                                  **({"originality_fix": draft["originality_fix"]} if draft.get("originality_fix") else {})}),
                      "{}", "draft", time.time())
@@ -1366,7 +1432,8 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
     rev = review(draft, topic, video_id, recheck=_saved_recheck(st, video_id))
     checks = {k: rev[k] for k in ("ok", "problems", "hard_problems", "claims", "hook_ratings", "hook_index",
                                   "hook_score", "words", "loop", "rehook", "originality", "inauthentic_risk", "similar",
-                                  "question", "answered", "narrative", "originality_hold")
+                                  "question", "answered", "narrative", "originality_hold", "critic", "rules",
+                                  "title_scores")
               if k in rev}
     if rev.get("rechecked"):
         checks["rechecked"] = rev["rechecked"]
@@ -1900,7 +1967,7 @@ flagged line so it no longer needs it (plain words instead of jargon like a band
 line the fact-checker marked wrong is reworded to its correction. If the conclusion doesn't follow, reword the
 payoff line (the line before the last) so it answers the opening question plainly from the lines before it. A
 value you add must come from the facts below; never a new number. Every other line stays exactly as it is,
-word for word. The script is {n} words; when you are done it must be {WORDS_MIN + 10}-{WORDS_MAX - 8} words
+word for word. The script is {n} words; when you are done it must be {WORDS_MIN + 5}-{WORDS_MAX - 3} words
 (count them, the hook included: a script over {WORDS_MAX} is stopped). If an added line would push it over,
 shorten or delete a line that explains nothing (a teaser or a restatement), never a step of the explanation,
 the payoff or the last line.

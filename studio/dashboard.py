@@ -6,6 +6,7 @@ state() every few seconds.
 
 When Jarvis isn't running, `python -m studio dashboard` serves the same page by itself."""
 import json
+import re
 import time
 from datetime import datetime
 import urllib.parse
@@ -108,7 +109,7 @@ def _card(v, now, publish_jobs, last_error):
         "error": guard.redact(v["error"] or "")[:220] if failed or v["error"] else "",
         "failed": failed, "duration": v["duration"],
         "thumb": bool(_thumb(v["id"])), "publish_at": pj.get("publish_at"), "privacy": pj.get("privacy"),
-        "youtube_id": pj.get("youtube_id"),
+        "youtube_id": pj.get("youtube_id"), "pack": isinstance(meta.get("pack"), dict),
     }
 
 
@@ -309,6 +310,40 @@ def _handle():
 
 # ---------- HTTP (shared by display.py and the stand-alone server) ----------
 
+def pack_page(vid):
+    """The Short's output pack (studio/pack.py) as a plain, readable page, or None when it has none yet."""
+    import html
+    v = db.video(vid)
+    p = _j(v["meta"], {}).get("pack") if v else None
+    if not isinstance(p, dict):
+        return None
+    from studio import pack
+    md = pack.markdown(p)
+    rows = []
+    for ln in md.splitlines():
+        e = html.escape(ln)
+        if ln.startswith("# "):
+            rows.append(f"<h1>{e[2:]}</h1>")
+        elif ln.startswith("## "):
+            rows.append(f"<h2>{e[3:]}</h2>")
+        elif ln.startswith("|") and not ln.startswith("|---"):
+            cells = [c.strip() for c in e.strip("|").split("|")]
+            tag = "th" if ln.startswith("| # ") else "td"
+            rows.append("<tr>" + "".join(f"<{tag}>{c}</{tag}>" for c in cells) + "</tr>")
+        elif ln.startswith("|---"):
+            continue
+        elif ln.strip():
+            rows.append(f"<p>{e}</p>")
+    body = "\n".join(rows)
+    body = re.sub(r"(<tr>.*?</tr>\n?)+", lambda m: f"<table>{m.group(0)}</table>", body, flags=re.S)
+    page = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+            f"<title>Short {vid} pack</title><style>body{{font:15px/1.5 system-ui,sans-serif;max-width:980px;"
+            "margin:24px auto;padding:0 16px;background:#0b1020;color:#e8ecf8}h2{color:#ffb020;margin-top:28px}"
+            "table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #2a3350;padding:4px 6px;"
+            "vertical-align:top;text-align:left}th{background:#141b33}</style>" + body)
+    return page.encode()
+
+
 def handle(path):
     """(status, body bytes, content type) for a /studio path, or None if it isn't one."""
     path = urllib.parse.urlparse(path).path
@@ -326,6 +361,9 @@ def handle(path):
             if ctype and "/" not in name and "\\" not in name and not name.startswith(".") and f.is_file():
                 return 200, f.read_bytes(), ctype
             return 404, b"not found", "text/plain"
+        if path.startswith("/studio/pack/") and path[13:].isdigit():
+            body = pack_page(int(path[13:]))
+            return (200, body, "text/html; charset=utf-8") if body else (404, b"no pack yet", "text/plain")
         if path.startswith("/studio/thumb/") and path.endswith(".img") and path[14:-4].isdigit():
             f = thumb_file(int(path[14:-4]))
             if f:
