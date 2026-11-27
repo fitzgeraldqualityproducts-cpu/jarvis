@@ -362,6 +362,17 @@ Also write 5 different hooks (each could replace line 1) and 3 title options (un
     return ans
 
 
+def narrative_hard(d):
+    """The code's own story stops for a draft (no Claude call), [] when the story check is off."""
+    if not _narrative_on():
+        return []
+    from studio import narrative
+    try:
+        return narrative.evaluate(d)["hard"]
+    except Exception:
+        return []
+
+
 def _story_hard(d):
     if not _narrative_on():
         return 0
@@ -1766,11 +1777,51 @@ def _keeps_image(old, new):
     return not a or len(a & _content_words(new)) / len(a) >= 0.5
 
 
+TOO_LATE = re.compile(r"^narrative: line (\d+) relies on .* only hears it in line (\d+)")
+NO_MOVE_BEATS = ("hook", "payoff", "loop")
+
+
+def _reorder(draft, problems):
+    """Free first try for "a value is heard a line or two too late" (test 34b: "25% reflectivity" used two lines
+    before the line that says it): move the line that introduces it up to just before the first line that needs
+    it. Kept only when the code's own story checks then find fewer problems. None if nothing could be moved."""
+    lines = [dict(ln) for ln in draft.get("lines") or []]
+    moved = False
+    for p in problems:
+        m = TOO_LATE.match(p)
+        if not m:
+            continue
+        need, said = int(m.group(1)), int(m.group(2))
+        if not 1 < need < said <= len(lines) or said - need > 3:
+            continue
+        if str(lines[said - 1].get("beat")) in NO_MOVE_BEATS:
+            continue
+        lines.insert(need - 1, lines.pop(said - 1))
+        moved = True
+        break                                          # one move at a time: line numbers change after it
+    if not moved:
+        return None
+    out = dict(draft, lines=lines)
+    return out if _story_hard(out) < _story_hard(draft) else None
+
+
 def _fix_story(draft, topic, problems):
     """Repairs story gaps the way an editor would: a short set-up line ADDED before the line that needs it (what
     a term means, a value with its unit, why an assumption is fair), or the line reworded in plain words, with
     every other line kept word for word. Rewriting the whole script fixed none of 25 such stops (tests 21-23):
     each rewrite made new gaps of its own. The fixed script then gets a full check. None if it can't be used."""
+    moved, todo = draft, problems
+    for _ in range(3):                                 # free: move introducing lines up before asking Claude
+        nxt = _reorder(moved, todo)
+        if not nxt:
+            break
+        moved, todo = nxt, narrative_hard(nxt)         # line numbers changed: re-read the code's own stops
+    if moved is not draft:
+        left = narrative_hard(moved)
+        if not [h for h in problems if not TOO_LATE.match(h)] and not left:
+            moved["story_fix"] = {"problems": [p[:200] for p in problems[:5]], "edits": 0, "moved": True}
+            return moved
+        draft = moved
     from studio import claude
     facts = _facts(topic)
     fact_list = "\n".join(f"F{i + 1}. {s['claim']} (source: {s['url']})" for i, s in enumerate(facts))

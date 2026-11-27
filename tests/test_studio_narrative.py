@@ -570,3 +570,23 @@ def test_out_of_claude_during_a_script_puts_the_idea_back(studio_home, monkeypat
     assert topics.topic(tid)["status"] == "idea"
     v = db.one("SELECT * FROM videos ORDER BY id DESC LIMIT 1")
     assert v["state"] == "failed" and v["error_kind"] == "quota"
+
+
+def test_a_value_heard_too_late_is_fixed_by_moving_its_line_up(studio_home, monkeypatch):  # noqa: F811
+    """Test 34b: '25% reflectivity' was used two lines before the line that says it; the repair now moves that
+    line up for free (no Claude call) when that clears the code's own stops."""
+    from studio import claude, script
+    model = {"question": "q", "premise": "p", "answer": "a",
+             "quantities": [{"name": "albedo", "means": "reflectivity", "value": 25, "unit": "%", "from": "F1"}]}
+    d = {"hooks": ["How big is it?"], "hook": "How big is it?", "model": model, "calcs": [],
+         "lines": [L("How big is it?", "hook"), L("We only see its glow.", "setup"),
+                   L("Bright means big, if it's dark rock.", "setup", uses=["albedo"]),
+                   L("A dull surface hides a giant.", "setup", uses=["albedo"]),
+                   L("Assume it reflects 25 percent of sunlight.", "setup"),
+                   L("So it's somewhere between 500 and 1,000 km.", "payoff"), L("Which is it?", "loop")]}
+    probs = script.narrative_hard(d)
+    assert probs and all(script.TOO_LATE.match(p) for p in probs)
+    monkeypatch.setattr(claude, "RUNNER", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call")))
+    fixed = script._fix_story(d, {"id": 1, "title": "t"}, probs)
+    assert fixed["story_fix"]["moved"] and script.narrative_hard(fixed) == []
+    assert [ln["text"] for ln in fixed["lines"]][2] == "Assume it reflects 25 percent of sunlight."
