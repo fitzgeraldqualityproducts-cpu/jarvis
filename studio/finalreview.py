@@ -99,6 +99,14 @@ def review(video_id):
                                                    else "the first frame, before anything is said" if i == 0 else "")
                      for i, (t, k) in enumerate(when))
     up = meta.get("upload") or {}
+    from studio import rules
+    phone_ask = phone_shape = ""
+    if rules.on():                                 # Connor's mandatory phone check rides in this same call
+        phone_ask = ("PHONE CHECK: imagine scrolling past this on a phone. \"phone\": \"stops_scroll\" true/false "
+                     "(would frames 1-2, the first 3 seconds, stop a scrolling viewer?), \"why\" (one short reason), "
+                     "\"awkward\" (any narration line that still sounds stiff or AI-written, quoted; [] if none), "
+                     "\"cta_clear\" true/false (is the last line one clear, specific call to action?).\n")
+        phone_shape = ', "phone": {"stops_scroll": true, "why": "...", "awkward": [], "cta_clear": true}'
     ans = claude.ask_json(
         f"""You are the final editor of a science YouTube Short, checking it before upload. The picture is a contact
 sheet of {len(when)} frames from the finished 1080x1920 video, numbered in order with their times.
@@ -118,19 +126,25 @@ Check every frame for:
 "visual_hook" scores only what frame 1 SHOWS (the picture and on-screen text, ignoring the narration): would it
 stop a thumb? Then, for each part of the video ({", ".join(SECTIONS)}), give one short guess at whether viewers
 would stay through it and why, from what you see; these are guesses, not measurements.
-Say only what you can actually see. "major" means a viewer would notice and it hurts trust or understanding;
+{phone_ask}Say only what you can actually see. "major" means a viewer would notice and it hurts trust or understanding;
 small style preferences are "minor". If everything is fine, give no problems.
 
 JSON only: {{"score": 0-10, "first_frame": 0-10, "visual_hook": 0-10,
 "sections": {{"hook": "likely holds: ...", "...": "..."}}, "problems": [{{"frame": 3, "issue": "what is wrong, briefly",
-"severity": "minor|major"}}]}}""", timeout=300, purpose=f"final-cut review: video {video_id}", images=[out])
+"severity": "minor|major"}}]{phone_shape}}}""", timeout=300, purpose=f"final-cut review: video {video_id}", images=[out])
     probs = []
     for p in (ans.get("problems") if isinstance(ans, dict) else None) or []:
         if isinstance(p, dict) and str(p.get("issue") or "").strip():
             probs.append({"frame": int(p["frame"]) if str(p.get("frame", "")).isdigit() else None,
                           "issue": str(p["issue"])[:200],
                           "severity": "major" if str(p.get("severity")).lower() == "major" else "minor"})
+    ph = ans.get("phone") if isinstance(ans, dict) and isinstance(ans.get("phone"), dict) else None
     res = {"score": _num(ans, "score"), "first_frame": _num(ans, "first_frame"),
+           **({"phone": {"stops_scroll": ph.get("stops_scroll") if isinstance(ph.get("stops_scroll"), bool) else None,
+                         "why": str(ph.get("why") or "")[:160],
+                         "awkward": [str(a)[:120] for a in ph.get("awkward") or [] if str(a).strip()][:4],
+                         "cta_clear": ph.get("cta_clear") if isinstance(ph.get("cta_clear"), bool) else None}}
+              if ph else {}),
            "visual_hook": _num(ans, "visual_hook"), "retention_guess": _sections(ans), "problems": probs[:12],
            "major": sum(p["severity"] == "major" for p in probs), "mode": m, "frames": len(when)}
     res["ok"] = not (m == "block" and res["major"])

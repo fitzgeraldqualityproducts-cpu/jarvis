@@ -256,6 +256,102 @@ def opening_problems(path, rep=None, times=(0.5, 1.5, 2.5)):
     return out
 
 
+OPEN_CONTRAST = 42.0          # Connor's core rules: the first 2.5 s has high contrast (grey spread)...
+OPEN_MOTION = 5.0             # ...or strong motion (average change between 0.3 s and 2.3 s)
+
+
+def opening_punch(path):
+    """(contrast, motion) of the first 2.5 seconds: the spread of brightness at 0.5 s and the average change
+    between 0.3 s and 2.3 s, or (None, None)."""
+    import cv2
+    cap = cv2.VideoCapture(str(path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    grabs = {}
+    for t in (0.3, 0.5, 2.3):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
+        ok, fr = cap.read()
+        if ok:
+            grabs[t] = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    cap.release()
+    if 0.5 not in grabs:
+        return None, None
+    contrast = float(np.std(grabs[0.5]))
+    motion = float(np.mean(np.abs(grabs[2.3] - grabs[0.3]))) if 0.3 in grabs and 2.3 in grabs else None
+    return round(contrast, 1), None if motion is None else round(motion, 1)
+
+
+def final_frame_clean(last):
+    """Is the final frame readable on pause: real contrast (text on a backing), not mid-fade or near black."""
+    if last is None:
+        return False, "no final frame"
+    g = last.mean(axis=2) if last.ndim == 3 else last
+    spread, mean = float(np.std(g)), float(np.mean(g))
+    return spread >= 25 and mean >= 8, f"contrast {spread:.0f}, brightness {mean:.0f}"
+
+
+def core_checks(checks, path, rep, row, up, first, last):
+    """Connor's core rules (studio/rules.py) measured on the finished Short."""
+    from studio import rules
+    m = rules.mode()
+    if m == "off" or not row:
+        return
+    hard = m == "block"
+    cr = rep.get("core_rules") or {}
+    if cr:
+        probs = list(cr.get("problems") or [])
+        _add(checks, "core rules: timing", not probs or not hard,
+             ("; ".join(probs) + ("" if hard else " (advice only)")) if probs else
+             f"hook said by {cr.get('hook_end')} s, interrupt at {cr.get('interrupt')} s, {cr.get('duration')} s long")
+        vis = list(cr.get("visual") or [])
+        _add(checks, "core rules: visuals", True, "; ".join(vis) + " (advice)" if vis else
+             "shot variety, early diagram and camera moves as planned")
+    con, mot = opening_punch(path)
+    if con is not None:
+        ok = con >= OPEN_CONTRAST or (mot is not None and mot >= OPEN_MOTION)
+        _add(checks, "core rules: opening stops the scroll", ok or not hard,
+             f"contrast {con}, motion {mot}" + ("" if ok else " (needs strong motion or high contrast"
+                                                + (")" if hard else "; advice only)")))
+    if cr.get("end_card"):
+        ok, why = final_frame_clean(last)
+        _add(checks, "core rules: clean final frame", ok or not hard, why)
+    st = json.loads(row["structure"] or "{}")
+    lines = [dict(x) for x in st.get("lines") or [] if isinstance(x, dict)]
+    if lines:
+        lines[0] = dict(lines[0], text=row["hook"])
+    dp = rules.description_problems(up.get("description", ""), lines, row["hook"])
+    _add(checks, "core rules: description", not dp or not hard, "; ".join(dp) or
+         "one-sentence hook, the key fact and a comment prompt")
+
+
+def phone_gate(checks, fr, row, duration):
+    """Connor's mandatory quality gate: watched as on a phone, the first 3 s would stop a scroller, no awkward AI
+    phrasing remains, the CTA is clear and specific, and the runtime is in target. The final-cut review answers
+    the first three by eye; the code checks the phrasing, the CTA and the runtime itself."""
+    from studio import rules
+    m = rules.mode()
+    if m == "off" or not row:
+        return None
+    st = json.loads(row["structure"] or "{}")
+    texts = [row["hook"]] + [str(x.get("text") or "") for x in (st.get("lines") or [])[1:] if isinstance(x, dict)]
+    phone = (fr or {}).get("phone") or {}
+    found = []
+    if phone.get("stops_scroll") is False:
+        found.append("the first 3 seconds wouldn't stop a scroller" + (f" ({phone['why']})" if phone.get("why") else ""))
+    awk = [str(a) for a in phone.get("awkward") or [] if str(a).strip()] + rules.robotic(" ".join(texts))
+    if awk:
+        found.append("awkward AI phrasing: " + "; ".join(awk[:3]))
+    cta = rules.cta_problems(texts[-1] if len(texts) > 2 else "")
+    if phone.get("cta_clear") is False or cta:
+        found.append("the CTA isn't clear and specific" + (f" ({cta[0]})" if cta else ""))
+    if not rules.SECONDS[0] <= duration <= rules.SECONDS[1]:
+        found.append(f"{duration:.1f} s, outside {rules.SECONDS[0]:g}-{rules.SECONDS[1]:g} s")
+    seen = "checked by eye and by the code" if phone else "checked by the code (no final-cut review answer)"
+    _add(checks, "phone check (quality gate)", not found or m != "block",
+         ("; ".join(found) + ("" if m == "block" else " (advice only)")) if found else
+         f"stops the scroll, natural phrasing, a clear CTA, {duration:.1f} s: {seen}")
+    return found
+
+
 def export_problems(info, rep=None, scenes=None, black=None, want=(1080, 1920), fps=30):
     """[str] the export against what a Short needs: exactly 1080x1920 (9:16) at the configured frame rate, a video
     and an audio stream, no black frames, every planned scene really in the video, and every animated diagram
@@ -371,9 +467,11 @@ def check(video_id):
     if first is not None:
         _add(checks, "fast start", float(np.std(first)) >= 4.0 and (rep.get("speech_start") is None or rep["speech_start"] <= 0.35),
              f"speech starts at {rep.get('speech_start')} s")
+    card_end = bool((rep.get("core_rules") or {}).get("end_card"))
     if first is not None and last is not None:
         diff = float(np.mean(np.abs(first.astype(np.int16) - last.astype(np.int16))))
         tail = rep.get("tail_seconds")
+    if first is not None and last is not None and not card_end:   # an end card replaces the loop (core rules)
         _add(checks, "seamless loop", diff <= 14.0 and (tail is None or tail <= 0.6),
              f"last frame differs from the first by {diff:.1f}; {tail} s after the last word")
     vm = visual_mode()
@@ -489,6 +587,8 @@ def check(video_id):
     if row:
         sim, other = script.similar_script(row["body"], video_id)
         _add(checks, "not a remake", sim < script.SIMILAR_SCRIPT, f"{sim:.0%} overlap with video {other}" if other else "")
+    core_checks(checks, path, rep, row, up, first, last)
+    fr = None
     if all(c["passed"] for c in checks):          # the editor's look, only for a Short that passed everything else
         from studio import finalreview
         try:
@@ -500,16 +600,23 @@ def check(video_id):
         if fr is not None:
             _add(checks, "final-cut review", fr["ok"], f"skipped ({fr['skipped']})" if fr.get("skipped")
                  else finalreview.detail(fr))
+    phone_gate(checks, fr, row, info["duration"])
     guard.audit("qa.check", True, {"video": video_id, "failed": [c["name"] for c in checks if not c["passed"]]})
     ck = json.loads(row["checks"] or "{}") if row else {}
     conf = db.one("SELECT AVG(confidence) c FROM sources WHERE video_id=? AND confidence IS NOT NULL", video_id)["c"]
-    q = quality({"lufs": lufs, "loop_diff": diff if first is not None and last is not None else None,
+    q = quality({"lufs": lufs, "loop_diff": diff if first is not None and last is not None and not card_end else None,
                  "timing": tm.get("matched"), "speech_start": rep.get("speech_start"),
                  "hook": ck.get("hook_score"), "originality": ck.get("originality"), "confidence": conf,
                  "story": (ck.get("narrative") or {}).get("score"), "visual_purpose": (vp or {}).get("score")})
     meta = json.loads(db.video(video_id)["meta"] or "{}")
     db.set_video(video_id, meta=json.dumps(dict(meta, quality=q)))
-    return dict(_save(video_id, checks), quality=q)
+    saved = _save(video_id, checks)
+    try:                                          # the output pack (Connor's core rules), made after every QA run
+        from studio import pack
+        pack.save(video_id)
+    except Exception as e:
+        print(f"(couldn't write the output pack: {str(e)[:160]})")
+    return dict(saved, quality=q)
 
 
 # The weighted quality score sits NEXT TO the hard checks: it never passes a Short that failed one, and never

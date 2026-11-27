@@ -61,6 +61,11 @@ def cover_text(row):
     hook is long."""
     st = json.loads(row["structure"]) if isinstance(row["structure"], str) else row["structure"]
     hook = _clean(row["hook"])
+    from studio import rules
+    if rules.on():                     # Connor's core rules: the big number plus a SHORT question
+        q = rules.cover_question(hook, st.get("titles") or [])
+        if q:
+            return q
     if hook and len(hook.split()) <= 9:
         return hook
     from studio import script

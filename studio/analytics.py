@@ -251,20 +251,34 @@ def learn(now=None):
     """Saves each measured video's index on its topic and works out the pillar nudges."""
     from studio import topics
     idx = index_all(now)
-    groups = {"pillar": {}, "kind": {}, "hook": {}}
+    groups = {"pillar": {}, "kind": {}, "hook": {}, "cta": {}, "shape": {}}
+    from studio import rules
     for yid, r in idx.items():
         if r["index"] is None or not r.get("topic_id"):
             continue
         t = topics.topic(r["topic_id"]) or {}
-        perf = {k: r.get(k) for k in ("index", "views", "avg_view_pct", "subs_per_1k", "hook_hold", "likes",
+        perf = {k: r.get(k) for k in ("index", "views", "avg_view_pct", "avg_view_seconds", "subs_per_1k", "hook_hold", "likes",
                                       "comments", "shares", "engaged_per_1k")}
         perf.update(youtube_id=yid, measured=time.time())
         db.run("UPDATE topics SET performance=? WHERE id=?", json.dumps(perf), r["topic_id"])
-        s = db.one("SELECT hook FROM scripts WHERE video_id=? AND status='passed' ORDER BY version DESC LIMIT 1",
-                   r["video_id"])
-        for g, key in (("pillar", t.get("pillar")), ("kind", t.get("kind")), ("hook", _hook_style(s["hook"] if s else ""))):
+        s = db.one("SELECT hook, structure FROM scripts WHERE video_id=? AND status='passed' ORDER BY version DESC "
+                   "LIMIT 1", r["video_id"])
+        shape = {}
+        try:                                       # Connor's feedback memory: the CTA type and the structure too
+            lines = (json.loads(s["structure"] or "{}") or {}).get("lines") or [] if s else []
+            if lines:
+                shape = rules.structure_of([dict(lines[0], text=s["hook"])] + lines[1:])
+        except (TypeError, ValueError, KeyError):
+            shape = {}
+        for g, key in (("pillar", t.get("pillar")), ("kind", t.get("kind")), ("hook", _hook_style(s["hook"] if s else "")),
+                       ("cta", shape.get("cta")), ("shape", shape.get("shape"))):
             if key:
                 groups[g].setdefault(key, []).append(r["index"])
+        try:                                       # each Short's own results, kept with its output pack
+            from studio import pack
+            pack.record_performance(r["video_id"], perf, shape)
+        except Exception:
+            pass
     nudges = {}
     for p, vals in groups["pillar"].items():
         if len(vals) >= MIN_PER_PILLAR:

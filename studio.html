@@ -299,7 +299,8 @@ function cardHtml(c, now, focus){
   let t = c.failed ? "" : c.state === "scheduled" && c.publish_at ? `Goes public ${when(+c.publish_at)}` :
           c.state === "ready" ? `Waiting ${ago(c.since, now)}` : `For ${ago(c.since, now)}`;
   if (c.attempts > 0 && !c.failed) t += ` · try ${c.attempts + 1}`;
-  return `<div class="${cls}"><div class="th" style="${th}"><span>${esc(c.title)}</span></div><b>${esc(c.doing)}</b>${bar}${t ? `<div class="t">${t}</div>` : ""}${why}</div>`;
+  const pk = c.pack ? `<div class="t"><a class="l" href="/studio/pack/${c.id}" target="_blank" rel="noopener">Script, shots &amp; notes</a></div>` : "";
+  return `<div class="${cls}"><div class="th" style="${th}"><span>${esc(c.title)}</span></div><b>${esc(c.doing)}</b>${bar}${t ? `<div class="t">${t}</div>` : ""}${why}${pk}</div>`;
 }
 
 function emptyReason(d){

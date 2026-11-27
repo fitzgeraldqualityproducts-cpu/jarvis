@@ -153,3 +153,29 @@ def mix(voice, sfx, out, seconds):
         except OSError:
             pass
     return Path(out)
+
+
+def ambient(seconds, seed=7):
+    """A soft, low ambient bed (Connor's core rules: always a low ambient track under the voice), made here from
+    three slow detuned tones and a little filtered air, for when the AI music is off or fails. It is mixed with
+    music.mix, so it ducks under the voice like the music does. Returns a mono float32 array (48 kHz)."""
+    n = int(RATE * (seconds + 1.0))
+    t = np.arange(n, dtype=np.float32) / RATE
+    y = np.zeros(n, dtype=np.float32)
+    for f, a in ((110.0, 0.5), (164.8, 0.32), (220.4, 0.22)):          # A2, E3, a slightly detuned A3
+        swell = 0.75 + 0.25 * np.sin(2 * np.pi * (0.05 + f / 20000) * t + f)
+        y += (a * swell * np.sin(2 * np.pi * f * t)).astype(np.float32)
+    k = 120                                                             # a moving average: a soft low rumble
+    air = np.convolve(_rng(seed).standard_normal(n).astype(np.float32), np.ones(k, dtype=np.float32) / k, "same")
+    y += 0.6 * _norm(air, 0.2)
+    fade = int(RATE * 1.5)
+    env = np.ones(n, dtype=np.float32)
+    env[:fade] = np.linspace(0, 1, fade)
+    env[-fade:] = np.linspace(1, 0, fade)
+    return _norm(y * env, 0.5)
+
+
+def write_ambient(seconds, out):
+    from clipper import media
+    media.write_wav(out, ambient(seconds), RATE)
+    return Path(out)

@@ -263,6 +263,15 @@ Everyday comparisons: when a line uses a stand-in ("a ball circling you, a lamp 
 shows the REAL thing it stands for (the Moon lit by the Sun), since the words already carry the comparison, and
 the scene type (steps, compare) draws the stand-in's logic. Picture makers can't stage props: a room, a lamp or
 a ball on its own reads as an empty set (test 35)."""
+    from studio import rules
+    if board and rules.on():
+        board += """
+Connor's visual rules: give every shot a "category", one of: wide surface, close detail, orbital/diagram, scale
+reference, lighting change, starfield. Never two wide surface shots in a row (follow one with a close detail, a
+lighting change or a diagram). The opening shot (the first 2.5 s) has strong motion or high contrast (a bright
+subject on a dark sky, a hard light edge), never a flat grey or empty frame. Bring the KEY diagram in as early as
+the narration allows (the first line that sets up the maths gets it, not the payoff). Most shots move: push-in,
+pull-out or a pan."""
     demo_note = ""
     dm = (st.get("model") or {}).get("demo") if isinstance(st.get("model"), dict) else None
     if isinstance(dm, dict) and "orbit" in tmpl:
@@ -370,6 +379,11 @@ def shots_for(line):
     return max(1, min(3, int(math.ceil(n / WORDS_PER_SHOT)) if n >= 6 else 1))
 
 
+def _rules_categories():
+    from studio import rules
+    return rules.CATEGORIES
+
+
 def board_fields(sc, src, line):
     """The storyboard fields of one scene, checked: purpose, 1-3 shots (art, camera, shows), transition, sfx.
     Missing or odd values get a safe default, so an older plan still renders exactly as before."""
@@ -387,7 +401,9 @@ def board_fields(sc, src, line):
             cam = str(sh.get("camera") or "").lower()
             shots.append({"art": " ".join(str(sh["art"]).split())[:160],
                           "camera": cam if cam in CAMERAS else CAMERAS[len(shots) % 2],
-                          "shows": " ".join(str(sh.get("shows") or "").split())[:60]})
+                          "shows": " ".join(str(sh.get("shows") or "").split())[:60],
+                          **({"category": str(sh["category"]).lower()} if str(sh.get("category") or "").lower()
+                             in _rules_categories() else {})})
     want = shots_for(line)
     if shots:
         shots = shots[:max(1, want)]
@@ -807,6 +823,38 @@ def _bold_caption_props(lines, words, starts, beats=None):
             h = int(n * BOLD_CAPTION["size"] * BOLD_CAPTION["lineHeight"] * (1.12 if pages[-1].get("reveal") else 1))
             boxes.append((BOLD_CAPTION["left"], int(BOLD_CAPTION["y"] * H - h / 2), BOLD_CAPTION["width"], h))
     return pages, boxes
+
+
+def end_card_frame(base, card, pal):
+    """The classic renderer's end card: the frame darkened, the answer's number big in amber and the CTA under it
+    (the same layout as Short.tsx's EndCardBox). base: a BGR frame; returns a BGR frame."""
+    import cv2
+    from PIL import Image, ImageDraw
+    dark = (base.astype(np.float32) * 0.18).astype(np.uint8)
+    img = Image.fromarray(cv2.cvtColor(dark, cv2.COLOR_BGR2RGB))
+    d = ImageDraw.Draw(img)
+    y = 560
+    if card.get("sub"):
+        f, ls, _ = _fit(d, str(card["sub"]), 150, 900, 1)
+        for ln in ls:
+            d.text(((W - d.textlength(ln, font=f)) / 2, y), ln, font=f, fill=_rgb(pal["amber"]))
+            y += int(f.size * 1.1)
+        y += 40
+    f, ls, size = _fit(d, card["text"], 66, 900, 4)
+    for ln in ls:
+        d.text(((W - d.textlength(ln, font=f)) / 2, y), ln, font=f, fill=(255, 255, 255))
+        y += int(size * 1.2)
+    return cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
+
+
+def _core_pages(pages, card):
+    """Captions slightly ahead of the words, and gone when the end card comes in (Connor's core rules)."""
+    from studio import rules
+    out = rules.lead_pages(pages)
+    if card:
+        for p in out:
+            p["e"] = round(min(float(p["e"]), card["start"]), 3)
+    return out
 
 
 def _serif(size, italic=False):
@@ -1305,6 +1353,13 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     # the pre-production gate (Video 35 audit): each problem is fixed in its own scene before anything is painted
     from studio import art as _art0, preflight
     scenes, pre = preflight.run(st, row["hook"], scenes, offered=_art0.shots_on())
+    from studio import rules
+    core_look = rules.look_on()
+    if core_look:                                 # Connor's core rules: never two wide surface shots in a row
+        scenes, varied = rules.vary_shots(scenes)
+        pre["fixed"] = list(pre.get("fixed") or []) + varied
+        pre["storyboard"] = preflight.storyboard(scenes, [dict(st["lines"][0], text=row["hook"])] + st["lines"][1:],
+                                                 st)
     meta["scenes"], meta["storyboard"] = scenes, pre.pop("storyboard")
     meta["preflight"] = pre
     if record:
@@ -1382,6 +1437,8 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     hud_list = huds(scenes) if look == "hud" else None
     if hud_list and eng["edit"] == "lively" and _art_mod().shots_on():
         hud_list = no_double_numbers(hud_list, edit.overlays(scenes, look))
+    if hud_list and core_look:
+        hud_list = rules.hud_hold(hud_list)                 # big numbers held 2-3 s, then they step aside
     progress("Drawing the scenes")
     imgs, boxes, stills = [], [], []
     if record:
@@ -1425,10 +1482,15 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     last_word = max((float(w["e"] or 0) for w in words), default=dur)
     speech_end = _speech_span(voice_path)[1]
     end = min(dur, max(last_word, speech_end) + 0.2) + 0.12   # no long silent tail: the replay starts right away
+    card = None
+    if core_look:                                 # the final frame: the answer and the CTA, clean on pause
+        card = rules.end_card([dict(st["lines"][0], text=lines[0])] + st["lines"][1:], end)
+        if card:
+            end = round(end + card["seconds"], 3)
     starts = line_starts(lines, words) + [end]
     starts[0] = 0.0
     padded = folder / "voice_end.wav"                         # a short silent tail so the last scene can settle
-    media.run(["-y", "-i", voice_path, "-af", f"apad=pad_dur=0.3,atrim=0:{end + 0.05:.3f},afade=t=out:st={max(0.0, end - 0.08):.3f}:d=0.08",
+    media.run(["-y", "-i", voice_path, "-af", f"apad=pad_dur={0.3 + (card['seconds'] if card else 0):.2f},atrim=0:{end + 0.05:.3f},afade=t=out:st={max(0.0, end - 0.08):.3f}:d=0.08",
                "-ar", "48000", str(padded)])
     # The music (graphics card) is made while the camera moves are drawn (processor), so neither waits for the
     # other. Footage comes first: its picture check needs the graphics card too.
@@ -1481,8 +1543,22 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
             used["music"] = f"none (the music wasn't used: {str(e)[:200]})"
     else:
         used["music"] = "none"
+    if core_look and not str(used.get("music", "")).startswith("ACE-Step"):
+        try:                                       # always a low ambient bed that ducks under the voice
+            from studio import music, sound
+            bed = sound.write_ambient(end + 0.5, folder / "ambient.wav")
+            mixed = folder / "voice_ambient.wav"
+            music.mix(padded, bed, end + 0.05, mixed)
+            padded = mixed
+            used["music"] = "a soft ambient pad made by Jarvis (" + str(used.get("music", "none")) + ")"
+        except Exception as e:
+            used["music"] = f"{used.get('music', 'none')}; the ambient bed failed too: {str(e)[:120]}"
     beats = edit.beats_of(st["lines"], len(scenes))
     cue_list = edit.cues(starts, beats, hud_list, words)
+    if core_look:                                  # a pattern interrupt between 12 and 18 s
+        ic = rules.interrupt_cue(starts, beats, words)
+        if ic:
+            cue_list = sorted(cue_list + [ic], key=lambda c: c["t"])
     from studio import art as _art
     board_on = _art.shots_on()
     if board_on:
@@ -1490,12 +1566,18 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     if eng["sfx"] == "synth":
         try:
             from studio import sound
-            fx = sound.track(cue_list, end + 0.05)
+            if core_look:                          # only 1-2 subtle effects, on the key moments
+                fx_cues = rules.sfx_cues(cue_list, scenes, beats,
+                                         edit.overlays(scenes, look) if eng["edit"] == "lively" else {})
+                fx = sound.track(fx_cues, end + 0.05, levels=rules.SFX_LEVELS)
+            else:
+                fx_cues = cue_list
+                fx = sound.track(cue_list, end + 0.05)
             if fx is not None:
                 mixed = folder / "voice_sfx.wav"
                 sound.mix(padded, fx, mixed, end + 0.05)
                 padded = mixed
-                used["sfx"] = f"Jarvis's own sound effects: {sum(1 for c in cue_list if c['kind'] != 'jump')} cues"
+                used["sfx"] = f"Jarvis's own sound effects: {sum(1 for c in fx_cues if c['kind'] != 'jump')} cues"
             else:
                 used["sfx"] = "none (no cues)"
         except Exception as e:
@@ -1540,18 +1622,21 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
             if look == "hud":
                 if type_style() == "bold":
                     pages_, cap_boxes = _bold_caption_props(lines, words, starts, beats)
+                    pages_ = _core_pages(pages_, card) if core_look else pages_
                     cap_props = {"pages": pages_, "keywords": [], "caption": dict(BOLD_CAPTION, maxLines=2),
                                  "look": "hud", "type": "bold"}
                     used["type"] = "bold sans-serif captions (1-2 lines, key words highlighted)"
                 else:
                     pages_, cap_boxes = _line_caption_props(lines, words, starts)
+                    pages_ = _core_pages(pages_, card) if core_look else pages_
                     cap_props = {"pages": pages_, "keywords": [], "caption": dict(LINE_CAPTION, maxLines=3), "look": "hud"}
             else:
                 cap_props, cap_boxes = _caption_props(words, pal)
             props = {"fps": FPS, "width": W, "height": H, "duration": round(end, 3), "audio": padded.name,
                      "words": [{"w": w["w"], "s": float(w["s"]), "e": float(w["e"])} for w in words],
                      "palette": {k: pal[k] for k in ("cyan", "amber", "text", "background")},
-                     "fade": FADE, "punch": PUNCH, "loopBlend": LOOP_BLEND, **cap_props,
+                     "fade": FADE, "punch": PUNCH, "loopBlend": 0 if card else LOOP_BLEND, **cap_props,
+                     **({"endCard": card} if card else {}),
                      "scenes": [{"start": starts[k], "end": starts[k + 1], "image": stills[k].name,
                                  **({"video": Path(clips[k]["video"]).name, "videoSeconds": clips[k]["seconds"],
                                      "hold": Path(clips[k]["hold"]).name} if k in clips else {}),
@@ -1586,6 +1671,7 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
         caption_boxes = []
         first = _zoom(imgs[0], 1.0 + PUNCH)                             # exactly the first frame
         clip = _Clip()
+        card_img = None
         progress("Rendering")
         try:
             for f in range(n):
@@ -1604,11 +1690,16 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                     a = (t - starts[k]) / FADE
                     prev = _zoom(holds[k - 1], 1.035)
                     frame = cv2.addWeighted(frame, a, prev, 1 - a, 0)
-                if end - t < LOOP_BLEND and len(imgs) > 1:              # blend into the first frame for the loop
+                if card and t >= card["start"]:                         # the end card: clean on pause
+                    if card_img is None:
+                        card_img = end_card_frame(frame, card, pal)
+                    a = min(1.0, (t - card["start"]) / 0.25)
+                    frame = cv2.addWeighted(card_img, a, frame, 1 - a, 0)
+                elif end - t < LOOP_BLEND and len(imgs) > 1:            # blend into the first frame for the loop
                     a = 1.0 - (end - t) / LOOP_BLEND
                     frame = cv2.addWeighted(first, a, frame, 1 - a, 0)
                 frame = frame.copy()                                    # (no progress bar: it tells people it's ending)
-                cb = cap.draw(frame, t)
+                cb = cap.draw(frame, t) if not (card and t >= card["start"]) else None
                 if cb:
                     caption_boxes.append(cb)
                 wr.write(frame)
@@ -1630,6 +1721,13 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
            "opening": opening,
            "text_boxes": text_boxes,
            "line_starts": [round(float(x), 3) for x in starts], **rep}
+    if rules.on():                                # Connor's timing and visual rules, measured on this edit
+        cr = rules.timing(words, lines, starts, end, cue_list)
+        cr["visual"] = rules.visual_problems(scenes, moves if look == "hud" else None)
+        cr["end_card"] = card
+        cr["sfx"] = used.get("sfx")
+        cr["look"] = core_look
+        rep["core_rules"] = cr
     if not record:
         return rep
     meta["render"] = rep
@@ -1652,8 +1750,15 @@ def metadata(video_id):
     row = script.latest(video_id, "passed")
     st = json.loads(row["structure"])
     t = topics.topic(v["topic_id"]) if v["topic_id"] else {"title": v["title"], "pillar": "", "keywords": "[]"}
-    titles = [x for x in (st.get("titles") or []) + [t["title"]] if x and not script.hook_checks_title(x)]
-    from studio import packaging
+    from studio import packaging, rules
+    try:
+        ck = json.loads(dict(row).get("checks") or "{}")
+    except (TypeError, ValueError):
+        ck = {}
+    written = st.get("titles") or []
+    if rules.on():                                           # Connor: 3 title variants, the strongest picked
+        written = rules.title_order(written, ck.get("title_scores"))
+    titles = [x for x in written + [t["title"]] if x and not script.hook_checks_title(x)]
     titles = packaging.pick(titles)                          # a title style that clearly works goes first
     title = (titles[0] if titles else t["title"])[:100]
     used = db.q("SELECT DISTINCT url FROM sources WHERE video_id=? AND verdict='supported' AND url IS NOT NULL", video_id)
@@ -1661,6 +1766,9 @@ def metadata(video_id):
     kws = [k for k in json.loads(t.get("keywords") or "[]") if isinstance(k, str)][:8]
     tags_hash = ["#Shorts"] + ["#" + re.sub(r"[^A-Za-z0-9]", "", k.title()) for k in kws[:2] if k.strip()]
     first = " ".join(json.loads(row["structure"])["lines"][1]["text"].split()[:30]) if len(st["lines"]) > 1 else ""
+    if rules.on():                                           # Connor: one-sentence hook, the key fact, a comment prompt
+        h1, fact, ask = rules.description_parts(row["hook"], [dict(st["lines"][0], text=row["hook"])] + st["lines"][1:])
+        first = "\n".join(x for x in (h1, fact) if x) + ("\n\n" + ask if ask else "")
     desc = (f"{title}\n\n{first}\n\nSources:\n" + "\n".join(f"- {u}" for u in srcs[:6]) +
             "\n\nEvery number here is worked out from the sources above. Narration is AI-generated (a synthetic voice); "
             "the script was written and fact-checked with AI and checked against the sources.\n\n" + " ".join(tags_hash))
