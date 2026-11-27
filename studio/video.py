@@ -238,7 +238,8 @@ def plan(script_row):
     if storyboard_on():
         story = """
 Plan it as ONE story, not line by line. First pick the Short's through-line: one real, filmable main subject
-(e.g. "the Moon", "a falling raindrop") that every scene's "art" keeps showing, and decide how each scene moves
+(e.g. "the Moon", "a falling raindrop") that the narration itself is about and names (never a building, vehicle
+or prop the lines don't mention), that every scene's "art" keeps showing, and decide how each scene moves
 the story on from the one before (closer, further, before/after, inside/outside, a different angle on the
 same subject). A scene's picture must show what its own line is about, using the main subject wherever the line
 allows. Never a loose mood picture (a sunset for a line about the Moon's temperature)."""
@@ -330,6 +331,10 @@ Lines:
     hero = None                                    # one fixed look for the main subject: new looks only
     if story and _art.shots_on():
         hero = _hero(ans if isinstance(ans, dict) else {})
+        said = " ".join(lines).lower()
+        if hero and not any(w in said or w.rstrip("s") in said for w in hero[0]):
+            hero = None                            # a subject the narration never names (test 39's observatory
+            #                                        dome in every scene of a "stars from your lawn" Short)
     for i, sc in enumerate(out):                   # the picture idea survives a replaced or fixed-up scene
         src = scenes[i] if i < len(scenes) and isinstance(scenes[i], dict) else {}
         art = src.get("art")
@@ -357,6 +362,9 @@ def _shows(sc, words):
     text = " ".join([str(sc.get("art") or "")] + [str(sh.get("art") or "") for sh in sc.get("shots") or []
                                                    if isinstance(sh, dict)]).lower()
     return any(w in text for w in words)
+
+
+MEMORY_SHORT = re.compile(r"GB of (free |Windows )?memory|out of memory|MemoryError|CUDA out of memory", re.I)
 
 
 CAMERAS = ("push-in", "pull-out", "pan-left", "pan-right", "close-up", "tilt-up")
@@ -1463,6 +1471,14 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
     finally:
         if worker:
             worker.join()
+    if worker and "error" in box and MEMORY_SHORT.search(str(box["error"])):
+        # made alongside the camera moves, the music ran short of memory (test 39: "needs about 8 GB of Windows
+        # memory ... only 7.1 GB is left"); the moves are done now, so try once more on its own
+        progress("Making the background music again, now that the camera moves are done")
+        box.clear()
+        worker = threading.Thread(target=make_music, daemon=True)
+        worker.start()
+        worker.join()
     if worker:
         try:
             if "error" in box:

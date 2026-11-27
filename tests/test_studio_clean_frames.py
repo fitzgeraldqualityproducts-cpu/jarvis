@@ -241,3 +241,29 @@ def test_on_screen_labels_are_phone_sized():
     tsx = (Path(__file__).resolve().parents[1] / "studio" / "remotion" / "src" / "Short.tsx").read_text()
     assert "fontSize: 34,\n        letterSpacing: '0.08em', opacity: 0.95}}>{hud.label}" in tsx
     assert "stepSize" in tsx and "fontSize: 24," not in tsx
+
+
+def test_a_short_that_only_misses_the_loop_still_gets_the_final_review(fakes, fake_voice, monkeypatch):  # noqa: F811
+    """Test 39 failed only the seamless loop, so the editor never looked at it (no score, no viewer-drop read)."""
+    import numpy as np
+    from studio import claude, config, db, qa
+    from test_studio_final_review import _with_review
+    from test_studio_video import _make
+    config.set_values(final_review="advise")
+    seen = []
+    answer = {"score": 7, "first_frame": 7, "visual_hook": 6, "problems": [], "sections": {}}
+    monkeypatch.setattr(claude, "RUNNER", _with_review(monkeypatch, answer, seen))
+    first = np.tile(np.arange(0, 160, 20, dtype=np.uint8), (8, 1))[..., None].repeat(3, axis=2)   # a real picture
+    monkeypatch.setattr(qa, "edge_frames", lambda path: (first, first + 60))
+    vid, states = _make(fakes, fake_voice, monkeypatch)
+    assert states[-1] != "ready"                         # the loop still fails the Short
+    assert seen and json.loads(db.video(vid)["meta"])["final_review"]["visual_hook"] == 6.0
+
+
+def test_music_memory_retry_and_the_loop_ending_on_frame_one():
+    from studio import video
+    assert video.MEMORY_SHORT.search("acestep needs about 8 GB of Windows memory (RAM plus page file)")
+    assert not video.MEMORY_SHORT.search("ACE-Step isn't installed")
+    from pathlib import Path
+    tsx = (Path(__file__).resolve().parents[1] / "studio" / "remotion" / "src" / "Short.tsx").read_text()
+    assert "<Freeze frame={0}>" in tsx and "p.duration - 1.5 / p.fps" in tsx    # the loop ends on frame 1 itself
