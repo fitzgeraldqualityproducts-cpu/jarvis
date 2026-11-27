@@ -590,3 +590,61 @@ def test_a_value_heard_too_late_is_fixed_by_moving_its_line_up(studio_home, monk
     fixed = script._fix_story(d, {"id": 1, "title": "t"}, probs)
     assert fixed["story_fix"]["moved"] and script.narrative_hard(fixed) == []
     assert [ln["text"] for ln in fixed["lines"]][2] == "Assume it reflects 25 percent of sunlight."
+
+
+MOON_MODEL = {"question": "q", "premise": "p", "answer": "a", "quantities": [],
+              "background": [{"key": "one_face", "fact": "the Moon always shows Earth the same face"},
+                             {"key": "half_lit", "fact": "the Sun always lights half the Moon"},
+                             {"key": "spare", "fact": "an unused fact"}]}
+
+
+def test_background_facts_must_be_told_before_they_are_needed():
+    """Connor (2026-11-27): fix the writer so future Shorts don't leave out background facts (test 37: 'the Moon
+    always shows one face' and 'the Sun lights half the Moon' were never said)."""
+    from studio import narrative
+    lines = [L("Does the far side ever get sun?", "hook"),
+             L("The Moon always shows us the same face.", "setup", tells=["one_face"]),
+             L("So the far side is the half we never see.", "setup", needs=["one_face"]),
+             L("At New Moon that hidden half faces the Sun.", "math", needs=["half_lit"]),
+             L("The Sun always lights half the Moon.", "setup", tells=["half_lit"]),
+             L("So yes: two weeks of sun.", "payoff", needs=["one_face", "half_lit"]), L("Which half?", "loop")]
+    got = narrative.background_check(lines, MOON_MODEL)
+    hard = [p for p in got if p["hard"]]
+    assert len(hard) == 1 and "line 4" in hard[0]["text"] and "only hears it in line 5" in hard[0]["text"]
+    assert any(not p["hard"] and "unused fact" in p["text"] for p in got)
+    lines[3], lines[4] = lines[4], lines[3]                  # told first: no stop
+    assert not [p for p in narrative.background_check(lines, MOON_MODEL) if p["hard"]]
+    lines[3] = L("Sunlight matters.", "setup")                 # never told at all
+    assert any("no line says it" in p["text"] for p in narrative.background_check(lines, MOON_MODEL) if p["hard"])
+
+
+def test_background_told_late_is_moved_up_for_free(studio_home, monkeypatch):  # noqa: F811
+    from studio import claude, script
+    lines = [L("Does the far side ever get sun?", "hook"),
+             L("The Moon always shows us the same face.", "setup", tells=["one_face"]),
+             L("At New Moon the far side faces the Sun.", "math", needs=["one_face", "half_lit"]),
+             L("The Sun always lights half the Moon.", "setup", tells=["half_lit"]),
+             L("So yes: two weeks of sun.", "payoff"), L("Which half?", "loop")]
+    d = {"hooks": ["Does the far side ever get sun?"], "hook": "Does the far side ever get sun?",
+         "model": MOON_MODEL, "calcs": [], "lines": lines}
+    probs = script.narrative_hard(d)
+    assert probs and all(script.TOO_LATE.match(p) for p in probs)
+    monkeypatch.setattr(claude, "RUNNER", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call")))
+    fixed = script._fix_story(d, {"id": 1, "title": "t"}, probs)
+    assert fixed and script.narrative_hard(fixed) == []
+
+
+def test_writer_is_asked_for_background_and_pick_prefers_fewest_gaps():
+    from studio import script
+    assert "background" in script.STORY_FIRST and '"needs"' in script.STORY_FIRST
+    assert '"background"' in script.MODEL_SHAPE and "as the calculation" in script.STORY_FIRST
+
+
+def test_pick_prefers_the_draft_with_fewest_problems_when_none_is_clean(monkeypatch):
+    from studio import script
+    a = {"hooks": ["A?"], "lines": [L("A?", "hook"), L("a", "setup")], "angle": "a"}
+    b = {"hooks": ["B?"], "lines": [L("B?", "hook"), L("b", "setup")], "angle": "b"}
+    monkeypatch.setattr(script, "_screen", lambda d: ["x", "y"] if d["hooks"] == ["A?"] else ["x"])
+    monkeypatch.setattr(script, "_learn_from_drafts", lambda *a, **k: None)
+    got = script.pick_draft({"drafts": [a, b]}, {"id": 1, "title": "t"})
+    assert got["hooks"] == ["B?"] and got["picked"]["passed_screen"] == 0
