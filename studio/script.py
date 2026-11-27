@@ -176,12 +176,28 @@ explanation afterwards):
    left) never share a number or a word. The last line's answer follows from the lines before it and answers the
    opening question, not a different one. Say the answer plainly in the PAYOFF line (the line before the last);
    the last line is then free to loop back into the hook.
+5. A hands-on model (a ball, a lamp, a sticky note, a torch...) is a demonstration, and it must show the real
+   science (Connor's Video 35 audit): put "demo" in the model with what each object stands for, what the viewer
+   (observer) stands for, the marker or reference point (what it stands for and exactly where it sits), what
+   moves, what rotates and how much ("once per circle, so the same side always faces you"; or "nothing"), what
+   stays fixed, what it proves and its limits. The narration says where the marker sits relative to the viewer
+   ("a note on the side facing away from you: the ball's far side"), never just "at the center", and every lit
+   or dark moment it describes must follow from that place.
+6. A repeating period says which cycle it is, the first time its number is heard. For the Moon: 27.3 days is one
+   turn (or one lap) measured against the stars (sidereal); 29.53 days is New Moon to New Moon (the synodic
+   month), which is also sunrise to sunrise at any spot on the Moon (its solar day): never call 29.53 days a lap
+   or a turn. Use the technical name only when it helps (never in the hook); plain words come first. When the
+   answer depends on place (latitude, the poles, terrain), say in a few words where it holds ("near the equator").
 Write the model ONCE as "model" (before the drafts), and for every line say "learn" (what the viewer learns there,
 under 12 words) and "uses" (the model quantity names that line relies on)."""
 MODEL_SHAPE = ('"model": {"question": "...", "premise": "what physically happens, to what", "assumptions": [{"what": '
                '"...", "why": "..."}], "quantities": [{"name": "t", "means": "tissue thickness", "value": 0.1, "unit": '
                '"mm", "from": "F2|example|standard|calc"}], "formula": {"expr": "pi*t*(2**n+4)*(2**n-1)/6", '
-               '"means": "...", "applies_because": "..."}, "result": {"value": 879, "unit": "m"}, "answer": "..."},\n')
+               '"means": "...", "applies_because": "..."}, "result": {"value": 879, "unit": "m"}, "answer": "...", '
+               '"demo": {"objects": [{"thing": "ball", "stands_for": "the Moon"}], "observer": "you = someone on '
+               'Earth", "marker": {"thing": "sticky note", "stands_for": "a spot on the far side", "where": "the side '
+               'facing away from you"}, "moves": "...", "rotates": "...", "fixed": "...", "proves": "...", '
+               '"limits": "..."} (only when the narration uses a hands-on model; else leave "demo" out)},\n')
 
 
 def _narrative_on():
@@ -1686,7 +1702,10 @@ def revise_step(topic, video_id=None):
 
 # story stops tied to one line (or one untold value), which a set-up line or a reworded line can fix
 STORY_LINE = re.compile(r"^narrative: (line \d+ (leans on|relies on|says .* before)|the starting value|"
-                        r"unexplained number: line \d+|the conclusion doesn't follow)")
+                        r"unexplained number: line \d+|the conclusion doesn't follow|"
+                        # a demonstration or a named period said badly in one line (Short 35): reword that line
+                        r"line \d+ (places the marker|says where the marker|turns |calls \S+ days|ties 29|"
+                        r"says the marker is))")
 
 
 LENGTH_PROBLEM = re.compile(r"^\d+ words; it must be")

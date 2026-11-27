@@ -3,7 +3,7 @@
 "error"?}]}.
 
 Each scene is the same layout as the still picture (same template, colours and safe area), but it
-moves: numbers count up, equations write themselves and resolve to the answer, bars grow, circles
+moves: numbers land as themselves (counting only on from an earlier number), equations write themselves and resolve to the answer, bars grow, circles
 swell to their sizes, steps light up one by one. Only the motion is rendered (about 1.5 s); the
 compositor holds the last frame for the rest of the line. Text only, no LaTeX needed."""
 import json
@@ -89,10 +89,16 @@ try:
                 v = num(raw)
             except ValueError:
                 v = None
-            tracker = ValueTracker(0)
+            # a number lands as itself (Video 35 audit: counting up from 0 showed values that mean nothing); it
+            # counts only from a start the plan names, a number the viewer has already seen
+            try:
+                start = num(str(s.get("count_from"))) if s.get("count_from") not in (None, "") else None
+            except ValueError:
+                start = None
+            tracker = ValueTracker(start if start is not None else 0)
             big = T(raw, 200, PAL["amber"])
             at(big, cx_px=CX, top_px=BOX["y0"] + 230)
-            if v is not None and v != 0:
+            if v is not None and v != 0 and start is not None and start < v:
                 dec = 0 if v == int(v) else min(2, len(raw.split(".")[-1]) if "." in raw else 2)
 
                 def shown():
@@ -103,7 +109,7 @@ try:
                 from manim import always_redraw
                 live = always_redraw(shown)
                 self.add(live)
-                self.play(tracker.animate(rate_func=smooth).set_value(v), run_time=run)
+                self.play(tracker.animate(rate_func=smooth).set_value(v), run_time=min(run, 0.8))
                 self.remove(live)
                 self.add(big)
             else:

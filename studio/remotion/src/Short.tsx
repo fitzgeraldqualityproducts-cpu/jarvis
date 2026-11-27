@@ -10,7 +10,9 @@ import {
 
 type Hud = {label: string; value: string; sub?: string; num?: number; from?: number; dec?: number; unit?: string};
 type Bar = {label: string; v: number; frac: number; text: string; top: boolean};
-type Overlay = {kind: 'bars' | 'equation' | 'steps' | 'wave' | 'measure' | 'thermo'; x: number; y: number; w: number; h: number;
+type Overlay = {kind: 'bars' | 'equation' | 'steps' | 'wave' | 'measure' | 'thermo' | 'orbit'; x: number; y: number; w: number; h: number;
+  a0?: number; a1?: number; marker?: 'far' | 'near' | 'none'; split?: boolean;
+  labels?: {lamp?: string; you?: string; ball?: string; marker?: string}; litText?: string; darkText?: string;
   items?: (Bar | string)[]; terms?: string[]; right?: string; note?: string; log?: boolean;
   span?: 'gap' | 'wavelength'; value?: string; spot?: string; label?: string; from?: string; to?: string;
   geo?: {peaks: number[]; nodes: number[]; a: number; b: number}; frac?: number; low?: string; high?: string;
@@ -109,21 +111,113 @@ const HudBox: React.FC<{hud: Hud; span: number; fps: number; bold?: boolean}> = 
   const frame = useCurrentFrame();
   const t = frame / fps;
   let value = hud.value;
-  if (hud.num !== undefined && hud.from !== undefined && hud.from !== hud.num) {
-    const k = interpolate(t, [0, Math.max(0.4, span * 0.7)], [0, 1], {extrapolateRight: 'clamp'});
+  // Connor's Video 35 audit: a number lands as itself with its unit and holds. It only counts on from an earlier
+  // number the viewer already saw (Jarvis sets "from"), quickly (edit.count_seconds), dimmed while it moves, so an
+  // in-between value never reads as a result.
+  const countFor = Math.min(0.8, span * 0.3);
+  let moving = false;
+  if (hud.num !== undefined && hud.from !== undefined && hud.from !== hud.num && span - countFor >= 1.5) {
+    const k = interpolate(t, [0, countFor], [0, 1], {extrapolateRight: 'clamp'});
     const eased = 1 - Math.pow(1 - k, 3);
     const x = hud.from + (hud.num - hud.from) * eased;
+    moving = k < 1;
     value = k >= 1 ? hud.value : `${fmt(x, hud.dec || 0)}${hud.unit ? ' ' + hud.unit : ''}`;
   }
+  const land = spring({frame, fps, config: {damping: 16, stiffness: 200}, durationInFrames: 8});
   return (
     <div style={{position: 'absolute', left: 90, top: 270, maxWidth: 900, color: 'white', textShadow: SHADOW,
       overflowWrap: 'break-word'}}>
       {hud.label ? <div style={{fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: 700, fontSize: 34,
         letterSpacing: '0.08em', opacity: 0.95}}>{hud.label}</div> : null}
       <div style={{...big(bold), fontSize: bold ? 84 : 88, lineHeight: 1.05, marginTop: 8,
-        fontVariantNumeric: 'tabular-nums'}}>{value}</div>
+        fontVariantNumeric: 'tabular-nums', opacity: moving ? 0.55 : 1,
+        transform: `scale(${0.9 + 0.1 * land})`, transformOrigin: '0% 50%'}}>{value}</div>
       {hud.sub ? <div style={{fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: 700, fontSize: 30,
         letterSpacing: '0.08em', opacity: 0.9, marginTop: 10}}>{hud.sub}</div> : null}
+    </div>
+  );
+};
+
+// ---------- the hands-on demonstration, drawn from above (Video 35 audit) ----------
+// The lamp is far off on the left and lights the left half of everything. You stand in the middle. The ball goes
+// round you and turns once per circle, so its marked spot ("far": facing away from you) always points outward;
+// the spot glows only while it faces the lamp. Angles: 180 = the ball between you and the lamp (New Moon).
+const Orbit: React.FC<{ov: Overlay; span: number; p: ShortProps}> = ({ov, span, p}) => {
+  const frame = useCurrentFrame();
+  const fps = p.fps;
+  const t = frame / fps;
+  const appear = spring({frame: frame - Math.round(0.1 * fps), fps, config: {damping: 200}, durationInFrames: 10});
+  const move = interpolate(t, [0.35, Math.max(0.6, span * 0.8)], [0, 1], {extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'});
+  const eased = move < 0.5 ? 2 * move * move : 1 - Math.pow(-2 * move + 2, 2) / 2;
+  const a0 = ov.a0 ?? 90;
+  const a1 = ov.a1 ?? a0;
+  const ang = ((a0 + (a1 - a0) * eased) * Math.PI) / 180;
+  const W = ov.w;
+  const H = ov.h - 120;
+  const cx = W * 0.56;
+  const cy = H * 0.52;
+  const R = Math.min(W * 0.34, H * 0.36);
+  const bx = cx + R * Math.cos(ang);
+  const by = cy - R * Math.sin(ang);
+  const br = 44;
+  const out = ov.marker === 'near' ? -1 : 1;
+  const mx = bx + out * br * 0.78 * Math.cos(ang);
+  const my = by - out * br * 0.78 * Math.sin(ang);
+  const lit = ov.marker !== 'none' && -out * Math.cos(ang) > 1e-6;
+  const L = ov.labels || {};
+  const amber = p.palette.amber;
+  const lab = (x: number, y: number, s: string | undefined, anchor: 'start' | 'middle' | 'end' = 'middle',
+    col = 'white') => s ? (
+      <text x={x} y={y} textAnchor={anchor} fill={col} style={{fontFamily: SANS, fontWeight: 700, fontSize: 32,
+        paintOrder: 'stroke', stroke: 'rgba(4,7,16,0.85)', strokeWidth: 6}}>{s}</text>) : null;
+  return (
+    <div style={{position: 'absolute', left: ov.x, top: ov.y, width: ov.w, height: ov.h, borderRadius: 28,
+      background: 'rgba(6,10,24,0.72)', border: '1px solid rgba(255,255,255,0.14)', opacity: appear,
+      overflow: 'hidden'}}>
+      <svg width={W} height={H} style={{position: 'absolute', left: 0, top: 0}}>
+        {[0.25, 0.5, 0.75].map((f) => (
+          <line key={f} x1={110} y1={H * f} x2={W - 20} y2={H * f} stroke={amber} strokeOpacity={0.16} strokeWidth={4}
+            strokeDasharray="14 18" />
+        ))}
+        <circle cx={60} cy={cy} r={34} fill={amber} />
+        <circle cx={60} cy={cy} r={50} fill={amber} fillOpacity={0.25} />
+        {lab(60, cy + 92, L.lamp, 'start')}
+        {ov.split ? (
+          <>
+            <path d={`M ${cx} ${cy - R} A ${R} ${R} 0 0 0 ${cx} ${cy + R}`} stroke={amber} strokeWidth={12}
+              fill="none" strokeOpacity={0.85} />
+            <path d={`M ${cx} ${cy + R} A ${R} ${R} 0 0 0 ${cx} ${cy - R}`} stroke="#5b6478" strokeWidth={12}
+              fill="none" />
+          </>
+        ) : (
+          <circle cx={cx} cy={cy} r={R} stroke="white" strokeOpacity={0.45} strokeWidth={4} fill="none"
+            strokeDasharray="10 12" />
+        )}
+        <circle cx={cx} cy={cy} r={22} fill={p.palette.cyan} />
+        {lab(cx, cy + 62, L.you)}
+        <circle cx={bx} cy={by} r={br} fill="#2b3142" />
+        <path d={`M ${bx} ${by - br} A ${br} ${br} 0 0 0 ${bx} ${by + br} Z`} fill="#e9ecf2" />
+        {ov.marker !== 'none' ? (
+          <>
+            {lit ? <circle cx={mx} cy={my} r={28} fill={amber} fillOpacity={0.35} /> : null}
+            <circle cx={mx} cy={my} r={16} fill={lit ? amber : '#8a93a8'} stroke="white" strokeWidth={3} />
+            {/* the marked spot is named right where it is (the note, on the side facing away from you) */}
+            {lab(bx + out * (br + 30 + 30 * Math.abs(Math.cos(ang))) * Math.cos(ang),
+              by - out * (br + 30) * Math.sin(ang) + 11,
+              (L.marker || '').split('=')[0].trim() || 'spot', 'middle', lit ? amber : '#c7cede')}
+          </>
+        ) : null}
+        {lab(bx - out * (br + 36 + 80 * Math.abs(Math.cos(ang))) * Math.cos(ang),
+          by + out * (br + 36) * Math.sin(ang) + 11, L.ball)}
+      </svg>
+      <div style={{position: 'absolute', left: 0, right: 0, bottom: 18, textAlign: 'center', fontFamily: SANS}}>
+        {ov.marker !== 'none' ? (
+          <div style={{fontWeight: 800, fontSize: 40, color: lit ? amber : '#c7cede'}}>
+            {lit ? ov.litText : ov.darkText}</div>
+        ) : null}
+        {L.marker ? <div style={{fontSize: 28, opacity: 0.85, marginTop: 4, color: 'white'}}>{L.marker}</div> : null}
+      </div>
     </div>
   );
 };
@@ -132,6 +226,13 @@ const HudBox: React.FC<{hud: Hud; span: number; fps: number; bold?: boolean}> = 
 const SANS = 'Arial, Helvetica, sans-serif';
 
 const OverlayBox: React.FC<{ov: Overlay; span: number; p: ShortProps}> = ({ov, span, p}) => {
+  if (ov.kind === 'orbit') {
+    return <Orbit ov={ov} span={span} p={p} />;
+  }
+  return <Diagram ov={ov} span={span} p={p} />;
+};
+
+const Diagram: React.FC<{ov: Overlay; span: number; p: ShortProps}> = ({ov, span, p}) => {
   const frame = useCurrentFrame();
   const fps = p.fps;
   const t = frame / fps;
@@ -400,8 +501,10 @@ const CinemaScene: React.FC<{scene: Scene; index: number; p: ShortProps}> = ({sc
       {scene.overlay ? <OverlayBox ov={scene.overlay} span={span} p={p} /> : null}
       {scene.hud ? <HudBox hud={scene.hud} span={span} fps={p.fps} bold={p.type === 'bold'} /> : null}
       {scene.title ? (
-        <div style={{position: 'absolute', left: 80, width: 850, top: TITLE_TOP, textAlign: 'center', color: 'white',
-          textShadow: SHADOW, ...big(p.type === 'bold'), fontSize: p.type === 'bold' ? 68 : 66,
+        // the hook question sits on its own soft dark backing (Video 35: it was lost over a busy photo)
+        <div style={{position: 'absolute', left: 70, width: 870, top: TITLE_TOP - 24, padding: '24px 10px',
+          boxSizing: 'border-box', borderRadius: 30, background: 'rgba(4,7,16,0.5)', textAlign: 'center',
+          color: 'white', textShadow: SHADOW, ...big(p.type === 'bold'), fontSize: p.type === 'bold' ? 68 : 66,
           lineHeight: p.type === 'bold' ? 1.12 : 1.2}}>{scene.title}</div>
       ) : null}
       </AbsoluteFill>

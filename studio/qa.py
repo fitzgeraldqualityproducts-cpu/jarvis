@@ -211,6 +211,110 @@ def decodes_cleanly(path):
         return False, str(e)[:160]
 
 
+# ---------- Video 35 audit: the opening, the export and the numbers on screen ----------
+
+OPEN_DARK_MAX = 0.5      # the first 3 seconds may have at most this share of empty, flat dark screen
+SCENE_MIN = 0.3          # a scene shorter than this (s) counts as missing
+
+
+def dark_share(frame):
+    """Share of the frame (BGR or grey) that is flat and dark: no picture, no text (Video 35's empty lower half)."""
+    import cv2
+    g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+    g = g.astype(np.float32)
+    h, w = (g.shape[0] // 32) * 32, (g.shape[1] // 24) * 24
+    b = g[:h, :w].reshape(h // 32, 32, w // 24, 24)
+    return float(((b.mean(axis=(1, 3)) < 40) & (b.std(axis=(1, 3)) < 8)).mean())
+
+
+def opening_problems(path, rep=None, times=(0.5, 1.5, 2.5)):
+    """[str] what's wrong with the first seconds of a picture-led (cinematic) Short: a large empty dark area, or a
+    real photo that had missing-data lines or was shrunk (from the render report's "opening")."""
+    import cv2
+    out = []
+    op = (rep or {}).get("opening") or {}
+    if rep is not None and op.get("kind") != "photo":
+        return out                          # only a framed real photo is laid out by Jarvis (Video 35's opening);
+        # a drawn diagram look is meant to be dark, and an AI picture's night sky is the picture itself
+    cap = cv2.VideoCapture(str(path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    shares = []
+    for t in times:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
+        ok, fr = cap.read()
+        if ok:
+            shares.append(dark_share(fr))
+    cap.release()
+    if shares and max(shares) > OPEN_DARK_MAX:
+        out.append(f"{max(shares):.0%} of the opening frame is empty dark screen")
+    if op.get("kind") == "photo":
+        from studio import art
+        if float(op.get("dropouts") or 0) > art.DROPOUT_MAX:
+            out.append("the opening photo has missing-data lines")
+        if op.get("fill") is not None and float(op["fill"]) < 0.45:
+            out.append(f"the opening photo fills only {float(op['fill']):.0%} of the height")
+    return out
+
+
+def export_problems(info, rep=None, scenes=None, black=None, want=(1080, 1920), fps=30):
+    """[str] the export against what a Short needs: exactly 1080x1920 (9:16) at the configured frame rate, a video
+    and an audio stream, no black frames, every planned scene really in the video, and every animated diagram
+    complete and on screen."""
+    out = []
+    w, h = int(info.get("width") or 0), int(info.get("height") or 0)
+    if (w, h) != tuple(want):
+        out.append(f"the video is {w}x{h}, not {want[0]}x{want[1]}")
+    elif w * 16 != h * 9:
+        out.append(f"the aspect ratio is {w}:{h}, not 9:16")
+    if abs(float(info.get("fps") or 0) - fps) >= 0.5:
+        out.append(f"the frame rate is {info.get('fps')}, not {fps}")
+    if not info.get("has_video", True) or not info.get("vcodec"):
+        out.append("there is no video stream")
+    if not info.get("has_audio", True) or not info.get("acodec"):
+        out.append("there is no audio stream")
+    if black:
+        out.append(f"black frames at {', '.join(f'{t:g}' for t in black[:4])} s")
+    rep = rep or {}
+    starts = rep.get("line_starts") or []
+    if scenes is not None and starts:
+        n = len(starts) - 1
+        if n != len(scenes):
+            out.append(f"{n} scenes in the video for {len(scenes)} planned")
+        short = [k + 1 for k in range(n) if starts[k + 1] - starts[k] < SCENE_MIN]
+        if short:
+            out.append(f"scene(s) {', '.join(map(str, short))} last under {SCENE_MIN} s (missing)")
+        dur = float(info.get("duration") or 0)
+        if dur and starts[-1] > dur + 0.25:
+            out.append(f"the scenes run to {starts[-1]:.1f} s but the video ends at {dur:.1f} s")
+    from studio import edit
+    from studio import video as vid_mod
+    need = {"bars": ("items",), "equation": ("terms", "right"), "steps": ("items",), "wave": ("geo",),
+            "measure": ("value",), "thermo": ("value", "frac"), "orbit": ("a0", "a1", "labels")}
+    for k, ov in (rep.get("overlays") or {}).items():
+        miss = [f for f in need.get(ov.get("kind"), ("?",)) if ov.get(f) in (None, "", [], {})]
+        if ov.get("kind") not in need or miss:
+            out.append(f"scene {int(k) + 1}: the {ov.get('kind')} diagram is incomplete ({', '.join(miss) or 'kind'})")
+        elif not vid_mod.inside_safe_area(edit.overlay_box(ov)):
+            out.append(f"scene {int(k) + 1}: the {ov.get('kind')} diagram is outside the safe area")
+    return out
+
+
+def black_frames(path, every=0.5, level=8.0):
+    """Seconds sampled where the picture is (nearly) black."""
+    import cv2
+    cap = cv2.VideoCapture(str(path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    out, step = [], max(1, int(fps * every))
+    for f in range(0, n, step):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+        ok, fr = cap.read()
+        if ok and float(fr.mean()) < level:
+            out.append(round(f / fps, 1))
+    cap.release()
+    return out
+
+
 def visual_mode():
     try:
         from studio import config
@@ -301,9 +405,23 @@ def check(video_id):
         _add(checks, "sound and picture same length", gap <= 0.25, f"{gap:.2f} s apart")
     ok, why = decodes_cleanly(path)
     _add(checks, "file decodes cleanly", ok, why)
+    ex = export_problems(info, rep, meta.get("scenes"), black_frames(path))
+    _add(checks, "export complete", not ex, "; ".join(ex[:4]) or "1080x1920 9:16, video + audio, every scene, no black")
+    op = opening_problems(path, rep)
+    _add(checks, "clean opening", not op, "; ".join(op) or "no empty dark area, the photo is whole")
+    size = (rep.get("engines") or {}).get("picture_size")
+    if size:                         # said honestly: the pictures' own detail, not just the file's size
+        _add(checks, "picture detail", True,
+             f"AI pictures painted at {size[0]}x{size[1]} ({size[0] / 1080:.0%} of full width) and enlarged"
+             + (" (advice: art_size hd paints them at 768x1344)" if size[0] < 768 else ""))
     _add(checks, "file size", os.path.getsize(path) < 256 * 1024 * 1024, f"{os.path.getsize(path) / 1e6:.1f} MB")
     row = script.latest(video_id, "passed")
     _add(checks, "fact-checked script", bool(row), "" if row else "no passed script")
+    if row and rep.get("huds"):
+        from studio import edit
+        mot = edit.number_motion(rep["huds"], rep.get("line_starts") or [], sorted(script_numbers(row)))
+        _add(checks, "numbers land without in-between values", not mot, "; ".join(mot[:3]) or
+             f"{sum(1 for h in rep['huds'] if h and not h.get('carried'))} numbers, each shown as itself")
     if row and meta.get("scenes"):
         bad = unmatched_numbers(meta["scenes"], row)
         _add(checks, "on-screen numbers match the script", not bad,
@@ -328,6 +446,23 @@ def check(video_id):
                 _add(checks, "visuals explain the story", not vp["problems"] or vm2 != "block",
                      ("; ".join(vp["problems"]) + (" (advice only)" if vm2 != "block" else "")) if vp["problems"]
                      else f"{vp['score']:.0%} of maths lines get an explaining visual")
+        if meta.get("scenes"):
+            from studio import demo, preflight
+            st = json.loads(row["structure"] or "{}")
+            ln = [dict(x) for x in st.get("lines") or [] if isinstance(x, dict)]
+            texts = [row["hook"]] + [x.get("text", "") for x in ln[1:]]
+            miss = []
+            if preflight.demo_ready(st):
+                want = sorted(set(demo.uses_model(texts)) | {i for i, t in enumerate(texts, 1) if demo.position(t)})
+                miss = [i for i in want if 1 < i <= len(meta["scenes"]) and i <= len(ln) and
+                        str(ln[i - 1].get("beat") or "") != "loop" and
+                        meta["scenes"][i - 1].get("type") not in ("orbit", "number", "equation", "compare", "scale")]
+            gaps = [why for _n, why in preflight.coverage(meta["scenes"], ln)]
+            vm3 = visual_mode()
+            found = ([f"demonstration line(s) {', '.join(map(str, miss))} aren't drawn"] if miss else []) + gaps[:2]
+            _add(checks, "every claim has a visual", not found or vm3 != "block",
+                 ("; ".join(found) + (" (advice only)" if vm3 != "block" else "")) if found else
+                 "every claim and demonstration step is shown")
     sup = db.one("SELECT COUNT(DISTINCT url) n FROM sources WHERE video_id=? AND verdict='supported'", video_id)["n"]
     bad = db.one("SELECT COUNT(*) n FROM sources WHERE video_id=? AND verdict IN ('wrong','unsupported')", video_id)["n"]
     _add(checks, "sources", sup >= 2 and bad == 0, f"{sup} supporting sources, {bad} problems")

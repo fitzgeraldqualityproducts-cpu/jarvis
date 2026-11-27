@@ -45,10 +45,17 @@ TEMPLATES = {
                "spot', to 'next hot spot', value '6.1', unit 'cm'",
     "temperature": "a thermometer filling to a temperature: {value, unit, label, low, high}  e.g. value '-56', unit "
                    "'°C', label 'air at 55,000 ft (standard atmosphere)', low '-60', high '20'",
+    "orbit": "a hands-on demonstration drawn from above: a lamp far off, you in the middle, a ball circling you and "
+             "turning once per circle, with a marked spot on it that lights up only when it faces the lamp: {from, "
+             "to, marker, split, labels, label}  from/to = where the ball is: 'new' (between you and the lamp), "
+             "'full' (you between the lamp and the ball), 'first' or 'last' (a quarter of the way round), to "
+             "'cycle' for one whole circle; marker 'far' (the spot faces away from you), 'near' or 'none'; split "
+             "true also shades the half of the circle where the spot is in sunlight; labels {lamp, you, ball, "
+             "marker} say what each stands for, e.g. {'lamp': 'lamp = Sun', 'marker': 'note = far-side spot'}",
 }
 
 
-NEW_TEMPLATES = ("wave", "measure", "temperature")      # offered to the planner only with config "shots" on (see art.shots_on)
+NEW_TEMPLATES = ("wave", "measure", "temperature", "orbit")   # offered to the planner only with config "shots" on (see art.shots_on)
 
 
 def _rgb(h):
@@ -197,6 +204,8 @@ def _valid(s):
             return bool(str(s["value"]).strip()) and bool(str(s.get("from") or "").strip())
         if t == "temperature":
             return _num(s["value"]) is not None
+        if t == "orbit":
+            return str(s.get("marker") or "far").lower() in ("far", "near", "none")
     except (KeyError, TypeError, ValueError):
         return False
     return False
@@ -254,13 +263,22 @@ Everyday comparisons: when a line uses a stand-in ("a ball circling you, a lamp 
 shows the REAL thing it stands for (the Moon lit by the Sun), since the words already carry the comparison, and
 the scene type (steps, compare) draws the stand-in's logic. Picture makers can't stage props: a room, a lamp or
 a ball on its own reads as an empty set (test 35)."""
-    prompt = f"""Plan the on-screen visual for each narrated line of a science Short.{story}{board}
+    demo_note = ""
+    dm = (st.get("model") or {}).get("demo") if isinstance(st.get("model"), dict) else None
+    if isinstance(dm, dict) and "orbit" in tmpl:
+        demo_note = ("\nThe script uses a hands-on DEMONSTRATION: " + json.dumps(dm)[:900] + "\nEvery line that sets "
+                     "up or moves it gets the orbit diagram (never an AI picture of a room or a ball): the line placing "
+                     "the marker shows where it sits, the line about turning shows one whole circle (to 'cycle'), and a "
+                     "line saying the spot is lit or dark ends with the ball where that is true. Its labels say what "
+                     "each object stands for.")
+    prompt = f"""Plan the on-screen visual for each narrated line of a science Short.{story}{board}{demo_note}
 One scene per line, chosen from:
 {tmpl}
 Use only numbers from the line or these checked calculations:
 {calcs or '- (none)'}
 Keep text short (labels under 6 words, headline under 9). Every scene must explain or show its line, not
-decorate it: a number gets number (it counts up); a calculation gets equation (it builds term by term); two or
+decorate it: a number gets number (it lands as itself with its unit and holds; it never counts through
+in-between values); a calculation gets equation (it builds term by term); two or
 more quantities compared get compare (side by side, same unit); sizes far apart get scale; a process gets steps;
 when offered, a temperature gets temperature, a distance or spacing gets measure, a wave gets wave. headline only
 when nothing is measurable. A value that depends on an assumption (the standard atmosphere, an average, sea level)
@@ -586,6 +604,34 @@ def draw_scene(scene, pal, handle="", bg=None):
             for ln in ll:
                 put((tx + 260, yy), ln, fl, text, center=False)
                 yy += fl.size + 12
+    elif t == "orbit":
+        # the hands-on demonstration from above, at the end of its move (Short.tsx animates it)
+        from studio import edit
+        ov = edit.orbit_overlay(scene)
+        cx, cy, R, br = x0 + width * 0.56, y0 + 400, 250, 46
+        a = math.radians(ov["a1"])
+        d.ellipse([x0 + 10, cy - 34, x0 + 78, cy + 34], fill=amber)
+        d.ellipse([cx - R, cy - R, cx + R, cy + R], outline=muted, width=4)
+        d.ellipse([cx - 22, cy - 22, cx + 22, cy + 22], fill=cyan)
+        bx, by = cx + R * math.cos(a), cy - R * math.sin(a)
+        d.ellipse([bx - br, by - br, bx + br, by + br], fill=(43, 49, 66))
+        d.pieslice([bx - br, by - br, bx + br, by + br], 90, 270, fill=(233, 236, 242))
+        drawn.append((x0 + 10, cy - R - br, x1, cy + R + br))
+        if ov["marker"] != "none":
+            out = 1 if ov["marker"] == "far" else -1
+            mx, my = bx + out * br * 0.78 * math.cos(a), by - out * br * 0.78 * math.sin(a)
+            d.ellipse([mx - 13, my - 13, mx + 13, my + 13], fill=amber if ov["litEnd"] else muted)
+            put((0, cy + R + 70), ov["litText"] if ov["litEnd"] else ov["darkText"], _font(54), amber if ov["litEnd"]
+                else text)
+        labs = ov["labels"]
+        fs = _font(34, False)
+        for s_, (lx, ly) in ((labs.get("lamp"), (x0 + 10, cy + 50)), (labs.get("you"), (cx - 90, cy + 34)),
+                             (labs.get("ball"), (bx - 90, by - br - 46))):
+            if s_:
+                d.text((max(x0, min(lx, x1 - d.textlength(s_, font=fs))), ly), s_, font=fs, fill=text)
+                drawn.append(d.textbbox((max(x0, min(lx, x1 - d.textlength(s_, font=fs))), ly), s_, font=fs))
+        if labs.get("marker"):
+            put((0, cy + R + 140), labs["marker"], _font(40, False), muted)
     elif t == "measure":
         ya = y0 + 470
         d.line([(x0 + 40, ya), (x1 - 40, ya)], fill=amber, width=8)
@@ -648,6 +694,7 @@ def _zoom(frame, z):
 # sentence at a time as the caption. The numbers and words are drawn by Jarvis, never by the image model.
 HUD_X, HUD_Y = BOX["x0"] + 10, BOX["y0"] + 20
 TITLE_TOP = 650                  # the hook question on the first scene (same in studio/remotion/src/Short.tsx)
+TITLE_BACKING = 0.5              # the question's dark backing (opacity), same as Short.tsx
 LINE_CAPTION = {"y": 0.66, "left": 80, "width": W - 80 - 150, "size": 54, "lineHeight": 1.25}
 SERIF = {False: ["C:/Windows/Fonts/georgia.ttf", "/System/Library/Fonts/Supplemental/Georgia.ttf",
                  "/Library/Fonts/Georgia.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"],
@@ -796,6 +843,10 @@ def _art_mod():
     return art
 
 
+def art_size():
+    return _art_mod().gen_size()
+
+
 def no_double_numbers(hud_list, ovs):
     """The counter list with no counter on a scene whose diagram card already shows the number (Short 19 showed
     "5,924 s" in the counter and again on the equation card below it). The hook keeps its counter."""
@@ -808,8 +859,10 @@ def no_double_numbers(hud_list, ovs):
 
 def huds(scenes):
     """The counter for every scene: {"label", "value", "sub"} plus "num"/"from"/"dec"/"unit" when the value
-    is a number that can count up. A scene without a number keeps the last counter, like the reference."""
-    out, last, held = [], None, 0
+    is a number. "from" equals "num" (the number appears as itself) unless the scene names an earlier, already
+    shown number to count on from ("count_from"). A scene without a number keeps the last counter, like the
+    reference."""
+    out, last, held, heard_before = [], None, 0, []
     for sc in scenes:
         t, h = sc.get("type"), None
         if t == "number":
@@ -824,12 +877,16 @@ def huds(scenes):
             h["sub"] = " ".join(str(h.get("sub") or "").split()[:6]).upper()
             parts = _split_num(h["value"])
             if parts:
-                prev = _split_num(last["value"]) if last else None
+                # Connor's Video 35 audit: a science number lands as itself, with its unit, and holds. Counting up
+                # from 0 put "15.68 days", "23.43 days" and "27.57 days" on screen before 29.53, values that
+                # look like results but mean nothing. A count runs only from a start the storyboard names
+                # ("count_from") that is itself a number the viewer already heard.
+                start = _split_num(sc.get("count_from")) if sc.get("count_from") not in (None, "") else None
+                ok_start = start and start[2] in ("", parts[2]) and start[0] < parts[0] and \
+                    any(abs(start[0] - x) <= 1e-9 * max(1, abs(x)) for x in heard_before)
                 h.update(num=parts[0], dec=min(parts[1], 2), unit=parts[2],
-                         **{"from": prev[0] if prev and prev[2] == parts[2] and prev[0] < parts[0] else 0.0})
-                if _year_like(h["value"], parts, h["label"]) or abs(parts[0]) < 10:
-                    h["from"] = parts[0]          # a date counting up from 0 shows years that never happened, and a
-                    # small number counting up just flickers ("0.0 millimeters" in Short 20)
+                         **{"from": start[0] if ok_start else parts[0]})
+                heard_before.append(parts[0])
             last = h
             out.append(dict(h))
             held = 0
@@ -878,6 +935,15 @@ def draw_cinematic(bg, hud, pal, title="", bold=False):
         f = _black(68) if bold else _serif(66)
         ls = _wrap(d, title, f, BOX["x1"] - BOX["x0"] - 20)[:3]
         yy = max(y + 40, TITLE_TOP)
+        # a soft dark backing behind the question, so it reads on any picture (same as Short.tsx); Video 35's
+        # title sat straight on a busy, glitchy photo
+        from PIL import Image as _I
+        h_ = sum((d.textbbox((0, 0), ln, font=f)[3] + 12) for ln in ls)
+        shade = _I.new("RGBA", img.size, (0, 0, 0, 0))
+        ImageDraw.Draw(shade).rounded_rectangle([70, yy - 24, 70 + 870, yy + h_ + 24], radius=30,
+                                                fill=(4, 7, 16, int(255 * TITLE_BACKING)))
+        img = _I.alpha_composite(img.convert("RGBA"), shade).convert("RGB")
+        d = ImageDraw.Draw(img)
         for ln in ls:
             x = BOX["x0"] + (BOX["x1"] - BOX["x0"] - d.textlength(ln, font=f)) / 2
             yy = put((x, yy), ln, f, white)[3] + 12
@@ -999,14 +1065,15 @@ def _real_photos(video_id, scenes, raws, used):
             missing.append(name)
             continue
         seen.add(info["id"])
-        out = folder / f"framed_{k + 1:02d}_{info['id']}.png"
+        out = folder / f"framed_{k + 1:02d}_{info['id']}_hd.png"
+        frame = {}
         try:
-            art.framed_photo(path, out)
-        except Exception:
-            missing.append(name)
+            art.framed_photo(path, out, info=frame)     # full 1080x1920, refused when it has missing-data lines
+        except Exception as e:
+            missing.append(name + (f" ({str(e)[:60]})" if isinstance(e, ValueError) else ""))
             continue
         raws[k] = out
-        got[k] = info
+        got[k] = dict(info, frame=frame)
         if isinstance(sc.get("shots"), list) and len(sc["shots"]) > 1:
             sc["shots"] = sc["shots"][:1]              # no AI shots of a real thing: the photo holds the scene
     if got or missing:
@@ -1213,6 +1280,19 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                   else s for s, f in zip(scenes, fresh)] + scenes[len(fresh):]
         if record:
             db.set_video(video_id, meta=json.dumps(dict(meta, scenes=scenes)))
+    # the pre-production gate (Video 35 audit): each problem is fixed in its own scene before anything is painted
+    from studio import art as _art0, preflight
+    scenes, pre = preflight.run(st, row["hook"], scenes, offered=_art0.shots_on())
+    meta["scenes"], meta["storyboard"] = scenes, pre.pop("storyboard")
+    meta["preflight"] = pre
+    if record:
+        db.set_video(video_id, meta=json.dumps(meta))
+    tech = [p["reason"] for p in pre["problems"] if p["area"] == "technical" and p["hard"]]
+    if tech:
+        raise RuntimeError("pre-production check: " + "; ".join(tech))
+    used["preflight"] = ("pre-production check: " + (f"{len(pre['fixed'])} scene(s) fixed" if pre["fixed"] else
+                                                     "nothing to fix") +
+                         (f", {len(pre['problems'])} note(s)" if pre["problems"] else ""))
     pal = palette()
     handle = (db.one("SELECT handle FROM channel WHERE id=1") or {"handle": ""})["handle"] or ""
     look = eng.get("look", "diagram")
@@ -1250,9 +1330,12 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                 n_hd = sum(1 for k in raws if enh.get(k, {}).get("hd"))
                 used["sharpen"] = (f"Real-ESRGAN: {n_hd} of {len(raws)} pictures" if sharpen else "off") + \
                     (f" ({enh['_note'][:160]})" if enh.get("_note") else "")
+            n_native = sum(1 for k in raws if art.is_native(raws[k]))
             used["detail"] = (f"pictures made at {art.gen_size()[0]}x{art.gen_size()[1]}" +
                               (", enlarged 4x by Real-ESRGAN" if sharpen else ", enlarged without the sharpener") +
+                              (f"; {n_native} real photo(s) at full 1080x1920" if n_native else "") +
                               "; text, captions and diagrams drawn natively at 1080x1920")
+            used["picture_size"] = [art.gen_size()[0], art.gen_size()[1]]
             for k, rp in sorted(raws.items()):
                 bgs[k] = art.prepare(rp, pal, look, hd=enh.get(k, {}).get("hd"))
                 bg_paths[k] = folder / f"bg_{k + 1:02d}.png"
@@ -1270,6 +1353,8 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
         used["look"] = "diagram (the cinematic look needs the AI pictures)"
     else:
         used["look"] = "cinematic (the reference style)" if look == "hud" else "diagram"
+    opening = {"kind": "photo", **photos[0].get("frame", {})} if 0 in photos else \
+        {"kind": "picture" if 0 in bgs else "drawn", "size": list(art_size()) if 0 in bgs else [W, H]}
     hud_list = huds(scenes) if look == "hud" else None
     if hud_list and eng["edit"] == "lively" and _art_mod().shots_on():
         hud_list = no_double_numbers(hud_list, edit.overlays(scenes, look))
@@ -1516,6 +1601,9 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
            "trimmed_lead": round(lead - 0.08, 3) if lead > 0.25 else 0.0,
            "scene_boxes": boxes, "words": len(words), "engines": used, "cinematic": look == "hud",
            "overlay_boxes": {str(k): list(edit.overlay_box(ov)) for k, ov in (ovs or {}).items()},
+           "overlays": {str(k): ov for k, ov in (ovs or {}).items()},
+           "huds": hud_list or [],
+           "opening": opening,
            "text_boxes": text_boxes,
            "line_starts": [round(float(x), 3) for x in starts], **rep}
     if not record:

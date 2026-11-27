@@ -85,20 +85,63 @@ def raw_pictures(video_id, scenes, lines, look="diagram"):
     return have
 
 
-def framed_photo(src, out, W=GEN_W, H=GEN_H):
-    """A real photo for a portrait scene, never cropped into: the whole photo fitted to the width, in the upper
-    part of the frame (above the diagram card and caption), over a dark blurred copy of itself. Returns out."""
+PHOTO_W, PHOTO_H = 1080, 1920     # real photos are framed at full size (Video 35's was squeezed into 512x896)
+DROPOUT_MAX = 0.0015              # share of pixels in thin pure-black lines a real photo may have
+COVER_KEEP = 0.55                 # a photo fills the frame when cropping keeps at least this share of it
+
+
+def photo_dropouts(im):
+    """Share of the picture in thin pure-black lines inside bright surface: the missing-data dashes and seams of old
+    survey scans (Video 35's opening Moon photo). A natural photo has dark areas, but not 1-3 px black lines with
+    bright surface right above and below (or left and right)."""
+    g = np.asarray(im.convert("L"), dtype=np.int16)
+    if g.shape[0] < 16 or g.shape[1] < 16:
+        return 0.0
+    black = g <= 6
+    hits = np.zeros_like(black)
+    for d in (2, 3, 4):
+        up, down = np.roll(g, d, 0), np.roll(g, -d, 0)
+        left, right = np.roll(g, d, 1), np.roll(g, -d, 1)
+        hits |= black & (((up > 50) & (down > 50)) | ((left > 50) & (right > 50)))
+    hits[:4, :] = hits[-4:, :] = hits[:, :4] = hits[:, -4:] = False
+    return float(hits.mean())
+
+
+def framed_photo(src, out, W=PHOTO_W, H=PHOTO_H, info=None):
+    """A real photo for a portrait scene at full 1080x1920 (no shrinking and re-enlarging). It fills the frame
+    when cropping keeps most of it; a wide photo is fitted to the width at the top and blends softly into a
+    brighter blurred copy of itself below, so there is no hard edge and no empty black half (Video 35's opening).
+    Raises ValueError for a photo with missing-data lines. info (a dict) gets what was done. Returns out."""
     from PIL import Image, ImageFilter, ImageEnhance
     im = Image.open(src).convert("RGB")
+    drop = photo_dropouts(im)
+    if drop > DROPOUT_MAX:
+        raise ValueError(f"the photo has missing-data lines ({drop:.2%} of it)")
     k = max(W / im.width, H / im.height)
-    bg = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))), Image.LANCZOS)
+    keep = min(1.0, (W / k) / im.width) * min(1.0, (H / k) / im.height)
+    bg = im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS)
     bg = bg.crop(((bg.width - W) // 2, (bg.height - H) // 2, (bg.width - W) // 2 + W, (bg.height - H) // 2 + H))
-    bg = ImageEnhance.Brightness(bg.filter(ImageFilter.GaussianBlur(28))).enhance(0.55)
-    f = min(W / im.width, H * 0.5 / im.height)
-    fg = im.resize((max(1, int(im.width * f)), max(1, int(im.height * f))), Image.LANCZOS)
-    y = max(0, int(H * 0.36 - fg.height / 2))
-    bg.paste(fg, ((W - fg.width) // 2, y))
+    fill = 1.0
+    if keep < COVER_KEEP:                          # too much would be cut off: show it whole, blended in
+        bg = ImageEnhance.Brightness(bg.filter(ImageFilter.GaussianBlur(36))).enhance(0.8)
+        f = W / im.width
+        fg = im.resize((W, max(1, round(im.height * f))), Image.LANCZOS)
+        if fg.height > H:
+            fg = fg.crop((0, (fg.height - H) // 2, W, (fg.height - H) // 2 + H))
+        y = max(0, int(H * 0.08))
+        fade = 90                                  # the photo's top and bottom edges melt into the blur
+        a = np.ones((fg.height, 1), dtype=np.float32)
+        r = np.linspace(0, 1, min(fade, fg.height // 3))
+        a[:len(r), 0] = r
+        a[fg.height - len(r):, 0] = r[::-1]
+        mask = Image.fromarray((np.repeat(a, W, 1) * 255).astype("uint8"), "L")
+        bg.paste(fg, (0, y), mask)
+        fill = round(min(1.0, fg.height / H), 3)
+    else:
+        keep = round(keep, 3)
     bg.save(out)
+    if info is not None:
+        info.update({"size": [im.width, im.height], "fill": fill, "kept": round(keep, 3), "dropouts": round(drop, 5)})
     return out
 
 
@@ -252,6 +295,16 @@ ENHANCE_LICENCE = ("sharpened with Real-ESRGAN x4plus (BSD-3-Clause); depth from
                    "(Apache-2.0)")
 
 
+def is_native(path, W=1080):
+    """True for a picture already at the Short's full width (a framed real photo)."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            return im.width >= W
+    except Exception:
+        return False
+
+
 def _hd(raw):
     return Path(raw).with_name(Path(raw).stem + "_hd.png")
 
@@ -265,9 +318,14 @@ def enhance(raws, sharpen=True, depth=True):
     map (Depth Anything V2 Small), in one job on the graphics card. Kept next to the raw picture, so a re-render
     reuses them. Never raises: a picture without them just keeps the plain one (and the flat push-in)."""
     out = {i: {} for i in raws}
-    want = []
+    want, native = [], set()
     for i, rp in raws.items():
         hd, dp = _hd(rp), _depth(rp)
+        if is_native(rp):
+            native.add(i)                     # already 1080 wide (a framed real photo): nothing to enlarge
+            if depth and not dp.exists():
+                want.append(i)
+            continue
         if sharpen and not hd.exists():
             want.append(i)
         elif depth and not dp.exists():
@@ -279,14 +337,17 @@ def enhance(raws, sharpen=True, depth=True):
             with engines.heavy("Sharper pictures and depth"):
                 ans = engines.run("sdxl", "enhance_worker", {
                     "models": str(md),
-                    "images": [{"src": str(raws[i]), **({"hd": str(_hd(raws[i]))} if sharpen else {}),
+                    "images": [{"src": str(raws[i]), **({"hd": str(_hd(raws[i]))} if sharpen and i not in native
+                                                        else {}),
                                 **({"depth": str(_depth(raws[i]))} if depth else {})} for i in want]})
             errs = [r["error"] for r in ans.get("images") or [] if r.get("error")]
             note = errs[0] if errs else ""
         except Exception as e:
             note = str(e)[:200]
     for i, rp in raws.items():
-        if sharpen and _hd(rp).exists():
+        if i in native:
+            out[i]["hd"] = Path(rp)               # full size as it is
+        elif sharpen and _hd(rp).exists():
             out[i]["hd"] = _hd(rp)
         if depth and _depth(rp).exists():
             out[i]["depth"] = _depth(rp)

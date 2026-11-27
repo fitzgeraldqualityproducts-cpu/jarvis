@@ -26,7 +26,9 @@ evaluate(draft, review_answer=None, facts=None) -> {"hard": [...], "advice": [..
 trace(lines, calcs)          every spoken worked-out number, broken down to the numbers the viewer has heard.
 units_check(lines)           "0.1 millimeters, or 0.001 meters" style conversions, recomputed.
 model_check(model, lines)    the model's formula re-run with units (dimension check) and compared with its result.
-visual_purpose(scenes, lines) how well the visual plan explains the maths (QA "visuals explain the story")."""
+visual_purpose(scenes, lines) how well the visual plan explains the maths (QA "visuals explain the story").
+demo.check / demo.cycles     a hands-on model (ball, lamp, note) and a named period (27.3 vs 29.53 days) are said
+                             so they match the real science (studio/demo.py, Short 35)."""
 import ast
 import math
 import re
@@ -879,6 +881,9 @@ def evaluate(draft, story=None, facts=None):
     issues += storyboard_check(lines, model)
     issues += confusion(lines)
     issues += origins(lines, draft.get("calcs"), facts, model)
+    from studio import demo
+    issues += demo.check(lines, model)            # a hands-on model shows the real science (Short 35)
+    issues += demo.cycles(lines)                  # a period says which cycle it is (27.3 vs 29.53 days)
     found, parts = judged(story, lines)
     issues += found
     for it in issues:
@@ -887,13 +892,15 @@ def evaluate(draft, story=None, facts=None):
             it["sentence"] = texts[n - 1]
         if n and 0 < n <= len(lines) and isinstance(lines[n - 1], dict):
             it.setdefault("beat", lines[n - 1].get("beat"))
-        cause, fix = ROOT.get(it["kind"], ("", ""))
+        cause, fix = ROOT.get(it["kind"]) or demo.ROOT.get(it["kind"], ("", ""))
         it.setdefault("root_cause", cause)
         it.setdefault("fix", fix)
     derived = sum(1 for c in draft.get("calcs") or [] if isinstance(c, dict))
     untraced = sum(1 for it in issues if it["kind"] in ("unexplained", "too_late", "origin"))
     parts["trace"] = max(0.0, 1 - untraced / max(1, derived))
     parts["units"] = 0.0 if any(it["kind"] == "units" and it["hard"] for it in issues) else 1.0
+    if any(it["hard"] and it["kind"] in demo.ROOT for it in issues):
+        parts["model"] = min(parts.get("model", 1.0), 0.3)          # a demonstration that misleads is a model problem
     if model is None:
         parts.setdefault("model", 0.5)
     elif any(it["kind"] in ("model_result", "assumption") for it in issues):

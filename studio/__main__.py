@@ -39,8 +39,8 @@
   sample      makes a side-by-side sample with the upgraded tools from a finished Short (--video <id>):
               its voice and video next to the current ones; changes nothing and uploads nothing.
               --footage: a Short planned before stock footage existed gets footage searches (one Claude call)
-  --new-looks (video, sample): this run only, with the looks that wait for Connor's OK (storyboard shots and the
-              wave/ruler diagrams, bold captions); the saved settings are not changed"""
+  --new-looks (video, sample): this run only, with the looks that wait for Connor's OK (storyboard shots, the
+              wave/ruler/demonstration diagrams, bold captions, 768x1344 pictures); the saved settings are not changed"""
 import json
 import os
 import sys
@@ -106,8 +106,9 @@ def _new_looks(argv):
     art.shots_on = lambda: True
     video.type_style = lambda: "bold"
     footage.photos_on = lambda: True
-    print("New looks on for this run only: storyboard shots, wave/ruler diagrams, bold captions, real NASA photos "
-          "of named things.")
+    art.gen_size = lambda: (art.HD_W, art.HD_H)       # Video 35 audit: more real detail per picture (768x1344)
+    print("New looks on for this run only: storyboard shots, wave/ruler/demonstration diagrams, bold captions, real "
+          "NASA photos of named things, pictures painted at 768x1344.")
     return True
 
 
