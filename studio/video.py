@@ -1082,6 +1082,28 @@ def _real_photos(video_id, scenes, raws, used):
     return got
 
 
+def _stills_check(video_id, scenes, lines, raws, photos, folder, used, meta):
+    """The pictures are judged before anything is drawn on them (config stills_check, off until a held test): a
+    picture with a major problem becomes a plain background, and its extra AI shots are dropped."""
+    from studio import art, finalreview
+    try:
+        res = finalreview.stills_check(video_id, raws, lines, photos)
+    except Exception as e:                        # (a used-up daily cap included: the after-render review still runs)
+        used["stills"] = f"not checked ({str(e)[:160]})"
+        return
+    if res is None:
+        return
+    for k, why in sorted(res["bad"].items()):
+        raws[k] = art.plain(folder / f"plain_{k + 1:02d}.png")
+        photos.pop(k, None)
+        if k < len(scenes) and isinstance(scenes[k], dict) and isinstance(scenes[k].get("shots"), list):
+            scenes[k]["shots"] = scenes[k]["shots"][:1]
+    meta["stills_check"] = {"problems": res["problems"], "replaced": sorted(k + 1 for k in res["bad"])}
+    used["stills"] = ("stills check: " + (f"replaced scene(s) {', '.join(str(k + 1) for k in sorted(res['bad']))}"
+                                          if res["bad"] else "no major problems") +
+                      (f", {len(res['problems'])} note(s)" if res["problems"] else ""))
+
+
 SNAP = 0.8               # a shot cut moves up to this far to land where the caption phrase changes
 
 
@@ -1314,6 +1336,8 @@ def render(video_id, progress=lambda s: None, engines_override=None, out_name="s
                     used["fit"] = f"not checked ({str(e)[:160]})"
             if raws and footage_mod_photos_on():
                 photos = _real_photos(video_id, scenes, raws, used)
+            if raws:
+                _stills_check(video_id, scenes, lines, raws, photos, folder, used, meta)
             sharpen, depth = eng["sharpen"] == "esrgan", eng["motion"] == "depth" and look == "hud"
             if raws and depth and art.shots_on() and any(isinstance(sc, dict) and len(sc.get("shots") or []) > 1
                                                          for sc in scenes):

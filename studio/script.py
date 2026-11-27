@@ -145,6 +145,25 @@ def _facts(topic):
     return [s for s in topic["sources"] if s.get("verdict") == "reachable"]
 
 
+def newcomer_text(topic, facts):
+    """The writer's "say these first" list: the background facts the idea's rating said a newcomer needs, each with
+    the fact id that states it (topics.background found them for free). "" when the idea has none."""
+    sc = topic.get("scores") if isinstance(topic.get("scores"), dict) else {}
+    bg = sc.get("background") if isinstance(sc.get("background"), dict) else {}
+    need = [str(f) for f in sc.get("newcomer") or []]
+    if not need:
+        return ""
+    ids = {str(s.get("claim")): f"F{i + 1}" for i, s in enumerate(facts)}
+    rows = []
+    for fact in need[:4]:
+        fid = ids.get(str((bg.get("found") or {}).get(fact) or ""))
+        rows.append(f"- {fact}" + (f" ({fid})" if fid else " (no page states it: only say it if it is everyday "
+                                                              "knowledge; otherwise answer so it isn't needed)"))
+    return ("\n\nSAY THESE FIRST: a newcomer must hear each of these plain facts before the line that relies on it "
+            "(in the hook's question or the setup lines, in your own words, with its fact id). Put each in the model's "
+            "\"background\" if you write a model:\n" + "\n".join(rows))
+
+
 def _niche():
     from studio import topics
     d = topics.niche() or {}
@@ -271,6 +290,7 @@ def write(topic, feedback=None, previous=None, only_originality=False, keep_orig
                    + "\nThe review said:\n" + "\n".join(f"- {p}" for p in feedback)
                    + "\n\nPrevious draft:\n" + json.dumps(previous)[:6000])
     story_first = STORY_FIRST if _narrative_on() else ""
+    newcomer = newcomer_text(topic, facts)
     prompt = f"""Write a YouTube Short script. Channel: {d.get('name', '')}. Positioning: {plan.get('positioning', '')}.
 Audience: {plan.get('audience', 'curious US adults')}. Style: {plan.get('style', 'calm, clear, conversational')}.
 Topic: {topic['title']}
@@ -278,7 +298,7 @@ Angle (the calculation the Short shows): {topic.get('angle', '')}
 Suggested opening: {topic.get('hook', '')}
 
 FACTS YOU MAY USE (nothing else; never invent numbers, dates, names or quotes):
-{fact_list}
+{fact_list}{newcomer}
 
 Rules:
 - {WORDS_MIN}-{WORDS_MAX} words in total (aim for {WORDS_MIN + 20}-{WORDS_MAX - 10}; count them before answering),
@@ -462,15 +482,89 @@ def judge_score(scores):
     return round(sum(JUDGE_WEIGHTS[k] * v for k, v in have.items()) / w, 2) if w else 0.0
 
 
+EDITOR_ORIGINAL_MIN = 6           # the fact-check rejects under this, so the editor's pick is held to it too
+EDITOR_GAPS_MAX = 2               # more story gaps than this (or one in the hook/payoff) gets the repair first
+
+
+def editor_on():
+    """Pipeline order review (2026-11-27): the draft-picking call also judges story and originality with the
+    fact-check's own rules, and a weak pick is repaired once before the paid fact-check. Config editor_first."""
+    try:
+        from studio import config
+        return config.general().get("editor_first", True) is not False
+    except Exception:
+        return True
+
+
+def read_problems(read):
+    """What the local newcomer read couldn't follow, as problem texts ([] when it followed it all)."""
+    if not read:
+        return []
+    out = [f"narrative: line {c['line']} leans on something never established ({c['why']})"
+           for c in read.get("confusing") or [] if isinstance(c, dict) and c.get("line")]
+    if isinstance(read.get("match"), int) and read["match"] <= EXPLAIN_MIN_MATCH and read.get("takeaway"):
+        out.append(f"clarity: a first-time viewer would come away with \"{read['takeaway']}\" instead of the point")
+    return out
+
+
+def editor_penalty(ed):
+    """Points off a draft's judge score for what the fact-check would stop it for."""
+    if not ed:
+        return 0.0
+    pen = 0.0
+    o = ed.get("original")
+    if isinstance(o, (int, float)) and o < EDITOR_ORIGINAL_MIN:
+        pen += 2.0 * (EDITOR_ORIGINAL_MIN - o)
+    pen += 0.75 * len(ed.get("gaps") or [])
+    p = ed.get("premise")
+    if isinstance(p, (int, float)) and p < 5:
+        pen += 5 - p
+    return pen
+
+
+def editor_problems(ed, lines):
+    """The problems the fact-check would stop the picked draft for, from the editor's verdict ([] = none)."""
+    if not ed or not editor_on():
+        return []
+    out = []
+    o = ed.get("original")
+    if isinstance(o, (int, float)) and o < EDITOR_ORIGINAL_MIN:
+        tip = str(ed.get("original_fix") or "").strip()
+        out.append(f"originality {o:g}/10: needs its own explanation" + (f" ({tip[:300]})" if tip else ""))
+    gaps = [g for g in ed.get("gaps") or [] if isinstance(g, dict) and isinstance(g.get("line"), int)]
+    beats = {i: str(ln.get("beat") or "") for i, ln in enumerate(lines or [], 1)}
+    key = [g for g in gaps if g["line"] <= 2 or beats.get(g["line"]) == "payoff"]
+    if len(gaps) > EDITOR_GAPS_MAX or key:
+        out += [f"narrative: line {g['line']} leans on something never established ({str(g.get('missing') or '')[:160]})"
+                for g in gaps if beats.get(g["line"]) != "loop"]
+    return out
+
+
 def _judge(pool, topic):
-    """{letter: scores} from one short Claude call (no web) that compares the drafts as a viewer would."""
+    """({letter: scores}, why, notes, {letter: editor verdict}) from one short Claude call (no web) that compares
+    the drafts as a viewer would and, with editor_first on, judges story and originality the way the fact-check
+    will, so the pick is a draft that passes it."""
     from studio import claude
     letters = "ABCDE"
     parts = []
     for k, (_, d) in enumerate(pool):
         hook = next((h for h in d["hooks"] if not hook_checks(h)), d["lines"][0]["text"])
-        body = "\n".join(f"  [{ln.get('beat')}] {hook if i == 0 else ln['text']}" for i, ln in enumerate(d["lines"]))
+        body = "\n".join(f"  L{i + 1} [{ln.get('beat')}] {hook if i == 0 else ln['text']}" for i, ln in enumerate(d["lines"]))
         parts.append(f"Draft {letters[k]} (angle: {str(d.get('angle') or '')[:120]}):\n{body}")
+    ed_on = editor_on()
+    ed_ask = ed_shape = ""
+    if ed_on:
+        ed_ask = """
+Also judge each draft the way the fact-checker will, so the one you pick passes it:
+"original" uses the fact-checker's scale: own explanation and wording vs a generic or copied explainer; the
+standard textbook explainer or analogy of this question (the one a Space.com, NASA or Wikipedia page gives) is 5,
+and anything under 6 is rejected. "original_fix": for a draft under 7, one sentence naming what reads generic and a
+concrete idea to make it the channel's own. "premise" 0-10: after the first two lines, does a viewer who knows
+nothing about this know what physical thing is happening and what question is answered? "gaps": every line that
+needs something a newcomer hasn't been told yet (a term, a value, a background fact, a step) or doesn't follow
+from the line before, as {"line": n, "missing": "what was never said"}; [] if none. The last line may end on an
+open question: never list it."""
+        ed_shape = ', "editor": {"A": {"original": 0, "original_fix": "", "premise": 0, "gaps": []}}'
     ans = claude.ask_json(f"""Judge these drafts of one YouTube Short about "{topic['title']}" as a sharp short-form editor would.
 Facts are checked later, so judge only how well each one would hold a scrolling viewer to the end.
 
@@ -479,21 +573,40 @@ Facts are checked later, so judge only how well each one would hold a scrolling 
 Score each 0-10: "hook" (would a scroller stop in the first second?), "payoff" (how surprising and satisfying the
 result is), "clarity" (can you follow the math by ear, once?), "momentum" (a real re-hook halfway, no dead or
 repeated lines), "you" (puts it in the viewer's own world), "original" (not the standard textbook explainer).
+""" + ed_ask + """
 
 For every draft that is NOT best, "notes": one sentence on what held it back, written as advice a writer could
 follow next time (e.g. "the hook gave the answer away before the question").
 
 JSON only: {"scores": {"A": {"hook": 0, "payoff": 0, "clarity": 0, "momentum": 0, "you": 0, "original": 0}}, "best": "A",
-"why": "one sentence", "notes": {"B": "..."}}""",
+"why": "one sentence", "notes": {"B": "..."}""" + ed_shape + "}",
                           timeout=300, web=False, purpose=f"pick a draft: {topic['title']}")
-    out, notes = {}, {}
+    out, notes, editor = {}, {}, {}
     if isinstance(ans, dict):
-        for key, into in (("scores", out), ("notes", notes)):
+        for key, into in (("scores", out), ("notes", notes), ("editor", editor)):
             for k, v in (ans.get(key) or {}).items() if isinstance(ans.get(key), dict) else []:
                 k = str(k).strip().upper()[:1]
-                if k in letters[:len(pool)] and (isinstance(v, dict) if key == "scores" else str(v).strip()):
-                    into[letters.index(k)] = v if key == "scores" else " ".join(str(v).split())[:200]
-    return out, (str(ans.get("why") or "")[:300] if isinstance(ans, dict) else ""), notes
+                if k in letters[:len(pool)] and (isinstance(v, dict) if key != "notes" else str(v).strip()):
+                    into[letters.index(k)] = " ".join(str(v).split())[:200] if key == "notes" else v
+    for k, v in list(editor.items()):
+        editor[k] = _editor_verdict(v)
+    return out, (str(ans.get("why") or "")[:300] if isinstance(ans, dict) else ""), notes, editor
+
+
+def _editor_verdict(v):
+    def num(x):
+        try:
+            return max(0.0, min(10.0, float(x)))
+        except (TypeError, ValueError):
+            return None
+    gaps = []
+    for g in v.get("gaps") or []:
+        try:
+            gaps.append({"line": int(g.get("line")), "missing": " ".join(str(g.get("missing") or "").split())[:160]})
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return {"original": num(v.get("original")), "original_fix": " ".join(str(v.get("original_fix") or "").split())[:300],
+            "premise": num(v.get("premise")), "gaps": gaps[:6]}
 
 
 def _learn_from_drafts(topic, drafts, good, scores, notes, best):
@@ -578,19 +691,37 @@ def pick_draft(raw, topic):
     good = [(i, d) for i, d in enumerate(drafts) if not screened[i]]
     fewest = min(len(v) for v in screened.values())          # none clean: judge only the ones with fewest problems
     pool = good or [(i, d) for i, d in enumerate(drafts) if len(screened[i]) == fewest]
-    scores, why, notes = {}, "", {}
+    reads = {}
+    for i, d in pool:                             # free: the local newcomer read, before anything is paid for
+        try:
+            r = newcomer_read(topic, d)
+        except Exception as e:
+            print(f"(newcomer read skipped: {str(e)[:120]})")
+            break
+        if r is None:
+            break
+        reads[i] = r
+    clear = [(i, d) for i, d in pool if i in reads and not read_problems(reads[i])]
+    if reads and clear and len(clear) < len(pool):
+        pool = clear                              # drafts a newcomer could follow go on; the others are dropped
+    scores, why, notes, editor = {}, "", {}, {}
     if len(pool) > 1:
         try:
-            scores, why, notes = _judge(pool, topic)
+            scores, why, notes, editor = _judge(pool, topic)
         except Exception as e:
             print(f"(couldn't judge the drafts: {str(e)[:120]}; using the first good one)")
-    best = max(range(len(pool)), key=lambda k: (judge_score(scores.get(k)), -k)) if scores else 0
+    best = max(range(len(pool)), key=lambda k: (judge_score(scores.get(k)) - editor_penalty(editor.get(k)), -k)) \
+        if scores else 0
     if len(drafts) > 1:
         _learn_from_drafts(topic, drafts, good, scores, notes, best)
     chosen = dict(pool[best][1])
     chosen.pop("angle", None)
     if isinstance(raw, dict) and isinstance(raw.get("model"), dict) and not isinstance(chosen.get("model"), dict):
         chosen["model"] = raw["model"]
+    if pool[best][0] in reads:
+        chosen["newcomer_read"] = reads[pool[best][0]]
+    if editor.get(best):
+        chosen["editor"] = editor[best]
     chosen["picked"] = {"of": len(drafts), "passed_screen": len(good), "angle": str(pool[best][1].get("angle") or "")[:160],
                         "score": judge_score(scores.get(best)) if scores else None, "why": why,
                         "dropped": {str(i): screened[i][:3] for i in screened if screened[i]}}
@@ -979,7 +1110,8 @@ def review(draft, topic, video_id=None, recheck=None):
                       for i, ln in enumerate(draft["lines"]))
     hooks = "\n".join(f"H{i}. {h}" for i, h in enumerate(draft["hooks"]))
     if recheck:
-        ans = _recheck(draft, topic, fact_list, lines, recheck)
+        ans = _recheck(draft, topic, fact_list, lines, recheck, unread={f"F{i + 1}" for i in range(len(facts))
+                                                                        if not seen[i]})
         if ans is not None:
             return _judged(draft, ans, video_id, rechecked=sorted(recheck["changed"]), facts=facts)
     story_ask = story_shape = model_txt = ""
@@ -1201,16 +1333,65 @@ def recheck_plan(old_draft, new_draft, mapping, prior_checks):
     return {"changed": changed, "kept": kept, "prior": prior_checks}
 
 
-def _recheck(draft, topic, fact_list, lines, plan):
+def story_recheck_plan(old_draft, new_draft, prior_checks):
+    """After a story repair (set-up lines added or a few lines reworded, the rest kept word for word): the same
+    plan shape as recheck_plan, with lines matched by their exact words. Safe only when the hooks, the hook line,
+    the re-hook and the loop line are unchanged and the earlier check's ratings are all there; the story itself
+    (and whether the payoff answers the question) is always judged again."""
+    if new_draft.get("hooks") != old_draft.get("hooks") or not new_draft.get("lines") or not old_draft.get("lines"):
+        return None
+    if not prior_checks.get("hook_ratings") or prior_checks.get("loop") is None or prior_checks.get("originality") is None:
+        return None
+    if new_draft["lines"][0].get("text") != old_draft["lines"][0].get("text"):
+        return None
+    flagged = {int(m.group(1)) for h in prior_checks.get("hard_problems") or [] for m in [LINE_PROBLEM.match(h)] if m}
+    free = {}
+    for i, ln in enumerate(old_draft["lines"], 1):
+        free.setdefault(str(ln.get("text")), []).append(i)
+    changed, kept = set(), {}
+    for new_i, ln in enumerate(new_draft["lines"], 1):
+        olds = free.get(str(ln.get("text"))) or []
+        if olds and olds[0] not in flagged:
+            kept[new_i] = olds.pop(0)
+        else:
+            if olds:
+                olds.pop(0)
+            changed.add(new_i)
+    gone = set(range(1, len(old_draft["lines"]) + 1)) - set(kept.values()) - {
+        i for i in range(1, len(old_draft["lines"]) + 1) if i in flagged}
+    for i in changed:
+        if str(new_draft["lines"][i - 1].get("beat") or "") in ("hook", "rehook", "loop"):
+            return None
+    for i in gone:
+        if str(old_draft["lines"][i - 1].get("beat") or "") in ("hook", "rehook", "loop", "payoff"):
+            return None
+    if not changed and not gone:
+        return None
+    return {"changed": changed, "kept": kept, "prior": prior_checks, "story": True}
+
+
+def _recheck(draft, topic, fact_list, lines, plan, unread=()):
     """The checker's answer for a fixed script, asking only about the changed lines (the whole script is shown, so
     each is judged in context). Kept lines keep their verdicts; hook, loop, re-hook and originality ratings carry
     over, since none of those lines changed. None if the answer is unusable (then the full check runs)."""
     from studio import claude
     prior = plan["prior"]
-    if not plan["changed"]:
+    story = bool(plan.get("story")) and _narrative_on()
+    story_ask = story_shape = ""
+    if story:                                     # after a story repair the story itself is judged again
+        from studio import narrative
+        m = draft.get("model") if isinstance(draft.get("model"), dict) else None
+        story_ask = (("\nThe writer's model (the physics and maths the story rests on):\n" + json.dumps(m)[:2500] + "\n"
+                      if m else "") + narrative.REVIEW_ASK + '\nAlso "question" (the one question the hook raises, in your words) and '
+                     '"answered" 0-10 (does the payoff answer exactly that question plainly?).')
+        story_shape = narrative.REVIEW_SHAPE + ', "question": "...", "answered": 0'
+    if not plan["changed"] and not story:
         ans = {"claims": []}
     else:
-        ask = ", ".join(f"L{i}" for i in sorted(plan["changed"]))
+        ask = ", ".join(f"L{i}" for i in sorted(plan["changed"])) or "no line (only the story questions below)"
+        cited = {str(f) for i in plan["changed"] for f in (draft["lines"][i - 1].get("facts") or [])}
+        # a story repair whose new lines only lean on pages already read here needs no web search
+        web = not story or bool(cited & set(unread))
         ans = claude.ask_json(f"""You are a strict fact-checker for a science Shorts channel. A few lines of this script were just
 reworded to fix problems an earlier check found; the other lines were already checked. Check ONLY {ask}, in the
 context of the whole script. Each source below comes with text Jarvis just read from that page. Use it, and open the
@@ -1231,9 +1412,11 @@ never counts as standard. A value the line plainly presents as the narrator's ow
 source's own words, at most 25 words, copied exactly), "confidence" 0.0-1.0 and "source_date" (YYYY-MM-DD or "").
 Give "note" only for "unsupported", "wrong" and "standard". "problems": anything a careful editor would fix in
 those lines (confusing step, misleading simplification, unit mistake).
+{story_ask}
 
 JSON only: {{"claims": [{{"line": 3, "verdict": "supported", "fact": "F1", "quote": "...", "confidence": 0.9,
-"source_date": ""}}], "problems": ["..."]}}""", timeout=900, web=True, purpose=f"fact-check (changed lines): {topic['title']}")
+"source_date": ""}}], "problems": ["..."]{story_shape}}}""", timeout=900, web=web,
+                              purpose=f"fact-check (changed lines{', story' if story else ''}): {topic['title']}")
         if not isinstance(ans, dict) or not isinstance(ans.get("claims"), list):
             return None
     new = [dict(c) for c in ans["claims"] if isinstance(c, dict) and c.get("line") in plan["changed"]]
@@ -1246,9 +1429,12 @@ JSON only: {{"claims": [{{"line": 3, "verdict": "supported", "fact": "F1", "quot
     editor = [p[len("editor: "):] for p in prior.get("problems") or [] if p.startswith("editor: ")]
     return {"claims": new, "hooks": {str(k): v for k, v in (prior.get("hook_ratings") or {}).items()},
             "loop": prior.get("loop"), "rehook": prior.get("rehook"), "originality": prior.get("originality"),
-            "question": prior.get("question"), "answered": prior.get("answered"),
+            "question": ans.get("question") if story and ans.get("question") else prior.get("question"),
+            "answered": ans.get("answered") if story and isinstance(ans.get("answered"), (int, float))
+            else prior.get("answered"),
             "inauthentic_risk": prior.get("inauthentic_risk"),
-            "story": (prior.get("narrative") or {}).get("story"),
+            "story": ans.get("story") if story and isinstance(ans.get("story"), dict)
+            else (prior.get("narrative") or {}).get("story"),
             "problems": (editor + [p for p in ans.get("problems") or [] if isinstance(p, str)])[:5]}
 
 
@@ -1268,10 +1454,13 @@ def draft_step(topic, video_id=None, feedback=None, previous=None, draft=None):
     if not draft and not feedback and not previous:
         from studio import topics
         try:
-            topics.enrich(topic)                 # more sourced numbers before the first draft (once per topic)
+            topics.prepare(topic)                # more sourced numbers + the newcomer facts (free, once per topic)
         except Exception:
             pass                                 # the topic's own sources are always enough to go on
-    draft = draft or write(topic, feedback, previous)
+    if not draft:
+        draft = write(topic, feedback, previous)
+        if not feedback and not previous:
+            draft = _pre_fix(draft, topic)
     v = db.one("SELECT MAX(version) v FROM scripts WHERE video_id IS ?", video_id)["v"] or 0
     hook = draft["hooks"][0] if draft["hooks"] else draft["lines"][0]["text"]
     return db.insert("INSERT INTO scripts(video_id, version, hooks, hook, body, structure, checks, status, created) "
@@ -1283,8 +1472,45 @@ def draft_step(topic, video_id=None, feedback=None, previous=None, draft=None):
                                  **({"recheck": draft["recheck"]} if draft.get("recheck") else {}),
                                  **({"number_check": draft["number_check"]} if draft.get("number_check") else {}),
                                  **({"story_fix": draft["story_fix"]} if draft.get("story_fix") else {}),
+                                 **({k: draft[k] for k in ("newcomer_read", "editor", "pre_fix") if draft.get(k)}),
                                  **({"originality_fix": draft["originality_fix"]} if draft.get("originality_fix") else {})}),
                      "{}", "draft", time.time())
+
+
+def _pre_fix(draft, topic):
+    """Pipeline order review (2026-11-27): what the editor and the newcomer read found in the picked first draft
+    is repaired ONCE here, before the paid web fact-check, instead of after it (a fail there used to cost the
+    check, a repair and a second check). An originality miss gets the originality-only rewrite; story gaps get the
+    targeted story repair. Never more than one Claude call; the draft goes on unchanged when nothing is found."""
+    if not editor_on():
+        return draft
+    probs = editor_problems(draft.get("editor"), draft.get("lines")) + read_problems(draft.get("newcomer_read"))
+    if not probs:
+        return draft
+    keep = {k: draft[k] for k in ("picked", "editor", "newcomer_read", "number_check") if draft.get(k)}
+    try:
+        if any(p.startswith("originality ") for p in probs):
+            fixed = write(topic, probs, draft, only_originality=True)
+            kind = "originality"
+        else:
+            fixed = _fix_story(draft, topic, probs)
+            kind = "story"
+    except ScriptRejected:
+        fixed = None
+    except Exception as e:
+        if type(e).__name__ in ("QuotaWait", "Transient"):
+            raise
+        print(f"(repair before the fact-check skipped: {str(e)[:120]})")
+        fixed = None
+    if not fixed:
+        return dict(draft, pre_fix={"kind": "none", "problems": [p[:200] for p in probs[:5]]})
+    if isinstance(draft.get("model"), dict) and not isinstance(fixed.get("model"), dict):
+        fixed["model"] = draft["model"]
+    keep.pop("newcomer_read", None)               # the read was of the old wording
+    sf = fixed.pop("story_fix", None)             # kept apart: the after-check story repair stays available
+    fixed.pop("originality_fix", None)
+    return dict(fixed, **keep, pre_fix={"kind": kind, "problems": [p[:200] for p in probs[:5]],
+                                        **({"story_fix": sf} if sf else {})})
 
 
 def partial_recheck_on():
@@ -1304,7 +1530,7 @@ def _saved_recheck(st, video_id):
     if not prev:
         return None
     return {"changed": set(r.get("changed") or []), "kept": {int(k): v for k, v in (r.get("kept") or {}).items()},
-            "prior": json.loads(prev["checks"] or "{}")}
+            "prior": json.loads(prev["checks"] or "{}"), **({"story": True} if r.get("story") else {})}
 
 
 def _draft_of(row):
@@ -1388,7 +1614,7 @@ def check_step(topic, video_id=None, max_revisions=MAX_REVISIONS):
             rev["hard_problems"] = list(rev.get("hard_problems") or []) + polish
             checks.update(ok=False, hard_problems=rev["hard_problems"])
     if rev["ok"]:
-        back = explain_back(topic, draft, rev["hook"], video_id, max_revisions)
+        back = explain_back(topic, draft, rev["hook"], video_id, max_revisions, read=st.get("newcomer_read"))
         if back:
             checks["explain_back"] = back
             if back.get("unclear"):
@@ -1520,18 +1746,52 @@ def explain_on():
         return True
 
 
-def explain_back(topic, draft, hook, video_id=None, max_revisions=MAX_REVISIONS):
+def explain_back(topic, draft, hook, video_id=None, max_revisions=MAX_REVISIONS, read=None):
     """The local model retells the Short in one sentence and rates (1-5) how well that matches the point the
     Short was meant to make. A clear miss (EXPLAIN_MIN_MATCH or lower) sends the script back once, with what the
     viewer took away, so the rewrite makes the point plainer. It also reads it as a confused newcomer: lines it
     really couldn't follow (a skipped step, an unexplained word) send it back the same way. Never more than once per Short, never on the last
     allowed try (so it can't cost a Short), and skipped when the local brain isn't ready. None when skipped."""
-    if not explain_on():
+    if read and read.get("body") == text_of(draft, hook):
+        out = read                                # this exact wording was already read before the fact-check
+    else:
+        out = newcomer_read(topic, draft, hook)
+    if out is None:
+        return None
+    out = {k: v for k, v in out.items() if k != "body"}
+    lines = [hook] + [ln["text"] for ln in draft["lines"][1:]] if draft.get("lines") else [hook]
+    topic = dict(topic or {})
+    point = f"{topic.get('title') or ''}. {topic.get('angle') or ''}".strip(". ")
+    match = out["match"]
+    tries = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status='failed'", video_id)["n"]
+    asked = any("explain_back" in (json.loads(r["checks"] or "{}"))
+                and (json.loads(r["checks"] or "{}")["explain_back"] or {}).get("unclear")
+                for r in db.q("SELECT checks FROM scripts WHERE video_id IS ?", video_id))
+    missed = match <= EXPLAIN_MIN_MATCH and out["takeaway"]
+    if (missed or out["confusing"]) and not asked and tries < max_revisions:
+        out["unclear"] = True
+        said = []
+        if missed:
+            said.append(f"would come away with \"{out['takeaway']}\" instead of the intended point ({point[:160]})")
+        if out["confusing"]:
+            said.append("couldn't follow " + "; ".join(f"line {c['line']} (\"{lines[c['line'] - 1][:80]}\": {c['why']})"
+                                                       for c in out["confusing"]))
+        out["problem"] = ("clarity: a first-time viewer " + " and ".join(said)
+                          + ". Keep every checked fact, but add the missing step or plain word, and tie each line to the "
+                            "main point.")
+    return out
+
+
+def newcomer_read(topic, draft, hook=None):
+    """The local model reads the narration once as a newcomer: {"takeaway", "match" 1-5, "confusing": [{line, why}],
+    "body"}. Free (this computer). None when it's switched off, not ready or gives no usable answer."""
+    if not explain_on() or not draft.get("lines"):
         return None
     local = _local()
     if not local or not local.ready("studio_json")[0]:
         return None
-    lines = [hook] + [ln["text"] for ln in draft["lines"][1:]] if draft.get("lines") else [hook]
+    hook = hook or (draft.get("hooks") or [None])[0] or draft["lines"][0]["text"]
+    lines = [hook] + [ln["text"] for ln in draft["lines"][1:]]
     topic = dict(topic or {})
     point = f"{topic.get('title') or ''}. {topic.get('angle') or ''}".strip(". ")
     ans = local.chat_json([{"role": "system", "content": EXPLAIN_SYSTEM},
@@ -1560,24 +1820,8 @@ def explain_back(topic, draft, hook, video_id=None, max_revisions=MAX_REVISIONS)
             continue
         if 1 <= n <= len(lines) and len(why) >= 8:
             confusing.append({"line": n, "why": why})
-    out = {"takeaway": str(ans.get("takeaway") or "")[:240], "match": match, "confusing": confusing[:3]}
-    tries = db.one("SELECT COUNT(*) n FROM scripts WHERE video_id IS ? AND status='failed'", video_id)["n"]
-    asked = any("explain_back" in (json.loads(r["checks"] or "{}"))
-                and (json.loads(r["checks"] or "{}")["explain_back"] or {}).get("unclear")
-                for r in db.q("SELECT checks FROM scripts WHERE video_id IS ?", video_id))
-    missed = match <= EXPLAIN_MIN_MATCH and out["takeaway"]
-    if (missed or out["confusing"]) and not asked and tries < max_revisions:
-        out["unclear"] = True
-        said = []
-        if missed:
-            said.append(f"would come away with \"{out['takeaway']}\" instead of the intended point ({point[:160]})")
-        if out["confusing"]:
-            said.append("couldn't follow " + "; ".join(f"line {c['line']} (\"{lines[c['line'] - 1][:80]}\": {c['why']})"
-                                                       for c in out["confusing"]))
-        out["problem"] = ("clarity: a first-time viewer " + " and ".join(said)
-                          + ". Keep every checked fact, but add the missing step or plain word, and tie each line to the "
-                            "main point.")
-    return out
+    return {"takeaway": str(ans.get("takeaway") or "")[:240], "match": match, "confusing": confusing[:3],
+            "body": text_of(draft, hook)}
 
 
 PRUNE_MAX = 2                      # at most this many flagged lines are simply cut
@@ -1740,8 +1984,13 @@ def revise_step(topic, video_id=None):
         fixed["originality_fix"] = {"from_version": row["version"], "problems": [p[:300] for p in hard[:4]]}
         return draft_step(topic, video_id, draft=fixed)
     if _story_repairable(hard) and not _story_fix_tried(video_id):
-        fixed = _fix_story(_draft_of(row), topic, hard)    # a story gap: add the missing set-up, keep the rest
+        old = _draft_of(row)
+        fixed = _fix_story(old, topic, hard)               # a story gap: add the missing set-up, keep the rest
         if fixed:
+            plan = story_recheck_plan(old, fixed, checks) if partial_recheck_on() else None
+            if plan:                                       # only the new lines and the story are checked again
+                fixed["recheck"] = {"from": row["id"], "changed": sorted(plan["changed"]),
+                                    "kept": {str(k): v for k, v in plan["kept"].items()}, "story": True}
             return draft_step(topic, video_id, draft=fixed)
     orig = checks.get("originality")
     if isinstance(orig, (int, float)) and orig >= 6:   # a full rewrite for other problems keeps the original image

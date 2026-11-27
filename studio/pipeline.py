@@ -1,6 +1,6 @@
 """The production stages the worker runs for each Short (registered in jobs.STAGES).
 
-researching       picks the best ready idea (topics.pick_next) unless the job already has one
+researching       picks the best ready idea (topics.pick_next) and does its free research (topics.prepare)
 scripting         writes the first draft (script.draft_step)
 fact_checking     checks the newest draft; one revision, then it must pass or the job stops
 generating_audio  narrates the passed script in the channel voice and validates the audio
@@ -16,6 +16,9 @@ import time
 from studio import data_dir, db, jobs, script, topics
 
 
+PICK_TRIES = 3                 # ideas tried per job when the free research skips one
+
+
 def _topic(v):
     t = topics.topic(v["topic_id"]) if v.get("topic_id") else None
     if not t:
@@ -25,9 +28,20 @@ def _topic(v):
 
 def researching(v, ctx):
     if not v.get("topic_id"):
-        t = topics.pick_next()
-        if not t:
-            raise jobs.QuotaWait("no ideas are ready yet; topic discovery will add more")
+        for _ in range(PICK_TRIES):
+            t = topics.pick_next()
+            if not t:
+                raise jobs.QuotaWait("no ideas are ready yet; topic discovery will add more")
+            # free research first (sourced numbers, then the newcomer facts): an idea whose set-up no page states
+            # is skipped here, before the 6-9 Claude calls a script that can't explain itself used to cost
+            skip = topics.prepare(topics.topic(t["id"]) or t, progress=lambda s: ctx.beat(s))
+            if not skip:
+                break
+            topics.set_status(t["id"], "rejected", reject_reason=skip[:300] + " (skipped before writing)")
+            from studio import lessons
+            lessons.record("ideas", [skip[:300]], t)
+        else:
+            raise jobs.QuotaWait("the next ideas all need background no source states; topic discovery will add more")
         db.set_video(v["id"], topic_id=t["id"], title=t["title"])
         topics.set_status(t["id"], "in_production", video_id=v["id"], script_status="writing")
     return "scripting"
