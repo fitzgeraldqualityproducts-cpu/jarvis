@@ -21,7 +21,7 @@
   approve     lets a Short held for your review (originality 5/10, everything else strong) go out like any
               other (approve --video <id>); without it, a held Short never goes out by itself
   test        a held test Short in one go: pauses the studio, makes one Short with the new looks (video
-              --new-looks, same options), holds it as "TEST SHORT: sample only, never upload" and resumes the
+              --new-looks, same options; --topic <id> writes a fresh script for that idea first), holds it as "TEST SHORT: sample only, never upload" and resumes the
               studio, even if it fails; if this window dies, the studio un-pauses itself within 15 minutes
   upload      uploads the newest finished Short as PRIVATE to the business channel, after you confirm
               (--video <id>); then checks YouTube processed it
@@ -179,7 +179,10 @@ def _script(argv):
     if not t:
         print("No ideas ready. Double-click Find Video Ideas first.")
         return 1
-    vid = jobs.create(t["id"], title=t["title"])
+    # --fresh (used by `studio test --topic`): a new video, so an idea tried before starts clean, not from its
+    # old video's failed versions
+    key = f"test-{t['id']}-{int(time.time())}" if "--fresh" in argv else None
+    vid = jobs.create(t["id"], idem_key=key, title=t["title"])
     db.set_video(vid, topic_id=t["id"], title=t["title"], state="scripting", stage_done="researching")
     topics.set_status(t["id"], "in_production", video_id=vid, script_status="writing")
     print(f"Idea #{t['id']}: {t['title']}  (video {vid})")
@@ -315,7 +318,21 @@ def _test(argv):
     print("Studio paused for a test Short." + (" (It was already paused and stays paused after.)" if was else ""))
     rc = 1
     try:
-        rc = _video(["video", "--new-looks", *[a for a in argv[1:] if a != "--new-looks"]])
+        rest = [a for a in argv[1:] if a != "--new-looks"]
+        if "--topic" in rest:                     # a fresh script for this idea first, inside the same pause
+            i = rest.index("--topic")
+            topic, rest = rest[i + 1], rest[:i] + rest[i + 2:]
+            rc = _script(["script", "--topic", topic, "--fresh"])
+            if rc != 0:
+                return rc
+            vid = (db.one("SELECT MAX(id) n FROM videos") or {"n": None})["n"]
+            if not vid or vid <= last:
+                return 1
+            if "--video" in rest:
+                j = rest.index("--video")
+                rest = rest[:j] + rest[j + 2:]
+            rest = ["--video", str(vid)] + rest
+        rc = _video(["video", "--new-looks", *rest])
     finally:
         done.set()
         vids = {r["id"] for r in db.q("SELECT id FROM videos WHERE id>?", last)}
